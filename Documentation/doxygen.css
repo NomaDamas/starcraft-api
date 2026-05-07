@@ -1665,12 +1665,6 @@ Note: Parent must have overflow:hidden and position:relative.
     text-shadow: 0 0 5px #444;
 }
 
-@media print {
-    .twitter-timeline {
-        display: none !important;
-    }
-}
-
 @media screen and (max-width: 400px),
 print {
     #projectlogo {

@@ -6,7 +6,7 @@ Value of 0  [0x0]. See BWAPI::Races::Zerg.
 @var BWAPI::Races::Zerg
 Zerg. Corresponds with Races::Enum::Zerg.
 
-<table border='0'><tr><td><strong>Worker</strong></td><td>@htmlonly
+<table><tr><td><strong>Worker</strong></td><td>@htmlonly
 <i class='cmdbtn cmdbtn-icon41'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Drone "Zerg Drone"</td></tr>
 <tr><td><strong>Resource Depot</strong></td><td>@htmlonly
@@ -22,7 +22,7 @@ Zerg. Corresponds with Races::Enum::Zerg.
 <i class='cmdbtn cmdbtn-icon42'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Overlord "Zerg Overlord"</td></tr>
 </table>
-@tlZerg @sccZerg @wikZerg
+@tlZerg @sccZerg
 */
 /*!
 @var BWAPI::Races::Enum::Terran
@@ -32,7 +32,7 @@ Value of 1  [0x1]. See BWAPI::Races::Terran.
 @var BWAPI::Races::Terran
 Terran. Corresponds with Races::Enum::Terran.
 
-<table border='0'><tr><td><strong>Worker</strong></td><td>@htmlonly
+<table><tr><td><strong>Worker</strong></td><td>@htmlonly
 <i class='cmdbtn cmdbtn-icon7'></i>
 @endhtmlonly @ref UnitTypes::Terran_SCV "Terran SCV"</td></tr>
 <tr><td><strong>Resource Depot</strong></td><td>@htmlonly
@@ -48,7 +48,7 @@ Terran. Corresponds with Races::Enum::Terran.
 <i class='cmdbtn cmdbtn-icon109'></i>
 @endhtmlonly @ref UnitTypes::Terran_Supply_Depot "Terran Supply Depot"</td></tr>
 </table>
-@tlTerran @sccTerran @wikTerran
+@tlTerran @sccTerran
 */
 /*!
 @var BWAPI::Races::Enum::Protoss
@@ -58,7 +58,7 @@ Value of 2  [0x2]. See BWAPI::Races::Protoss.
 @var BWAPI::Races::Protoss
 Protoss. Corresponds with Races::Enum::Protoss.
 
-<table border='0'><tr><td><strong>Worker</strong></td><td>@htmlonly
+<table><tr><td><strong>Worker</strong></td><td>@htmlonly
 <i class='cmdbtn cmdbtn-icon64'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Probe "Protoss Probe"</td></tr>
 <tr><td><strong>Resource Depot</strong></td><td>@htmlonly
@@ -74,5 +74,5 @@ Protoss. Corresponds with Races::Enum::Protoss.
 <i class='cmdbtn cmdbtn-icon156'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Pylon "Protoss Pylon"</td></tr>
 </table>
-@tlProtoss @sccProtoss @wikProtoss
+@tlProtoss @sccProtoss
 */

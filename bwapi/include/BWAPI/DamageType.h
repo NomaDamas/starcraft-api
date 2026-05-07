@@ -9,7 +9,6 @@ namespace BWAPI
   ///
   /// [View on Liquipedia](http://wiki.teamliquid.net/starcraft/Damage_Type)<br>
   /// [View on Starcraft Campendium (Official Website)](http://classic.battle.net/scc/gs/damage.shtml)<br>
-  /// [View on Starcraft Wikia](http://starcraft.wikia.com/wiki/Damage_types)<br>
   namespace DamageTypes
   {
     /// <summary>Enumeration of damage types.</summary>
@@ -39,7 +38,6 @@ namespace BWAPI
   ///
   /// [View on Liquipedia](http://wiki.teamliquid.net/starcraft/Damage_Type)<br>
   /// [View on Starcraft Campendium (Official Website)](http://classic.battle.net/scc/gs/damage.shtml)<br>
-  /// [View on Starcraft Wikia](http://starcraft.wikia.com/wiki/Damage_types)<br>
   ///
   /// @ingroup TypeClasses
   class DamageType : public Type<DamageType, DamageTypes::Enum::Unknown>

@@ -19,16 +19,6 @@ Melee. Corresponds with BulletTypes::Enum::Melee.
 
 */
 /*!
-@var BWAPI::BulletTypes::Enum::Burst_Lasers
-Value of 149  [0x95]. See BWAPI::BulletTypes::Burst_Lasers.
-*/
-/*!
-@var BWAPI::BulletTypes::Burst_Lasers
-Burst Lasers. Corresponds with BulletTypes::Enum::Burst_Lasers.
-
-
-*/
-/*!
 @var BWAPI::BulletTypes::Enum::Fusion_Cutter_Hit
 Value of 141  [0x8d]. See BWAPI::BulletTypes::Fusion_Cutter_Hit.
 */
@@ -95,6 +85,16 @@ Value of 148  [0x94]. See BWAPI::BulletTypes::ATS_ATA_Laser_Battery.
 /*!
 @var BWAPI::BulletTypes::ATS_ATA_Laser_Battery
 ATS ATA Laser Battery. Corresponds with BulletTypes::Enum::ATS_ATA_Laser_Battery.
+
+
+*/
+/*!
+@var BWAPI::BulletTypes::Enum::Burst_Lasers
+Value of 149  [0x95]. See BWAPI::BulletTypes::Burst_Lasers.
+*/
+/*!
+@var BWAPI::BulletTypes::Burst_Lasers
+Burst Lasers. Corresponds with BulletTypes::Enum::Burst_Lasers.
 
 
 */

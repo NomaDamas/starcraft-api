@@ -1,59 +1,4 @@
 /*!
-@var BWAPI::UpgradeTypes::Enum::Terran_Vehicle_Weapons
-Value of 8  [0x8]. See BWAPI::UpgradeTypes::Terran_Vehicle_Weapons.
-*/
-/*!
-@var BWAPI::UpgradeTypes::Terran_Vehicle_Weapons
-@htmlonly
-<i class='cmdbtn cmdbtn-icon289'></i>
-@endhtmlonly  Terran Vehicle Weapons. Corresponds with UpgradeTypes::Enum::Terran_Vehicle_Weapons.
-
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
-<tr><td><strong>Cost</strong></td><td>@htmlonly
-<i class='tticon tticon-ore'></i>
-@endhtmlonly 100 + lvl*75 @htmlonly
-<i class='tticon tticon-gas1'></i>
-@endhtmlonly 100 + lvl*75</td></tr>
-<tr><td><strong>Upgrade Time</strong></td><td>4000 + lvl*480 frames</td></tr>
-<tr><td><strong>Maximum Level</strong></td><td>3</td></tr>
-<tr><td><strong>Upgraded at</strong></td><td>@htmlonly
-<i class='cmdbtn cmdbtn-icon123'></i>
-@endhtmlonly @ref UnitTypes::Terran_Armory "Terran Armory"</td></tr>
-<tr><td><strong>Used by</strong></td><td>@htmlonly
-<i class='cmdbtn cmdbtn-icon2'></i>
-@endhtmlonly @ref UnitTypes::Terran_Vulture "Terran Vulture" @htmlonly
-<i class='cmdbtn cmdbtn-icon203'></i>
-@endhtmlonly @ref UnitTypes::Special_Floor_Missile_Trap "Special Floor Missile Trap" @htmlonly
-<i class='cmdbtn cmdbtn-icon3'></i>
-@endhtmlonly @ref UnitTypes::Terran_Goliath "Terran Goliath" @htmlonly
-<i class='cmdbtn cmdbtn-icon19'></i>
-@endhtmlonly @ref UnitTypes::Hero_Jim_Raynor_Vulture "Hero Jim Raynor Vulture" @htmlonly
-<i class='cmdbtn cmdbtn-icon25'></i>
-@endhtmlonly @ref UnitTypes::Hero_Edmund_Duke_Siege_Mode "Hero Edmund Duke Siege Mode" @htmlonly
-<i class='cmdbtn cmdbtn-icon209'></i>
-@endhtmlonly @ref UnitTypes::Special_Floor_Gun_Trap "Special Floor Gun Trap" @htmlonly
-<i class='cmdbtn cmdbtn-icon17'></i>
-@endhtmlonly @ref UnitTypes::Hero_Alan_Schezar "Hero Alan Schezar" @htmlonly
-<i class='cmdbtn cmdbtn-icon5'></i>
-@endhtmlonly @ref UnitTypes::Terran_Siege_Tank_Tank_Mode "Terran Siege Tank Tank Mode" @htmlonly
-<i class='cmdbtn cmdbtn-icon30'></i>
-@endhtmlonly @ref UnitTypes::Terran_Siege_Tank_Siege_Mode "Terran Siege Tank Siege Mode" @htmlonly
-<i class='cmdbtn cmdbtn-icon23'></i>
-@endhtmlonly @ref UnitTypes::Hero_Edmund_Duke_Tank_Mode "Hero Edmund Duke Tank Mode" @htmlonly
-<i class='cmdbtn cmdbtn-icon210'></i>
-@endhtmlonly @ref UnitTypes::Special_Wall_Missile_Trap "Special Wall Missile Trap" @htmlonly
-<i class='cmdbtn cmdbtn-icon212'></i>
-@endhtmlonly @ref UnitTypes::Special_Right_Wall_Missile_Trap "Special Right Wall Missile Trap"</td></tr>
-<tr><td><strong>Level 2 Requires</strong></td><td>@htmlonly
-<i class='cmdbtn cmdbtn-icon116'></i>
-@endhtmlonly @ref UnitTypes::Terran_Science_Facility "Terran Science Facility"</td></tr>
-<tr><td><strong>Level 3 Requires</strong></td><td>@htmlonly
-<i class='cmdbtn cmdbtn-icon116'></i>
-@endhtmlonly @ref UnitTypes::Terran_Science_Facility "Terran Science Facility"</td></tr>
-</table>
-
-*/
-/*!
 @var BWAPI::UpgradeTypes::Enum::Terran_Infantry_Armor
 Value of 0  [0x0]. See BWAPI::UpgradeTypes::Terran_Infantry_Armor.
 */
@@ -63,7 +8,7 @@ Value of 0  [0x0]. See BWAPI::UpgradeTypes::Terran_Infantry_Armor.
 <i class='cmdbtn cmdbtn-icon292'></i>
 @endhtmlonly  Terran Infantry Armor. Corresponds with UpgradeTypes::Enum::Terran_Infantry_Armor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*75 @htmlonly
@@ -87,12 +32,12 @@ Value of 0  [0x0]. See BWAPI::UpgradeTypes::Terran_Infantry_Armor.
 @endhtmlonly @ref UnitTypes::Terran_Civilian "Terran Civilian" @htmlonly
 <i class='cmdbtn cmdbtn-icon7'></i>
 @endhtmlonly @ref UnitTypes::Terran_SCV "Terran SCV" @htmlonly
-<i class='cmdbtn cmdbtn-icon34'></i>
-@endhtmlonly @ref UnitTypes::Terran_Medic "Terran Medic" @htmlonly
 <i class='cmdbtn cmdbtn-icon10'></i>
 @endhtmlonly @ref UnitTypes::Hero_Gui_Montag "Hero Gui Montag" @htmlonly
 <i class='cmdbtn cmdbtn-icon20'></i>
 @endhtmlonly @ref UnitTypes::Hero_Jim_Raynor_Marine "Hero Jim Raynor Marine" @htmlonly
+<i class='cmdbtn cmdbtn-icon34'></i>
+@endhtmlonly @ref UnitTypes::Terran_Medic "Terran Medic" @htmlonly
 <i class='cmdbtn cmdbtn-icon99'></i>
 @endhtmlonly @ref UnitTypes::Hero_Samir_Duran "Hero Samir Duran" @htmlonly
 <i class='cmdbtn cmdbtn-icon100'></i>
@@ -116,7 +61,7 @@ Value of 1  [0x1]. See BWAPI::UpgradeTypes::Terran_Vehicle_Plating.
 <i class='cmdbtn cmdbtn-icon293'></i>
 @endhtmlonly  Terran Vehicle Plating. Corresponds with UpgradeTypes::Enum::Terran_Vehicle_Plating.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*75 @htmlonly
@@ -163,7 +108,7 @@ Value of 2  [0x2]. See BWAPI::UpgradeTypes::Terran_Ship_Plating.
 <i class='cmdbtn cmdbtn-icon291'></i>
 @endhtmlonly  Terran Ship Plating. Corresponds with UpgradeTypes::Enum::Terran_Ship_Plating.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 + lvl*75 @htmlonly
@@ -187,12 +132,12 @@ Value of 2  [0x2]. See BWAPI::UpgradeTypes::Terran_Ship_Plating.
 @endhtmlonly @ref UnitTypes::Hero_Hyperion "Hero Hyperion" @htmlonly
 <i class='cmdbtn cmdbtn-icon12'></i>
 @endhtmlonly @ref UnitTypes::Terran_Battlecruiser "Terran Battlecruiser" @htmlonly
-<i class='cmdbtn cmdbtn-icon29'></i>
-@endhtmlonly @ref UnitTypes::Hero_Norad_II "Hero Norad II" @htmlonly
 <i class='cmdbtn cmdbtn-icon21'></i>
 @endhtmlonly @ref UnitTypes::Hero_Tom_Kazansky "Hero Tom Kazansky" @htmlonly
 <i class='cmdbtn cmdbtn-icon22'></i>
 @endhtmlonly @ref UnitTypes::Hero_Magellan "Hero Magellan" @htmlonly
+<i class='cmdbtn cmdbtn-icon29'></i>
+@endhtmlonly @ref UnitTypes::Hero_Norad_II "Hero Norad II" @htmlonly
 <i class='cmdbtn cmdbtn-icon58'></i>
 @endhtmlonly @ref UnitTypes::Terran_Valkyrie "Terran Valkyrie" @htmlonly
 <i class='cmdbtn cmdbtn-icon102'></i>
@@ -216,7 +161,7 @@ Value of 3  [0x3]. See BWAPI::UpgradeTypes::Zerg_Carapace.
 <i class='cmdbtn cmdbtn-icon297'></i>
 @endhtmlonly  Zerg Carapace. Corresponds with UpgradeTypes::Enum::Zerg_Carapace.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 + lvl*75 @htmlonly
@@ -242,14 +187,14 @@ Value of 3  [0x3]. See BWAPI::UpgradeTypes::Zerg_Carapace.
 @endhtmlonly @ref UnitTypes::Zerg_Lurker "Zerg Lurker" @htmlonly
 <i class='cmdbtn cmdbtn-icon39'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Ultralisk "Zerg Ultralisk" @htmlonly
-<i class='cmdbtn cmdbtn-icon48'></i>
-@endhtmlonly @ref UnitTypes::Hero_Torrasque "Hero Torrasque" @htmlonly
 <i class='cmdbtn cmdbtn-icon104'></i>
 @endhtmlonly @ref UnitTypes::Hero_Infested_Duran "Hero Infested Duran" @htmlonly
 <i class='cmdbtn cmdbtn-icon40'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Broodling "Zerg Broodling" @htmlonly
 <i class='cmdbtn cmdbtn-icon41'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Drone "Zerg Drone" @htmlonly
+<i class='cmdbtn cmdbtn-icon48'></i>
+@endhtmlonly @ref UnitTypes::Hero_Torrasque "Hero Torrasque" @htmlonly
 <i class='cmdbtn cmdbtn-icon50'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Infested_Terran "Zerg Infested Terran" @htmlonly
 <i class='cmdbtn cmdbtn-icon51'></i>
@@ -283,7 +228,7 @@ Value of 4  [0x4]. See BWAPI::UpgradeTypes::Zerg_Flyer_Carapace.
 <i class='cmdbtn cmdbtn-icon298'></i>
 @endhtmlonly  Zerg Flyer Carapace. Corresponds with UpgradeTypes::Enum::Zerg_Flyer_Carapace.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 + lvl*75 @htmlonly
@@ -307,12 +252,12 @@ Value of 4  [0x4]. See BWAPI::UpgradeTypes::Zerg_Flyer_Carapace.
 @endhtmlonly @ref UnitTypes::Hero_Kukulza_Mutalisk "Hero Kukulza Mutalisk" @htmlonly
 <i class='cmdbtn cmdbtn-icon47'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Scourge "Zerg Scourge" @htmlonly
-<i class='cmdbtn cmdbtn-icon57'></i>
-@endhtmlonly @ref UnitTypes::Hero_Yggdrasill "Hero Yggdrasill" @htmlonly
 <i class='cmdbtn cmdbtn-icon49'></i>
 @endhtmlonly @ref UnitTypes::Hero_Matriarch "Hero Matriarch" @htmlonly
 <i class='cmdbtn cmdbtn-icon56'></i>
 @endhtmlonly @ref UnitTypes::Hero_Kukulza_Guardian "Hero Kukulza Guardian" @htmlonly
+<i class='cmdbtn cmdbtn-icon57'></i>
+@endhtmlonly @ref UnitTypes::Hero_Yggdrasill "Hero Yggdrasill" @htmlonly
 <i class='cmdbtn cmdbtn-icon62'></i>
 @endhtmlonly @ref UnitTypes::Zerg_Devourer "Zerg Devourer"</td></tr>
 <tr><td><strong>Level 2 Requires</strong></td><td>@htmlonly
@@ -334,7 +279,7 @@ Value of 5  [0x5]. See BWAPI::UpgradeTypes::Protoss_Ground_Armor.
 <i class='cmdbtn cmdbtn-icon303'></i>
 @endhtmlonly  Protoss Ground Armor. Corresponds with UpgradeTypes::Enum::Protoss_Ground_Armor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*75 @htmlonly
@@ -358,12 +303,12 @@ Value of 5  [0x5]. See BWAPI::UpgradeTypes::Protoss_Ground_Armor.
 @endhtmlonly @ref UnitTypes::Hero_Dark_Templar "Hero Dark Templar" @htmlonly
 <i class='cmdbtn cmdbtn-icon66'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Dragoon "Protoss Dragoon" @htmlonly
-<i class='cmdbtn cmdbtn-icon75'></i>
-@endhtmlonly @ref UnitTypes::Hero_Zeratul "Hero Zeratul" @htmlonly
 <i class='cmdbtn cmdbtn-icon67'></i>
 @endhtmlonly @ref UnitTypes::Protoss_High_Templar "Protoss High Templar" @htmlonly
 <i class='cmdbtn cmdbtn-icon68'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Archon "Protoss Archon" @htmlonly
+<i class='cmdbtn cmdbtn-icon75'></i>
+@endhtmlonly @ref UnitTypes::Hero_Zeratul "Hero Zeratul" @htmlonly
 <i class='cmdbtn cmdbtn-icon76'></i>
 @endhtmlonly @ref UnitTypes::Hero_Tassadar_Zeratul_Archon "Hero Tassadar Zeratul Archon" @htmlonly
 <i class='cmdbtn cmdbtn-icon77'></i>
@@ -397,7 +342,7 @@ Value of 6  [0x6]. See BWAPI::UpgradeTypes::Protoss_Air_Armor.
 <i class='cmdbtn cmdbtn-icon304'></i>
 @endhtmlonly  Protoss Air Armor. Corresponds with UpgradeTypes::Enum::Protoss_Air_Armor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 + lvl*75 @htmlonly
@@ -409,8 +354,6 @@ Value of 6  [0x6]. See BWAPI::UpgradeTypes::Protoss_Air_Armor.
 <i class='cmdbtn cmdbtn-icon164'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Cybernetics_Core "Protoss Cybernetics Core"</td></tr>
 <tr><td><strong>Used by</strong></td><td>@htmlonly
-<i class='cmdbtn cmdbtn-icon84'></i>
-@endhtmlonly @ref UnitTypes::Protoss_Observer "Protoss Observer" @htmlonly
 <i class='cmdbtn cmdbtn-icon60'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Corsair "Protoss Corsair" @htmlonly
 <i class='cmdbtn cmdbtn-icon69'></i>
@@ -427,6 +370,8 @@ Value of 6  [0x6]. See BWAPI::UpgradeTypes::Protoss_Air_Armor.
 @endhtmlonly @ref UnitTypes::Protoss_Interceptor "Protoss Interceptor" @htmlonly
 <i class='cmdbtn cmdbtn-icon82'></i>
 @endhtmlonly @ref UnitTypes::Hero_Gantrithor "Hero Gantrithor" @htmlonly
+<i class='cmdbtn cmdbtn-icon84'></i>
+@endhtmlonly @ref UnitTypes::Protoss_Observer "Protoss Observer" @htmlonly
 <i class='cmdbtn cmdbtn-icon86'></i>
 @endhtmlonly @ref UnitTypes::Hero_Danimoth "Hero Danimoth" @htmlonly
 <i class='cmdbtn cmdbtn-icon88'></i>
@@ -452,7 +397,7 @@ Value of 7  [0x7]. See BWAPI::UpgradeTypes::Terran_Infantry_Weapons.
 <i class='cmdbtn cmdbtn-icon288'></i>
 @endhtmlonly  Terran Infantry Weapons. Corresponds with UpgradeTypes::Enum::Terran_Infantry_Weapons.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*75 @htmlonly
@@ -476,16 +421,71 @@ Value of 7  [0x7]. See BWAPI::UpgradeTypes::Terran_Infantry_Weapons.
 @endhtmlonly @ref UnitTypes::Terran_Ghost "Terran Ghost" @htmlonly
 <i class='cmdbtn cmdbtn-icon10'></i>
 @endhtmlonly @ref UnitTypes::Hero_Gui_Montag "Hero Gui Montag" @htmlonly
-<i class='cmdbtn cmdbtn-icon99'></i>
-@endhtmlonly @ref UnitTypes::Hero_Samir_Duran "Hero Samir Duran" @htmlonly
 <i class='cmdbtn cmdbtn-icon211'></i>
 @endhtmlonly @ref UnitTypes::Special_Wall_Flame_Trap "Special Wall Flame Trap" @htmlonly
 <i class='cmdbtn cmdbtn-icon213'></i>
 @endhtmlonly @ref UnitTypes::Special_Right_Wall_Flame_Trap "Special Right Wall Flame Trap" @htmlonly
+<i class='cmdbtn cmdbtn-icon99'></i>
+@endhtmlonly @ref UnitTypes::Hero_Samir_Duran "Hero Samir Duran" @htmlonly
 <i class='cmdbtn cmdbtn-icon100'></i>
 @endhtmlonly @ref UnitTypes::Hero_Alexei_Stukov "Hero Alexei Stukov" @htmlonly
 <i class='cmdbtn cmdbtn-icon104'></i>
 @endhtmlonly @ref UnitTypes::Hero_Infested_Duran "Hero Infested Duran"</td></tr>
+<tr><td><strong>Level 2 Requires</strong></td><td>@htmlonly
+<i class='cmdbtn cmdbtn-icon116'></i>
+@endhtmlonly @ref UnitTypes::Terran_Science_Facility "Terran Science Facility"</td></tr>
+<tr><td><strong>Level 3 Requires</strong></td><td>@htmlonly
+<i class='cmdbtn cmdbtn-icon116'></i>
+@endhtmlonly @ref UnitTypes::Terran_Science_Facility "Terran Science Facility"</td></tr>
+</table>
+
+*/
+/*!
+@var BWAPI::UpgradeTypes::Enum::Terran_Vehicle_Weapons
+Value of 8  [0x8]. See BWAPI::UpgradeTypes::Terran_Vehicle_Weapons.
+*/
+/*!
+@var BWAPI::UpgradeTypes::Terran_Vehicle_Weapons
+@htmlonly
+<i class='cmdbtn cmdbtn-icon289'></i>
+@endhtmlonly  Terran Vehicle Weapons. Corresponds with UpgradeTypes::Enum::Terran_Vehicle_Weapons.
+
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<tr><td><strong>Cost</strong></td><td>@htmlonly
+<i class='tticon tticon-ore'></i>
+@endhtmlonly 100 + lvl*75 @htmlonly
+<i class='tticon tticon-gas1'></i>
+@endhtmlonly 100 + lvl*75</td></tr>
+<tr><td><strong>Upgrade Time</strong></td><td>4000 + lvl*480 frames</td></tr>
+<tr><td><strong>Maximum Level</strong></td><td>3</td></tr>
+<tr><td><strong>Upgraded at</strong></td><td>@htmlonly
+<i class='cmdbtn cmdbtn-icon123'></i>
+@endhtmlonly @ref UnitTypes::Terran_Armory "Terran Armory"</td></tr>
+<tr><td><strong>Used by</strong></td><td>@htmlonly
+<i class='cmdbtn cmdbtn-icon2'></i>
+@endhtmlonly @ref UnitTypes::Terran_Vulture "Terran Vulture" @htmlonly
+<i class='cmdbtn cmdbtn-icon3'></i>
+@endhtmlonly @ref UnitTypes::Terran_Goliath "Terran Goliath" @htmlonly
+<i class='cmdbtn cmdbtn-icon19'></i>
+@endhtmlonly @ref UnitTypes::Hero_Jim_Raynor_Vulture "Hero Jim Raynor Vulture" @htmlonly
+<i class='cmdbtn cmdbtn-icon25'></i>
+@endhtmlonly @ref UnitTypes::Hero_Edmund_Duke_Siege_Mode "Hero Edmund Duke Siege Mode" @htmlonly
+<i class='cmdbtn cmdbtn-icon209'></i>
+@endhtmlonly @ref UnitTypes::Special_Floor_Gun_Trap "Special Floor Gun Trap" @htmlonly
+<i class='cmdbtn cmdbtn-icon17'></i>
+@endhtmlonly @ref UnitTypes::Hero_Alan_Schezar "Hero Alan Schezar" @htmlonly
+<i class='cmdbtn cmdbtn-icon5'></i>
+@endhtmlonly @ref UnitTypes::Terran_Siege_Tank_Tank_Mode "Terran Siege Tank Tank Mode" @htmlonly
+<i class='cmdbtn cmdbtn-icon30'></i>
+@endhtmlonly @ref UnitTypes::Terran_Siege_Tank_Siege_Mode "Terran Siege Tank Siege Mode" @htmlonly
+<i class='cmdbtn cmdbtn-icon23'></i>
+@endhtmlonly @ref UnitTypes::Hero_Edmund_Duke_Tank_Mode "Hero Edmund Duke Tank Mode" @htmlonly
+<i class='cmdbtn cmdbtn-icon203'></i>
+@endhtmlonly @ref UnitTypes::Special_Floor_Missile_Trap "Special Floor Missile Trap" @htmlonly
+<i class='cmdbtn cmdbtn-icon210'></i>
+@endhtmlonly @ref UnitTypes::Special_Wall_Missile_Trap "Special Wall Missile Trap" @htmlonly
+<i class='cmdbtn cmdbtn-icon212'></i>
+@endhtmlonly @ref UnitTypes::Special_Right_Wall_Missile_Trap "Special Right Wall Missile Trap"</td></tr>
 <tr><td><strong>Level 2 Requires</strong></td><td>@htmlonly
 <i class='cmdbtn cmdbtn-icon116'></i>
 @endhtmlonly @ref UnitTypes::Terran_Science_Facility "Terran Science Facility"</td></tr>
@@ -505,7 +505,7 @@ Value of 9  [0x9]. See BWAPI::UpgradeTypes::Terran_Ship_Weapons.
 <i class='cmdbtn cmdbtn-icon290'></i>
 @endhtmlonly  Terran Ship Weapons. Corresponds with UpgradeTypes::Enum::Terran_Ship_Weapons.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*50 @htmlonly
@@ -552,7 +552,7 @@ Value of 10  [0xa]. See BWAPI::UpgradeTypes::Zerg_Melee_Attacks.
 <i class='cmdbtn cmdbtn-icon299'></i>
 @endhtmlonly  Zerg Melee Attacks. Corresponds with UpgradeTypes::Enum::Zerg_Melee_Attacks.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*50 @htmlonly
@@ -595,7 +595,7 @@ Value of 11  [0xb]. See BWAPI::UpgradeTypes::Zerg_Missile_Attacks.
 <i class='cmdbtn cmdbtn-icon300'></i>
 @endhtmlonly  Zerg Missile Attacks. Corresponds with UpgradeTypes::Enum::Zerg_Missile_Attacks.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*50 @htmlonly
@@ -632,7 +632,7 @@ Value of 12  [0xc]. See BWAPI::UpgradeTypes::Zerg_Flyer_Attacks.
 <i class='cmdbtn cmdbtn-icon301'></i>
 @endhtmlonly  Zerg Flyer Attacks. Corresponds with UpgradeTypes::Enum::Zerg_Flyer_Attacks.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*75 @htmlonly
@@ -673,7 +673,7 @@ Value of 13  [0xd]. See BWAPI::UpgradeTypes::Protoss_Ground_Weapons.
 <i class='cmdbtn cmdbtn-icon305'></i>
 @endhtmlonly  Protoss Ground Weapons. Corresponds with UpgradeTypes::Enum::Protoss_Ground_Weapons.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*50 @htmlonly
@@ -689,8 +689,6 @@ Value of 13  [0xd]. See BWAPI::UpgradeTypes::Protoss_Ground_Weapons.
 @endhtmlonly @ref UnitTypes::Protoss_Zealot "Protoss Zealot" @htmlonly
 <i class='cmdbtn cmdbtn-icon77'></i>
 @endhtmlonly @ref UnitTypes::Hero_Fenix_Zealot "Hero Fenix Zealot" @htmlonly
-<i class='cmdbtn cmdbtn-icon74'></i>
-@endhtmlonly @ref UnitTypes::Hero_Dark_Templar "Hero Dark Templar" @htmlonly
 <i class='cmdbtn cmdbtn-icon66'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Dragoon "Protoss Dragoon" @htmlonly
 <i class='cmdbtn cmdbtn-icon78'></i>
@@ -703,6 +701,8 @@ Value of 13  [0xd]. See BWAPI::UpgradeTypes::Protoss_Ground_Weapons.
 @endhtmlonly @ref UnitTypes::Hero_Tassadar_Zeratul_Archon "Hero Tassadar Zeratul Archon" @htmlonly
 <i class='cmdbtn cmdbtn-icon68'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Archon "Protoss Archon" @htmlonly
+<i class='cmdbtn cmdbtn-icon74'></i>
+@endhtmlonly @ref UnitTypes::Hero_Dark_Templar "Hero Dark Templar" @htmlonly
 <i class='cmdbtn cmdbtn-icon75'></i>
 @endhtmlonly @ref UnitTypes::Hero_Zeratul "Hero Zeratul" @htmlonly
 <i class='cmdbtn cmdbtn-icon61'></i>
@@ -726,7 +726,7 @@ Value of 14  [0xe]. See BWAPI::UpgradeTypes::Protoss_Air_Weapons.
 <i class='cmdbtn cmdbtn-icon306'></i>
 @endhtmlonly  Protoss Air Weapons. Corresponds with UpgradeTypes::Enum::Protoss_Air_Weapons.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 + lvl*75 @htmlonly
@@ -773,7 +773,7 @@ Value of 15  [0xf]. See BWAPI::UpgradeTypes::Protoss_Plasma_Shields.
 <i class='cmdbtn cmdbtn-icon310'></i>
 @endhtmlonly  Protoss Plasma Shields. Corresponds with UpgradeTypes::Enum::Protoss_Plasma_Shields.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 + lvl*100 @htmlonly
@@ -789,8 +789,6 @@ Value of 15  [0xf]. See BWAPI::UpgradeTypes::Protoss_Plasma_Shields.
 @endhtmlonly @ref UnitTypes::Protoss_Archon "Protoss Archon" @htmlonly
 <i class='cmdbtn cmdbtn-icon60'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Corsair "Protoss Corsair" @htmlonly
-<i class='cmdbtn cmdbtn-icon69'></i>
-@endhtmlonly @ref UnitTypes::Protoss_Shuttle "Protoss Shuttle" @htmlonly
 <i class='cmdbtn cmdbtn-icon61'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Dark_Templar "Protoss Dark Templar" @htmlonly
 <i class='cmdbtn cmdbtn-icon63'></i>
@@ -803,6 +801,8 @@ Value of 15  [0xf]. See BWAPI::UpgradeTypes::Protoss_Plasma_Shields.
 @endhtmlonly @ref UnitTypes::Protoss_Dragoon "Protoss Dragoon" @htmlonly
 <i class='cmdbtn cmdbtn-icon67'></i>
 @endhtmlonly @ref UnitTypes::Protoss_High_Templar "Protoss High Templar" @htmlonly
+<i class='cmdbtn cmdbtn-icon69'></i>
+@endhtmlonly @ref UnitTypes::Protoss_Shuttle "Protoss Shuttle" @htmlonly
 <i class='cmdbtn cmdbtn-icon70'></i>
 @endhtmlonly @ref UnitTypes::Protoss_Scout "Protoss Scout" @htmlonly
 <i class='cmdbtn cmdbtn-icon71'></i>
@@ -860,7 +860,7 @@ Value of 16  [0x10]. See BWAPI::UpgradeTypes::U_238_Shells.
 <i class='cmdbtn cmdbtn-icon238'></i>
 @endhtmlonly  U 238 Shells. Corresponds with UpgradeTypes::Enum::U_238_Shells.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -886,7 +886,7 @@ Value of 17  [0x11]. See BWAPI::UpgradeTypes::Ion_Thrusters.
 <i class='cmdbtn cmdbtn-icon287'></i>
 @endhtmlonly  Ion Thrusters. Corresponds with UpgradeTypes::Enum::Ion_Thrusters.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 @htmlonly
@@ -912,7 +912,7 @@ Value of 19  [0x13]. See BWAPI::UpgradeTypes::Titan_Reactor.
 <i class='cmdbtn cmdbtn-icon248'></i>
 @endhtmlonly  Titan Reactor. Corresponds with UpgradeTypes::Enum::Titan_Reactor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -938,7 +938,7 @@ Value of 20  [0x14]. See BWAPI::UpgradeTypes::Ocular_Implants.
 <i class='cmdbtn cmdbtn-icon249'></i>
 @endhtmlonly  Ocular Implants. Corresponds with UpgradeTypes::Enum::Ocular_Implants.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 @htmlonly
@@ -964,7 +964,7 @@ Value of 21  [0x15]. See BWAPI::UpgradeTypes::Moebius_Reactor.
 <i class='cmdbtn cmdbtn-icon256'></i>
 @endhtmlonly  Moebius Reactor. Corresponds with UpgradeTypes::Enum::Moebius_Reactor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -990,7 +990,7 @@ Value of 22  [0x16]. See BWAPI::UpgradeTypes::Apollo_Reactor.
 <i class='cmdbtn cmdbtn-icon284'></i>
 @endhtmlonly  Apollo Reactor. Corresponds with UpgradeTypes::Enum::Apollo_Reactor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1016,7 +1016,7 @@ Value of 23  [0x17]. See BWAPI::UpgradeTypes::Colossus_Reactor.
 <i class='cmdbtn cmdbtn-icon285'></i>
 @endhtmlonly  Colossus Reactor. Corresponds with UpgradeTypes::Enum::Colossus_Reactor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1042,7 +1042,7 @@ Value of 24  [0x18]. See BWAPI::UpgradeTypes::Ventral_Sacs.
 <i class='cmdbtn cmdbtn-icon261'></i>
 @endhtmlonly  Ventral Sacs. Corresponds with UpgradeTypes::Enum::Ventral_Sacs.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1068,7 +1068,7 @@ Value of 25  [0x19]. See BWAPI::UpgradeTypes::Antennae.
 <i class='cmdbtn cmdbtn-icon262'></i>
 @endhtmlonly  Antennae. Corresponds with UpgradeTypes::Enum::Antennae.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1094,7 +1094,7 @@ Value of 26  [0x1a]. See BWAPI::UpgradeTypes::Pneumatized_Carapace.
 <i class='cmdbtn cmdbtn-icon296'></i>
 @endhtmlonly  Pneumatized Carapace. Corresponds with UpgradeTypes::Enum::Pneumatized_Carapace.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1120,7 +1120,7 @@ Value of 27  [0x1b]. See BWAPI::UpgradeTypes::Metabolic_Boost.
 <i class='cmdbtn cmdbtn-icon263'></i>
 @endhtmlonly  Metabolic Boost. Corresponds with UpgradeTypes::Enum::Metabolic_Boost.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 @htmlonly
@@ -1146,7 +1146,7 @@ Value of 28  [0x1c]. See BWAPI::UpgradeTypes::Adrenal_Glands.
 <i class='cmdbtn cmdbtn-icon264'></i>
 @endhtmlonly  Adrenal Glands. Corresponds with UpgradeTypes::Enum::Adrenal_Glands.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1175,7 +1175,7 @@ Value of 29  [0x1d]. See BWAPI::UpgradeTypes::Muscular_Augments.
 <i class='cmdbtn cmdbtn-icon266'></i>
 @endhtmlonly  Muscular Augments. Corresponds with UpgradeTypes::Enum::Muscular_Augments.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1201,7 +1201,7 @@ Value of 30  [0x1e]. See BWAPI::UpgradeTypes::Grooved_Spines.
 <i class='cmdbtn cmdbtn-icon268'></i>
 @endhtmlonly  Grooved Spines. Corresponds with UpgradeTypes::Enum::Grooved_Spines.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1227,7 +1227,7 @@ Value of 31  [0x1f]. See BWAPI::UpgradeTypes::Gamete_Meiosis.
 <i class='cmdbtn cmdbtn-icon294'></i>
 @endhtmlonly  Gamete Meiosis. Corresponds with UpgradeTypes::Enum::Gamete_Meiosis.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1253,7 +1253,7 @@ Value of 32  [0x20]. See BWAPI::UpgradeTypes::Metasynaptic_Node.
 <i class='cmdbtn cmdbtn-icon295'></i>
 @endhtmlonly  Metasynaptic Node. Corresponds with UpgradeTypes::Enum::Metasynaptic_Node.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1279,7 +1279,7 @@ Value of 33  [0x21]. See BWAPI::UpgradeTypes::Singularity_Charge.
 <i class='cmdbtn cmdbtn-icon281'></i>
 @endhtmlonly  Singularity Charge. Corresponds with UpgradeTypes::Enum::Singularity_Charge.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1305,7 +1305,7 @@ Value of 34  [0x22]. See BWAPI::UpgradeTypes::Leg_Enhancements.
 <i class='cmdbtn cmdbtn-icon307'></i>
 @endhtmlonly  Leg Enhancements. Corresponds with UpgradeTypes::Enum::Leg_Enhancements.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1331,7 +1331,7 @@ Value of 35  [0x23]. See BWAPI::UpgradeTypes::Scarab_Damage.
 <i class='cmdbtn cmdbtn-icon314'></i>
 @endhtmlonly  Scarab Damage. Corresponds with UpgradeTypes::Enum::Scarab_Damage.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1357,7 +1357,7 @@ Value of 36  [0x24]. See BWAPI::UpgradeTypes::Reaver_Capacity.
 <i class='cmdbtn cmdbtn-icon315'></i>
 @endhtmlonly  Reaver Capacity. Corresponds with UpgradeTypes::Enum::Reaver_Capacity.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1383,7 +1383,7 @@ Value of 37  [0x25]. See BWAPI::UpgradeTypes::Gravitic_Drive.
 <i class='cmdbtn cmdbtn-icon316'></i>
 @endhtmlonly  Gravitic Drive. Corresponds with UpgradeTypes::Enum::Gravitic_Drive.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1409,7 +1409,7 @@ Value of 38  [0x26]. See BWAPI::UpgradeTypes::Sensor_Array.
 <i class='cmdbtn cmdbtn-icon317'></i>
 @endhtmlonly  Sensor Array. Corresponds with UpgradeTypes::Enum::Sensor_Array.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1435,7 +1435,7 @@ Value of 39  [0x27]. See BWAPI::UpgradeTypes::Gravitic_Boosters.
 <i class='cmdbtn cmdbtn-icon276'></i>
 @endhtmlonly  Gravitic Boosters. Corresponds with UpgradeTypes::Enum::Gravitic_Boosters.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1461,7 +1461,7 @@ Value of 40  [0x28]. See BWAPI::UpgradeTypes::Khaydarin_Amulet.
 <i class='cmdbtn cmdbtn-icon318'></i>
 @endhtmlonly  Khaydarin Amulet. Corresponds with UpgradeTypes::Enum::Khaydarin_Amulet.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1487,7 +1487,7 @@ Value of 41  [0x29]. See BWAPI::UpgradeTypes::Apial_Sensors.
 <i class='cmdbtn cmdbtn-icon319'></i>
 @endhtmlonly  Apial Sensors. Corresponds with UpgradeTypes::Enum::Apial_Sensors.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 @htmlonly
@@ -1513,7 +1513,7 @@ Value of 42  [0x2a]. See BWAPI::UpgradeTypes::Gravitic_Thrusters.
 <i class='cmdbtn cmdbtn-icon320'></i>
 @endhtmlonly  Gravitic Thrusters. Corresponds with UpgradeTypes::Enum::Gravitic_Thrusters.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1539,7 +1539,7 @@ Value of 43  [0x2b]. See BWAPI::UpgradeTypes::Carrier_Capacity.
 <i class='cmdbtn cmdbtn-icon321'></i>
 @endhtmlonly  Carrier Capacity. Corresponds with UpgradeTypes::Enum::Carrier_Capacity.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 @htmlonly
@@ -1565,7 +1565,7 @@ Value of 44  [0x2c]. See BWAPI::UpgradeTypes::Khaydarin_Core.
 <i class='cmdbtn cmdbtn-icon322'></i>
 @endhtmlonly  Khaydarin Core. Corresponds with UpgradeTypes::Enum::Khaydarin_Core.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1591,7 +1591,7 @@ Value of 47  [0x2f]. See BWAPI::UpgradeTypes::Argus_Jewel.
 <i class='cmdbtn cmdbtn-icon383'></i>
 @endhtmlonly  Argus Jewel. Corresponds with UpgradeTypes::Enum::Argus_Jewel.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 @htmlonly
@@ -1617,7 +1617,7 @@ Value of 49  [0x31]. See BWAPI::UpgradeTypes::Argus_Talisman.
 <i class='cmdbtn cmdbtn-icon385'></i>
 @endhtmlonly  Argus Talisman. Corresponds with UpgradeTypes::Enum::Argus_Talisman.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Protoss "Protoss"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1643,7 +1643,7 @@ Value of 51  [0x33]. See BWAPI::UpgradeTypes::Caduceus_Reactor.
 <i class='cmdbtn cmdbtn-icon384'></i>
 @endhtmlonly  Caduceus Reactor. Corresponds with UpgradeTypes::Enum::Caduceus_Reactor.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1669,7 +1669,7 @@ Value of 52  [0x34]. See BWAPI::UpgradeTypes::Chitinous_Plating.
 <i class='cmdbtn cmdbtn-icon379'></i>
 @endhtmlonly  Chitinous Plating. Corresponds with UpgradeTypes::Enum::Chitinous_Plating.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 150 @htmlonly
@@ -1695,7 +1695,7 @@ Value of 53  [0x35]. See BWAPI::UpgradeTypes::Anabolic_Synthesis.
 <i class='cmdbtn cmdbtn-icon378'></i>
 @endhtmlonly  Anabolic Synthesis. Corresponds with UpgradeTypes::Enum::Anabolic_Synthesis.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Zerg "Zerg"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 200 @htmlonly
@@ -1721,7 +1721,7 @@ Value of 54  [0x36]. See BWAPI::UpgradeTypes::Charon_Boosters.
 <i class='cmdbtn cmdbtn-icon380'></i>
 @endhtmlonly  Charon Boosters. Corresponds with UpgradeTypes::Enum::Charon_Boosters.
 
-<table border='0'><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
+<table><tr><td><strong>Race</strong></td><td>@ref Races::Terran "Terran"</td></tr>
 <tr><td><strong>Cost</strong></td><td>@htmlonly
 <i class='tticon tticon-ore'></i>
 @endhtmlonly 100 @htmlonly

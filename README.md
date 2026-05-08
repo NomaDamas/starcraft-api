@@ -101,5 +101,4 @@ You may experience issues when working with BWAPI. Here are some steps you may w
 
 ## Legal {#legal}
 [Starcraft](http://www.blizzard.com/games/sc/) and [Starcraft: Broodwar](http://www.blizzard.com/games/sc/) are trademarks of
-[Blizzard Entertainment](http://www.blizzard.com). BWAPI is a third party "hack" that violates the End User License Agreement (EULA).
-It is strongly recommended to purchase a legitimate copy of Starcraft: Broodwar from Blizzard Entertainment before using BWAPI.
+[Blizzard Entertainment](http://www.blizzard.com).

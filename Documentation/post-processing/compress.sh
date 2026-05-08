@@ -1,7 +1,7 @@
 #!/bin/bash
 
 pushd .
-cd "${0%[\\/]*}"
+cd "$(dirname "$0")"
 
 sh modify_html.sh
 sh compress_html.sh

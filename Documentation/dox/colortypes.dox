@@ -27,9 +27,9 @@
 
 */
 /*!
-@var BWAPI::Colors::Orange
+@var BWAPI::Colors::
 @htmlonly
-<div style='width:64px;height:64px;background-color:#E87824;'></div>
+<div style='width:64px;height:64px;background-color:#F88C14;'></div>
 @endhtmlonly
 
 */

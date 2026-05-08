@@ -107,28 +107,6 @@ Value of 3  [0x3]. See BWAPI::Orders::PlayerGuard.
 
 */
 /*!
-@var BWAPI::Orders::Enum::Upgrade
-Value of 76  [0x4c]. See BWAPI::Orders::Upgrade.
-*/
-/*!
-@var BWAPI::Orders::Upgrade
- Upgrade. Corresponds with Orders::Enum::Upgrade.
-
-
-*/
-/*!
-@var BWAPI::Orders::Enum::AttackTile
-Value of 12  [0xc]. See BWAPI::Orders::AttackTile.
-*/
-/*!
-@var BWAPI::Orders::AttackTile
-@htmlonly
-<i class='cmdbtn cmdbtn-icon230'></i>
-@endhtmlonly  AttackTile. Corresponds with Orders::Enum::AttackTile.
-
-
-*/
-/*!
 @var BWAPI::Orders::Enum::ShieldBattery
 Value of 68  [0x44]. See BWAPI::Orders::ShieldBattery.
 */
@@ -179,6 +157,28 @@ Value of 6  [0x6]. See BWAPI::Orders::Move.
 @htmlonly
 <i class='cmdbtn cmdbtn-icon228'></i>
 @endhtmlonly  Move. Corresponds with Orders::Enum::Move.
+
+
+*/
+/*!
+@var BWAPI::Orders::Enum::Upgrade
+Value of 76  [0x4c]. See BWAPI::Orders::Upgrade.
+*/
+/*!
+@var BWAPI::Orders::Upgrade
+ Upgrade. Corresponds with Orders::Enum::Upgrade.
+
+
+*/
+/*!
+@var BWAPI::Orders::Enum::AttackTile
+Value of 12  [0xc]. See BWAPI::Orders::AttackTile.
+*/
+/*!
+@var BWAPI::Orders::AttackTile
+@htmlonly
+<i class='cmdbtn cmdbtn-icon230'></i>
+@endhtmlonly  AttackTile. Corresponds with Orders::Enum::AttackTile.
 
 
 */

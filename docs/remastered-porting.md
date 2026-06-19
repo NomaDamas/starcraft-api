@@ -38,6 +38,7 @@ starcraft-runtime-launch \
   --launch \
   --require-running \
   --manifest-out /tmp/starcraft-api-local-bootstrap.manifest \
+  --evidence-out /tmp/starcraft-api-local-runtime.evidence \
   --bridge /tmp/starcraft-api-local-bridge \
   --print-env
 ```
@@ -50,6 +51,8 @@ StarCraft/StarCraft Launcher.app/Contents/MacOS/StarCraft Launcher
 ```
 
 `--require-running` only succeeds when the actual game executable is visible and stable for the runtime process check. A transient launcher, Battle.net handoff, or short-lived splash process is reported as `runtime.running=false` and is not exported as `STARCRAFT_API_PROCESS_ID`.
+
+`--evidence-out` writes a launch/attach diagnostic report that captures the installation identity, executable size/hash, observed StarCraft/Battle.net process snapshot, launch result, and recent Battle.net/StarCraft log tails. This report is for debugging and auditability only; it is not accepted as BWAPI parity evidence unless later in-game bindings, command execution, state extraction, event dispatch, overlay rendering, and synchronization tests pass. Set `STARCRAFT_API_LOG_DIR` to force a specific log directory during local tests.
 
 ## Runtime Manifest Format
 

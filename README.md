@@ -21,6 +21,7 @@ build/starcraft-runtime-launch \
   --launch \
   --require-running \
   --manifest-out /tmp/starcraft-api-local-bootstrap.manifest \
+  --evidence-out /tmp/starcraft-api-local-runtime.evidence \
   --bridge /tmp/starcraft-api-local-bridge \
   --print-env
 ```
@@ -28,6 +29,8 @@ build/starcraft-runtime-launch \
 The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `STARCRAFT_API_STARCRAFT_DIR`, common macOS Desktop/Application paths, and common Windows install roots.
 
 If Battle.net is already handling StarCraft startup, the launcher does not spawn another Battle.net instance. It only exports `STARCRAFT_API_PROCESS_ID` when the actual StarCraft game executable is visible and stable.
+
+Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, and recent Battle.net/StarCraft log tails. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
 
 ## Validation
 

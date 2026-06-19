@@ -2,6 +2,7 @@
 
 #include <BWAPI/Runtime/RuntimeBackend.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -30,12 +31,54 @@ namespace BWAPI::Runtime
     std::vector<std::string> warnings;
   };
 
+  struct RuntimeFileIdentity
+  {
+    bool exists = false;
+    std::uintmax_t size = 0;
+    std::string fnv1a64;
+    std::string path;
+    std::string reason;
+  };
+
+  struct RuntimeObservedProcess
+  {
+    int processId = 0;
+    int parentProcessId = 0;
+    std::string category;
+    std::string command;
+  };
+
+  struct RuntimeLogExcerpt
+  {
+    std::string path;
+    std::vector<std::string> lines;
+    std::string reason;
+  };
+
+  struct RuntimeEvidence
+  {
+    RuntimeInstallation installation;
+    RuntimeLaunchResult launchResult;
+    RuntimeFileIdentity executable;
+    std::vector<RuntimeObservedProcess> processes;
+    std::vector<RuntimeLogExcerpt> logs;
+  };
+
   RuntimeInstallation detectStarCraftInstallation(const RuntimeEnvironment& environment);
   std::vector<int> findRuntimeProcessIds(const RuntimeInstallation& installation);
   RuntimeLaunchResult launchOrAttachRuntime(
     const RuntimeInstallation& installation,
     bool launchIfMissing,
     int waitMilliseconds);
+  RuntimeEvidence collectRuntimeEvidence(
+    const RuntimeInstallation& installation,
+    const RuntimeLaunchResult& launchResult);
+  std::string makeRuntimeEvidenceReport(const RuntimeEvidence& evidence);
+  bool writeRuntimeEvidenceReport(
+    const RuntimeInstallation& installation,
+    const RuntimeLaunchResult& launchResult,
+    const std::string& path,
+    std::string& error);
   RuntimeEnvironment makeRuntimeEnvironmentForInstallation(
     const RuntimeEnvironment& baseEnvironment,
     const RuntimeInstallation& installation,

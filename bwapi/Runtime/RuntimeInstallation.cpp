@@ -3,11 +3,14 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <string_view>
 #include <thread>
@@ -259,53 +262,191 @@ namespace BWAPI::Runtime
       return false;
     }
 
-#if !defined(_WIN32)
-    std::vector<int> parseProcessListMatching(const std::vector<std::string>& needles)
+    std::string trimLeft(std::string value)
     {
-      std::vector<int> processIds;
-      FILE* pipe = popen("ps -axo pid=,command=", "r");
+      const std::size_t first = value.find_first_not_of(" \t\r\n");
+      if (first == std::string::npos)
+        return {};
+      return value.substr(first);
+    }
+
+    std::string sanitizeEvidenceValue(std::string value)
+    {
+      for (char& ch : value)
+      {
+        if (ch == '\n' || ch == '\r' || ch == '\t')
+          ch = ' ';
+      }
+
+      constexpr std::size_t MaxEvidenceValueLength = 2000;
+      if (value.size() > MaxEvidenceValueLength)
+        value = value.substr(0, MaxEvidenceValueLength) + "...";
+      return value;
+    }
+
+    void writeEvidenceField(std::ostringstream& output, const std::string& key, const std::string& value)
+    {
+      if (!value.empty())
+        output << key << '=' << sanitizeEvidenceValue(value) << '\n';
+    }
+
+    void writeEvidenceField(std::ostringstream& output, const std::string& key, const char* value)
+    {
+      if (value != nullptr)
+        writeEvidenceField(output, key, std::string(value));
+    }
+
+    void writeEvidenceField(std::ostringstream& output, const std::string& key, bool value)
+    {
+      output << key << '=' << (value ? "true" : "false") << '\n';
+    }
+
+    void writeEvidenceField(std::ostringstream& output, const std::string& key, int value)
+    {
+      output << key << '=' << value << '\n';
+    }
+
+    void writeEvidenceField(std::ostringstream& output, const std::string& key, std::uintmax_t value)
+    {
+      output << key << '=' << value << '\n';
+    }
+
+    RuntimeFileIdentity identifyRuntimeFile(const std::string& path)
+    {
+      RuntimeFileIdentity identity;
+      identity.path = path;
+      if (path.empty())
+      {
+        identity.reason = "path is empty";
+        return identity;
+      }
+
+      const std::filesystem::path filePath(path);
+      if (!fileExists(filePath))
+      {
+        identity.reason = "file does not exist";
+        return identity;
+      }
+
+      std::error_code error;
+      identity.size = std::filesystem::file_size(filePath, error);
+      if (error)
+      {
+        identity.reason = "unable to stat file: " + error.message();
+        return identity;
+      }
+
+      std::ifstream input(filePath, std::ios::binary);
+      if (!input)
+      {
+        identity.reason = "unable to read file";
+        return identity;
+      }
+
+      std::uint64_t hash = 14695981039346656037ull;
+      char buffer[8192];
+      while (input)
+      {
+        input.read(buffer, sizeof(buffer));
+        const std::streamsize count = input.gcount();
+        for (std::streamsize i = 0; i < count; ++i)
+        {
+          hash ^= static_cast<unsigned char>(buffer[i]);
+          hash *= 1099511628211ull;
+        }
+      }
+
+      std::ostringstream hex;
+      hex << std::hex << std::setfill('0') << std::setw(16) << hash;
+      identity.exists = true;
+      identity.fnv1a64 = hex.str();
+      return identity;
+    }
+
+    std::string categorizeProcessCommand(const RuntimeInstallation& installation, const std::string& command)
+    {
+      if (lineContainsAny(command, { installation.executablePath, "StarCraft.app/Contents/MacOS/StarCraft" }))
+        return "starcraft-game";
+
+      const bool isBattleNet = lineContainsAny(command, {
+        "Battle.net.app/Contents/MacOS/Battle.net",
+        "Battle.net.exe",
+        "Battle.net Helper",
+        "Agent.app/Contents/MacOS/Agent"
+      });
+
+      if (isBattleNet && command.find("--game=s1") != std::string::npos)
+        return "battle.net-handoff";
+
+      if (isBattleNet)
+        return "battle.net-support";
+
+      if (lineContainsAny(command, {
+        installation.installRoot,
+        "StarCraft Launcher.app/Contents/MacOS/StarCraft Launcher",
+        "StarCraft Launcher.exe"
+      }))
+        return "starcraft-related";
+
+      return {};
+    }
+
+    bool isRelevantObservedProcess(const RuntimeObservedProcess& process)
+    {
+      return !process.category.empty();
+    }
+
+#if !defined(_WIN32)
+    std::vector<RuntimeObservedProcess> collectPosixObservedProcesses(const RuntimeInstallation& installation)
+    {
+      std::vector<RuntimeObservedProcess> processes;
+      FILE* pipe = popen("ps -axo pid=,ppid=,command=", "r");
       if (pipe == nullptr)
-        return processIds;
+        return processes;
 
       char buffer[4096];
       while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr)
       {
         std::string line(buffer);
-        const std::size_t firstDigit = line.find_first_of("0123456789");
-        if (firstDigit == std::string::npos)
+        std::istringstream parser(line);
+        RuntimeObservedProcess process;
+        if (!(parser >> process.processId >> process.parentProcessId))
           continue;
-        const std::size_t afterPid = line.find_first_not_of("0123456789", firstDigit);
-        if (afterPid == std::string::npos)
-          continue;
-
-        const int processId = std::atoi(line.substr(firstDigit, afterPid - firstDigit).c_str());
-        if (processId <= 0)
+        if (process.processId <= 0)
           continue;
 
-        const std::string command = line.substr(afterPid);
-        if (lineContainsAny(command, needles))
-          processIds.push_back(processId);
+        std::getline(parser, process.command);
+        process.command = trimLeft(process.command);
+        process.category = categorizeProcessCommand(installation, process.command);
+        if (isRelevantObservedProcess(process))
+          processes.push_back(process);
       }
 
       pclose(pipe);
+      return processes;
+    }
+
+    std::vector<int> processIdsForCategory(
+      const RuntimeInstallation& installation,
+      const std::vector<std::string>& categories)
+    {
+      std::vector<int> processIds;
+      for (const RuntimeObservedProcess& process : collectPosixObservedProcesses(installation))
+      {
+        if (lineContainsAny(process.category, categories))
+          processIds.push_back(process.processId);
+      }
       return processIds;
     }
 
     std::vector<int> findPosixProcesses(const RuntimeInstallation& installation)
     {
-      return parseProcessListMatching({
-        installation.executablePath,
-        "StarCraft.app/Contents/MacOS/StarCraft"
-      });
+      return processIdsForCategory(installation, { "starcraft-game" });
     }
 
     std::vector<int> findPosixBattleNetHandoffProcesses(const RuntimeInstallation& installation)
     {
-      return parseProcessListMatching({
-        "Battle.net.app/Contents/MacOS/Battle.net --game=s1",
-        "Battle.net.exe --game=s1",
-        installation.installRoot
-      });
+      return processIdsForCategory(installation, { "battle.net-handoff" });
     }
 #endif
 
@@ -346,6 +487,126 @@ namespace BWAPI::Runtime
       return {};
     }
 #endif
+
+    std::vector<RuntimeObservedProcess> collectObservedProcesses(const RuntimeInstallation& installation)
+    {
+#if defined(_WIN32)
+      (void)installation;
+      return {};
+#else
+      return collectPosixObservedProcesses(installation);
+#endif
+    }
+
+    void addLogCandidate(std::vector<std::filesystem::path>& candidates, const std::filesystem::path& path)
+    {
+      if (!path.empty())
+        candidates.push_back(path);
+    }
+
+    std::vector<std::filesystem::path> runtimeLogCandidates(const RuntimeInstallation& installation)
+    {
+      std::vector<std::filesystem::path> candidates;
+
+      addLogCandidate(candidates, getenvString("STARCRAFT_API_LOG_DIR"));
+
+      const std::string home = getenvString("HOME");
+      if (!home.empty())
+      {
+        addLogCandidate(candidates, std::filesystem::path(home) / "Library" / "Application Support" / "Battle.net" / "Logs");
+        addLogCandidate(candidates, std::filesystem::path(home) / "Library" / "Application Support" / "Blizzard" / "StarCraft");
+      }
+
+      const std::string userProfile = getenvString("USERPROFILE");
+      if (!userProfile.empty())
+      {
+        addLogCandidate(candidates, std::filesystem::path(userProfile) / "AppData" / "Local" / "Battle.net" / "Logs");
+        addLogCandidate(candidates, std::filesystem::path(userProfile) / "Documents" / "StarCraft");
+      }
+
+      addLogCandidate(candidates, std::filesystem::path(installation.installRoot) / "Logs");
+      return candidates;
+    }
+
+    std::vector<std::string> tailFileLines(const std::filesystem::path& path, std::size_t maxLines)
+    {
+      std::ifstream input(path);
+      if (!input)
+        return {};
+
+      std::deque<std::string> tail;
+      std::string line;
+      while (std::getline(input, line))
+      {
+        tail.push_back(sanitizeEvidenceValue(line));
+        while (tail.size() > maxLines)
+          tail.pop_front();
+      }
+
+      return { tail.begin(), tail.end() };
+    }
+
+    std::vector<RuntimeLogExcerpt> collectRuntimeLogExcerpts(
+      const RuntimeInstallation& installation,
+      std::size_t maxFiles,
+      std::size_t maxLines)
+    {
+      struct CandidateLogFile
+      {
+        std::filesystem::path path;
+        std::filesystem::file_time_type lastWriteTime;
+      };
+
+      std::vector<CandidateLogFile> files;
+      for (const std::filesystem::path& root : runtimeLogCandidates(installation))
+      {
+        std::error_code error;
+        if (!std::filesystem::is_directory(root, error) || error)
+          continue;
+
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(root, error))
+        {
+          if (error)
+            break;
+
+          std::error_code entryError;
+          if (!entry.is_regular_file(entryError) || entryError)
+            continue;
+
+          const std::filesystem::path path = entry.path();
+          const std::string extension = path.extension().string();
+          if (extension != ".log" && extension != ".txt")
+            continue;
+
+          std::error_code timeError;
+          const std::filesystem::file_time_type lastWriteTime = entry.last_write_time(timeError);
+          if (timeError)
+            continue;
+
+          files.push_back({ path, lastWriteTime });
+        }
+      }
+
+      std::sort(files.begin(), files.end(), [](const CandidateLogFile& left, const CandidateLogFile& right) {
+        return left.lastWriteTime > right.lastWriteTime;
+      });
+
+      std::vector<RuntimeLogExcerpt> excerpts;
+      for (const CandidateLogFile& file : files)
+      {
+        if (excerpts.size() >= maxFiles)
+          break;
+
+        RuntimeLogExcerpt excerpt;
+        excerpt.path = pathString(file.path);
+        excerpt.lines = tailFileLines(file.path, maxLines);
+        if (excerpt.lines.empty())
+          excerpt.reason = "log file is empty or unreadable";
+        excerpts.push_back(excerpt);
+      }
+
+      return excerpts;
+    }
 
 #if !defined(_WIN32)
     bool forkExecProcess(
@@ -562,7 +823,10 @@ namespace BWAPI::Runtime
     {
       result.reason =
         "Battle.net StarCraft handoff is already running; not launching another Battle.net instance";
+      result.warnings.push_back("battle.net.process_count=" + std::to_string(handoffProcessIds.size()));
       result.warnings.push_back("battle.net.process_id=" + std::to_string(handoffProcessIds.front()));
+      for (std::size_t i = 0; i < handoffProcessIds.size(); ++i)
+        result.warnings.push_back("battle.net.process_id." + std::to_string(i) + "=" + std::to_string(handoffProcessIds[i]));
       return result;
     }
 
@@ -604,6 +868,91 @@ namespace BWAPI::Runtime
     result.running = false;
     result.reason = "StarCraft Remastered launch was requested, but no matching game process became visible before the wait timeout";
     return result;
+  }
+
+  RuntimeEvidence collectRuntimeEvidence(
+    const RuntimeInstallation& installation,
+    const RuntimeLaunchResult& launchResult)
+  {
+    RuntimeEvidence evidence;
+    evidence.installation = installation;
+    evidence.launchResult = launchResult;
+    evidence.executable = identifyRuntimeFile(installation.executablePath);
+    evidence.processes = collectObservedProcesses(installation);
+    evidence.logs = collectRuntimeLogExcerpts(installation, 4, 20);
+    return evidence;
+  }
+
+  std::string makeRuntimeEvidenceReport(const RuntimeEvidence& evidence)
+  {
+    std::ostringstream output;
+    output << "# Generated StarCraft API runtime evidence report.\n";
+    output << "# This report is diagnostic evidence only. It does not claim BWAPI parity.\n";
+    writeEvidenceField(output, "evidence.schema", "starcraft-api.runtime-evidence.v1");
+
+    writeEvidenceField(output, "install.found", evidence.installation.found);
+    writeEvidenceField(output, "platform", toString(evidence.installation.platform));
+    writeEvidenceField(output, "product", toString(evidence.installation.product));
+    writeEvidenceField(output, "version", evidence.installation.version);
+    writeEvidenceField(output, "install.root", evidence.installation.installRoot);
+    writeEvidenceField(output, "install.app_bundle", evidence.installation.appBundlePath);
+    writeEvidenceField(output, "install.executable", evidence.installation.executablePath);
+    writeEvidenceField(output, "install.launcher", evidence.installation.launcherPath);
+    writeEvidenceField(output, "install.reason", evidence.installation.reason);
+
+    writeEvidenceField(output, "executable.exists", evidence.executable.exists);
+    writeEvidenceField(output, "executable.path", evidence.executable.path);
+    writeEvidenceField(output, "executable.size", evidence.executable.size);
+    writeEvidenceField(output, "executable.fnv1a64", evidence.executable.fnv1a64);
+    writeEvidenceField(output, "executable.reason", evidence.executable.reason);
+
+    writeEvidenceField(output, "runtime.launched", evidence.launchResult.launched);
+    writeEvidenceField(output, "runtime.running", evidence.launchResult.running);
+    writeEvidenceField(output, "runtime.process_id", evidence.launchResult.processId);
+    writeEvidenceField(output, "runtime.reason", evidence.launchResult.reason);
+    for (std::size_t i = 0; i < evidence.launchResult.warnings.size(); ++i)
+      writeEvidenceField(output, "runtime.warning." + std::to_string(i), evidence.launchResult.warnings[i]);
+
+    writeEvidenceField(output, "process.count", static_cast<int>(evidence.processes.size()));
+    for (std::size_t i = 0; i < evidence.processes.size(); ++i)
+    {
+      const RuntimeObservedProcess& process = evidence.processes[i];
+      const std::string prefix = "process." + std::to_string(i) + ".";
+      writeEvidenceField(output, prefix + "pid", process.processId);
+      writeEvidenceField(output, prefix + "ppid", process.parentProcessId);
+      writeEvidenceField(output, prefix + "category", process.category);
+      writeEvidenceField(output, prefix + "command", process.command);
+    }
+
+    writeEvidenceField(output, "log.count", static_cast<int>(evidence.logs.size()));
+    for (std::size_t i = 0; i < evidence.logs.size(); ++i)
+    {
+      const RuntimeLogExcerpt& log = evidence.logs[i];
+      const std::string prefix = "log." + std::to_string(i) + ".";
+      writeEvidenceField(output, prefix + "path", log.path);
+      writeEvidenceField(output, prefix + "reason", log.reason);
+      writeEvidenceField(output, prefix + "line_count", static_cast<int>(log.lines.size()));
+      for (std::size_t line = 0; line < log.lines.size(); ++line)
+        writeEvidenceField(output, prefix + "line." + std::to_string(line), log.lines[line]);
+    }
+
+    return output.str();
+  }
+
+  bool writeRuntimeEvidenceReport(
+    const RuntimeInstallation& installation,
+    const RuntimeLaunchResult& launchResult,
+    const std::string& path,
+    std::string& error)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      error = "unable to write runtime evidence report: " + path;
+      return false;
+    }
+    output << makeRuntimeEvidenceReport(collectRuntimeEvidence(installation, launchResult));
+    return true;
   }
 
   RuntimeEnvironment makeRuntimeEnvironmentForInstallation(

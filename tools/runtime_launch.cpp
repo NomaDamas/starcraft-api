@@ -29,6 +29,7 @@ namespace
       << "  --require-running        return non-zero unless a matching process is visible\n"
       << "  --wait-ms <milliseconds> wait after launch while scanning for the process (default: 10000)\n"
       << "  --manifest-out <path>    write a local bootstrap manifest\n"
+      << "  --evidence-out <path>    write a launch/attach diagnostic evidence report\n"
       << "  --bridge <path>          write a filesystem bridge ready file\n"
       << "  --print-env              print shell environment exports for follow-up tools\n"
       << "  --help                   show this help\n";
@@ -48,6 +49,7 @@ int main(int argc, char** argv)
   bool printEnv = false;
   int waitMilliseconds = 10000;
   std::string manifestOut;
+  std::string evidenceOut;
   std::string bridgePath;
 
   for (int i = 1; i < argc; ++i)
@@ -78,6 +80,15 @@ int main(int argc, char** argv)
         return 64;
       }
       manifestOut = argv[++i];
+    }
+    else if (arg == "--evidence-out")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--evidence-out requires a path\n";
+        return 64;
+      }
+      evidenceOut = argv[++i];
     }
     else if (arg == "--bridge")
     {
@@ -122,7 +133,21 @@ int main(int argc, char** argv)
     std::cout << "install.searched_path=" << searchedPath << '\n';
 
   if (!installation.found)
+  {
+    if (!evidenceOut.empty())
+    {
+      RuntimeLaunchResult launchResult;
+      launchResult.reason = installation.reason;
+      std::string error;
+      if (!writeRuntimeEvidenceReport(installation, launchResult, evidenceOut, error))
+      {
+        std::cerr << error << '\n';
+        return 1;
+      }
+      std::cout << "evidence.path=" << evidenceOut << '\n';
+    }
     return 2;
+  }
 
   RuntimeLaunchResult launchResult = launchOrAttachRuntime(installation, launch, waitMilliseconds);
   std::cout << "runtime.launched=" << (launchResult.launched ? "true" : "false") << '\n';
@@ -135,6 +160,17 @@ int main(int argc, char** argv)
     std::cout << "runtime.reason=" << launchResult.reason << '\n';
   for (const std::string& warning : launchResult.warnings)
     std::cout << "runtime.warning=" << warning << '\n';
+
+  if (!evidenceOut.empty())
+  {
+    std::string error;
+    if (!writeRuntimeEvidenceReport(installation, launchResult, evidenceOut, error))
+    {
+      std::cerr << error << '\n';
+      return 1;
+    }
+    std::cout << "evidence.path=" << evidenceOut << '\n';
+  }
 
   RuntimeEnvironment runtimeEnvironment =
     makeRuntimeEnvironmentForInstallation(host, installation, launchResult.running ? launchResult.processId : 0);

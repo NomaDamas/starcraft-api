@@ -44,6 +44,8 @@ int main()
   const std::filesystem::path plist = appBundle / "Contents" / "Info.plist";
   const std::filesystem::path launcher =
     installRoot / "StarCraft Launcher.app" / "Contents" / "MacOS" / "StarCraft Launcher";
+  const std::filesystem::path logRoot = tempRoot / "logs";
+  const std::filesystem::path logFile = logRoot / "battle.net-test.log";
 
   writeFile(executable, "fake executable");
   writeFile(
@@ -54,8 +56,10 @@ int main()
     "<string>2.0.13-test</string>\n"
     "</dict></plist>\n");
   writeFile(launcher, "fake launcher");
+  writeFile(logFile, "first line\nlaunch handoff failed in test\n");
 
   setEnvValue("STARCRAFT_API_INSTALL_DIR", installRoot.string());
+  setEnvValue("STARCRAFT_API_LOG_DIR", logRoot.string());
 
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   environment.platform = Platform::MacOS;
@@ -84,6 +88,25 @@ int main()
   const std::filesystem::path bridgePath = tempRoot / "bridge";
   assert(writeRuntimeExecutorReadyFile(runtimeEnvironment, bridgePath.string(), error));
   assert(std::filesystem::is_regular_file(bridgePath / RuntimeExecutorBridgeReadyFile));
+
+  RuntimeLaunchResult launchResult;
+  launchResult.reason = "unit test launch did not run";
+  RuntimeEvidence evidence = collectRuntimeEvidence(installation, launchResult);
+  assert(evidence.executable.exists);
+  assert(evidence.executable.size > 0);
+  assert(!evidence.executable.fnv1a64.empty());
+  assert(!evidence.logs.empty());
+  assert(evidence.logs.front().path.find("battle.net-test.log") != std::string::npos);
+
+  const std::string report = makeRuntimeEvidenceReport(evidence);
+  assert(report.find("evidence.schema=starcraft-api.runtime-evidence.v1") != std::string::npos);
+  assert(report.find("runtime.reason=unit test launch did not run") != std::string::npos);
+  assert(report.find("executable.fnv1a64=") != std::string::npos);
+  assert(report.find("launch handoff failed in test") != std::string::npos);
+
+  const std::filesystem::path evidencePath = tempRoot / "runtime.evidence";
+  assert(writeRuntimeEvidenceReport(installation, launchResult, evidencePath.string(), error));
+  assert(std::filesystem::is_regular_file(evidencePath));
 
   std::filesystem::remove_all(tempRoot);
   return 0;

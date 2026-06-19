@@ -21,6 +21,8 @@ cxxflags=${CXXFLAGS:-}
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/Legacy1161RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
@@ -33,6 +35,8 @@ cxxflags=${CXXFLAGS:-}
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/Legacy1161RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
@@ -45,6 +49,8 @@ cxxflags=${CXXFLAGS:-}
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/Legacy1161RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \

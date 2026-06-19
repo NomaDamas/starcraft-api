@@ -64,6 +64,8 @@ target_include_directories(bwapi_public
 )
 
 add_library(starcraft_runtime STATIC
+  "${BWAPI_ROOT}/Runtime/Legacy1161RuntimeBackend.cpp"
+  "${BWAPI_ROOT}/Runtime/RemasteredRuntimeBackend.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeBackend.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeBackendFactory.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeContract.cpp"

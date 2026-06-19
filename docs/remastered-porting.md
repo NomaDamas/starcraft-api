@@ -64,3 +64,13 @@ A valid manifest only proves that versioned offsets, symbols, structure fields, 
 - `executor.available`: the authorized attach/read/write/command executor is implemented for the selected product and platform.
 
 The current macOS/Linux executor preflight can validate contracts and locate targets, but it intentionally reports `executor.available=false`. This keeps release automation honest: a complete manifest is necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.
+
+## Process Memory Primitive
+
+`RuntimeProcessMemory` provides the first OS-specific read primitive:
+
+- Linux uses `process_vm_readv`.
+- macOS uses `mach_vm_read_overwrite`.
+- Windows uses `ReadProcessMemory` for compatibility with the legacy target.
+
+`runtime_process_memory_test` reads a marker from the current process, so CI validates the real platform read path without attaching to StarCraft or Battle.net. This is intentionally read-only; production support still requires authorized target attach, validated address maps, command submission, event dispatch, overlay rendering, and multiplayer synchronization tests.

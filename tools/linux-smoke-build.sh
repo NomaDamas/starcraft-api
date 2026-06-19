@@ -29,6 +29,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_backend_test.cpp" \
   -o "$bin_dir/runtime_backend_test"
@@ -45,6 +46,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_contract_test.cpp" \
   -o "$bin_dir/runtime_contract_test"
@@ -62,6 +64,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_manifest_test.cpp" \
   -o "$bin_dir/runtime_manifest_test"
@@ -79,11 +82,20 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_executor_test.cpp" \
   -o "$bin_dir/runtime_executor_test"
 
 "$bin_dir/runtime_executor_test"
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
+  "$repo_root/tests/runtime_process_memory_test.cpp" \
+  -o "$bin_dir/runtime_process_memory_test"
+
+"$bin_dir/runtime_process_memory_test"
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \

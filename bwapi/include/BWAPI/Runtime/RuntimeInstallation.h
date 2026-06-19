@@ -55,6 +55,13 @@ namespace BWAPI::Runtime
     std::string reason;
   };
 
+  struct RuntimeSessionEvent
+  {
+    std::string path;
+    std::string category;
+    std::string line;
+  };
+
   struct RuntimeEvidence
   {
     RuntimeInstallation installation;
@@ -62,6 +69,7 @@ namespace BWAPI::Runtime
     RuntimeFileIdentity executable;
     std::vector<RuntimeObservedProcess> processes;
     std::vector<RuntimeLogExcerpt> logs;
+    std::vector<RuntimeSessionEvent> sessionEvents;
   };
 
   RuntimeInstallation detectStarCraftInstallation(const RuntimeEnvironment& environment);

@@ -455,12 +455,13 @@ namespace BWAPI::Runtime
     if (declaredCommandEntries != accumulator.implementedCommandSurfaceEntries)
       addError(result, sourceName, 0, "manifest command surface entry count does not match declared command/action names");
 
-    if (!result.errors.empty())
-      return result;
-
-    RuntimeContract contract = accumulator.product == Product::StarCraftBroodWar1161
-      ? makeBroodWar1161ParityContract()
-      : makeRemasteredParityContract(accumulator.version);
+    RuntimeContract contract;
+    if (accumulator.product == Product::StarCraftBroodWar1161)
+      contract = makeBroodWar1161ParityContract();
+    else if (accumulator.product == Product::StarCraftRemastered)
+      contract = makeRemasteredParityContract(accumulator.version);
+    else
+      contract.product = Product::Unknown;
     contract.version = accumulator.version;
 
     applyBindings(result, sourceName, contract, accumulator.bindings);

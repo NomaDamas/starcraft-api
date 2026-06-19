@@ -56,7 +56,12 @@ int main()
     "<string>2.0.13-test</string>\n"
     "</dict></plist>\n");
   writeFile(launcher, "fake launcher");
-  writeFile(logFile, "first line\nlaunch handoff failed in test\n");
+  writeFile(
+    logFile,
+    "first line\n"
+    "I 2026-06-19 [InstallManager] Setting Process Running: true uid=s1 binaryType=game any=true\n"
+    "I 2026-06-19 [InstallManager] Game is no longer running: s1\n"
+    "launch handoff failed in test\n");
 
   setEnvValue("STARCRAFT_API_INSTALL_DIR", installRoot.string());
   setEnvValue("STARCRAFT_API_LOG_DIR", logRoot.string());
@@ -97,12 +102,16 @@ int main()
   assert(!evidence.executable.fnv1a64.empty());
   assert(!evidence.logs.empty());
   assert(evidence.logs.front().path.find("battle.net-test.log") != std::string::npos);
+  assert(evidence.sessionEvents.size() == 2);
+  assert(evidence.sessionEvents.front().category == "starcraft-session-started");
 
   const std::string report = makeRuntimeEvidenceReport(evidence);
   assert(report.find("evidence.schema=starcraft-api.runtime-evidence.v1") != std::string::npos);
   assert(report.find("runtime.reason=unit test launch did not run") != std::string::npos);
   assert(report.find("executable.fnv1a64=") != std::string::npos);
   assert(report.find("launch handoff failed in test") != std::string::npos);
+  assert(report.find("session.event.0.category=starcraft-session-started") != std::string::npos);
+  assert(report.find("session.event.1.category=starcraft-session-ended") != std::string::npos);
 
   const std::filesystem::path evidencePath = tempRoot / "runtime.evidence";
   assert(writeRuntimeEvidenceReport(installation, launchResult, evidencePath.string(), error));

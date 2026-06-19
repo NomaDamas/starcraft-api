@@ -42,6 +42,11 @@ int main()
   RuntimeManifestLoadResult incomplete = loadRuntimeManifestFile(fixturePath("remastered-incomplete.manifest"));
   assert(!incomplete.loaded);
   assert(!incomplete.errors.empty());
+  assert(incomplete.manifest.contract.product == Product::StarCraftRemastered);
+  assert(incomplete.manifest.contract.version == "test-build");
+  assert(incomplete.manifest.implementedApiSurfaceMethods == 384);
+  assert(incomplete.manifest.implementedCommandSurfaceEntries == 1);
+  assert(incomplete.manifest.unitCommands.size() == 1);
 
   std::istringstream malformed("product unknown-product\n");
   RuntimeManifestLoadResult malformedResult = loadRuntimeManifest(malformed, "inline");

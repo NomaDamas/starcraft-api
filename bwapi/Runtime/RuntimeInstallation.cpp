@@ -400,7 +400,7 @@ namespace BWAPI::Runtime
     std::vector<RuntimeObservedProcess> collectPosixObservedProcesses(const RuntimeInstallation& installation)
     {
       std::vector<RuntimeObservedProcess> processes;
-      FILE* pipe = popen("ps -axo pid=,ppid=,command=", "r");
+      FILE* pipe = popen("ps -axo pid=,ppid=,command= 2>/dev/null", "r");
       if (pipe == nullptr)
         return processes;
 
@@ -504,11 +504,22 @@ namespace BWAPI::Runtime
         candidates.push_back(path);
     }
 
+    struct CandidateLogFile
+    {
+      std::filesystem::path path;
+      std::filesystem::file_time_type lastWriteTime;
+    };
+
     std::vector<std::filesystem::path> runtimeLogCandidates(const RuntimeInstallation& installation)
     {
       std::vector<std::filesystem::path> candidates;
 
-      addLogCandidate(candidates, getenvString("STARCRAFT_API_LOG_DIR"));
+      const std::string overrideLogDir = getenvString("STARCRAFT_API_LOG_DIR");
+      if (!overrideLogDir.empty())
+      {
+        addLogCandidate(candidates, overrideLogDir);
+        return candidates;
+      }
 
       const std::string home = getenvString("HOME");
       if (!home.empty())
@@ -546,17 +557,8 @@ namespace BWAPI::Runtime
       return { tail.begin(), tail.end() };
     }
 
-    std::vector<RuntimeLogExcerpt> collectRuntimeLogExcerpts(
-      const RuntimeInstallation& installation,
-      std::size_t maxFiles,
-      std::size_t maxLines)
+    std::vector<CandidateLogFile> collectRuntimeLogFiles(const RuntimeInstallation& installation)
     {
-      struct CandidateLogFile
-      {
-        std::filesystem::path path;
-        std::filesystem::file_time_type lastWriteTime;
-      };
-
       std::vector<CandidateLogFile> files;
       for (const std::filesystem::path& root : runtimeLogCandidates(installation))
       {
@@ -590,9 +592,16 @@ namespace BWAPI::Runtime
       std::sort(files.begin(), files.end(), [](const CandidateLogFile& left, const CandidateLogFile& right) {
         return left.lastWriteTime > right.lastWriteTime;
       });
+      return files;
+    }
 
+    std::vector<RuntimeLogExcerpt> collectRuntimeLogExcerpts(
+      const RuntimeInstallation& installation,
+      std::size_t maxFiles,
+      std::size_t maxLines)
+    {
       std::vector<RuntimeLogExcerpt> excerpts;
-      for (const CandidateLogFile& file : files)
+      for (const CandidateLogFile& file : collectRuntimeLogFiles(installation))
       {
         if (excerpts.size() >= maxFiles)
           break;
@@ -606,6 +615,73 @@ namespace BWAPI::Runtime
       }
 
       return excerpts;
+    }
+
+    std::string categorizeSessionLogLine(const std::string& line)
+    {
+      const bool mentionsStarCraft = line.find("uid=s1") != std::string::npos
+        || line.find("agentUid=s1") != std::string::npos
+        || line.find("InstallState (s1)") != std::string::npos
+        || line.find("Game is running: s1") != std::string::npos
+        || line.find("Game is no longer running: s1") != std::string::npos;
+      if (!mentionsStarCraft)
+        return {};
+
+      if (line.find("Game is running: s1") != std::string::npos
+          || line.find("Setting Process Running: true uid=s1") != std::string::npos
+          || line.find("opStatus=On") != std::string::npos)
+        return "starcraft-session-started";
+
+      if (line.find("Game is no longer running: s1") != std::string::npos
+          || line.find("Setting Process Running: false uid=s1") != std::string::npos
+          || line.find("opStatus=Off") != std::string::npos)
+        return "starcraft-session-ended";
+
+      if (line.find("Pre-existing game session detected") != std::string::npos)
+        return "starcraft-session-preexisting";
+
+      if (line.find("InstallState (s1)") != std::string::npos)
+        return "starcraft-install-state";
+
+      return "starcraft-session-related";
+    }
+
+    std::vector<RuntimeSessionEvent> collectRuntimeSessionEvents(
+      const RuntimeInstallation& installation,
+      std::size_t maxFiles,
+      std::size_t maxEvents)
+    {
+      std::deque<RuntimeSessionEvent> tail;
+      std::size_t inspectedFiles = 0;
+      for (const CandidateLogFile& file : collectRuntimeLogFiles(installation))
+      {
+        if (inspectedFiles >= maxFiles)
+          break;
+        ++inspectedFiles;
+
+        std::ifstream input(file.path);
+        if (!input)
+          continue;
+
+        std::string line;
+        while (std::getline(input, line))
+        {
+          const std::string sanitized = sanitizeEvidenceValue(line);
+          const std::string category = categorizeSessionLogLine(sanitized);
+          if (category.empty())
+            continue;
+
+          RuntimeSessionEvent event;
+          event.path = pathString(file.path);
+          event.category = category;
+          event.line = sanitized;
+          tail.push_back(event);
+          while (tail.size() > maxEvents)
+            tail.pop_front();
+        }
+      }
+
+      return { tail.begin(), tail.end() };
     }
 
 #if !defined(_WIN32)
@@ -880,6 +956,7 @@ namespace BWAPI::Runtime
     evidence.executable = identifyRuntimeFile(installation.executablePath);
     evidence.processes = collectObservedProcesses(installation);
     evidence.logs = collectRuntimeLogExcerpts(installation, 4, 20);
+    evidence.sessionEvents = collectRuntimeSessionEvents(installation, 8, 50);
     return evidence;
   }
 
@@ -934,6 +1011,16 @@ namespace BWAPI::Runtime
       writeEvidenceField(output, prefix + "line_count", static_cast<int>(log.lines.size()));
       for (std::size_t line = 0; line < log.lines.size(); ++line)
         writeEvidenceField(output, prefix + "line." + std::to_string(line), log.lines[line]);
+    }
+
+    writeEvidenceField(output, "session.event_count", static_cast<int>(evidence.sessionEvents.size()));
+    for (std::size_t i = 0; i < evidence.sessionEvents.size(); ++i)
+    {
+      const RuntimeSessionEvent& event = evidence.sessionEvents[i];
+      const std::string prefix = "session.event." + std::to_string(i) + ".";
+      writeEvidenceField(output, prefix + "category", event.category);
+      writeEvidenceField(output, prefix + "path", event.path);
+      writeEvidenceField(output, prefix + "line", event.line);
     }
 
     return output.str();

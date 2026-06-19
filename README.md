@@ -30,7 +30,7 @@ The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `
 
 If Battle.net is already handling StarCraft startup, the launcher does not spawn another Battle.net instance. It only exports `STARCRAFT_API_PROCESS_ID` when the actual StarCraft game executable is visible and stable.
 
-Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, and recent Battle.net/StarCraft log tails. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
+Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, and parsed StarCraft session start/stop events. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
 
 ## Validation
 
@@ -41,6 +41,17 @@ tools/linux-smoke-build.sh
 ```
 
 Use `starcraft-runtime-gap-report --require-production` as the release gate. It remains non-zero until all BWAPI parity requirements are backed by validated runtime evidence.
+
+When using a bootstrap manifest, pass the runtime identity explicitly so the report attributes gaps to StarCraft Remastered instead of an unknown runtime:
+
+```sh
+build/starcraft-runtime-gap-report \
+  --manifest /tmp/starcraft-api-local-bootstrap.manifest \
+  --product starcraft-remastered \
+  --version 1.23.10.13515 \
+  --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
+  --bridge /tmp/starcraft-api-local-bridge
+```
 
 ## BWAPI Reference
 

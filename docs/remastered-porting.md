@@ -52,7 +52,7 @@ StarCraft/StarCraft Launcher.app/Contents/MacOS/StarCraft Launcher
 
 `--require-running` only succeeds when the actual game executable is visible and stable for the runtime process check. A transient launcher, Battle.net handoff, or short-lived splash process is reported as `runtime.running=false` and is not exported as `STARCRAFT_API_PROCESS_ID`.
 
-`--evidence-out` writes a launch/attach diagnostic report that captures the installation identity, executable size/hash, observed StarCraft/Battle.net process snapshot, launch result, and recent Battle.net/StarCraft log tails. This report is for debugging and auditability only; it is not accepted as BWAPI parity evidence unless later in-game bindings, command execution, state extraction, event dispatch, overlay rendering, and synchronization tests pass. Set `STARCRAFT_API_LOG_DIR` to force a specific log directory during local tests.
+`--evidence-out` writes a launch/attach diagnostic report that captures the installation identity, executable size/hash, observed StarCraft/Battle.net process snapshot, launch result, recent Battle.net/StarCraft log tails, and parsed StarCraft session start/stop events. This report is for debugging and auditability only; it is not accepted as BWAPI parity evidence unless later in-game bindings, command execution, state extraction, event dispatch, overlay rendering, and synchronization tests pass. Set `STARCRAFT_API_LOG_DIR` to force a specific log directory during local tests.
 
 ## Runtime Manifest Format
 
@@ -81,6 +81,19 @@ STARCRAFT_API_PRODUCT=starcraft-remastered \
 ```
 
 A valid manifest only proves that versioned offsets, symbols, structure fields, capabilities, and API surface declarations are complete. It does not by itself prove that the macOS/Linux runtime executor can attach, read state, issue commands, render overlays, or satisfy Battle.net synchronization rules; `production.supported` remains false until the backend probe proves those runtime behaviors.
+
+For launch/attach gap analysis, pass the runtime identity from `starcraft-runtime-launch` directly into the gap report:
+
+```sh
+starcraft-runtime-gap-report \
+  --manifest /tmp/starcraft-api-local-bootstrap.manifest \
+  --product starcraft-remastered \
+  --version 1.23.10.13515 \
+  --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
+  --bridge /tmp/starcraft-api-local-bridge
+```
+
+Incomplete bootstrap manifests remain non-production, but the report preserves product/version identity so the remaining gaps are attributed to the StarCraft Remastered backend instead of collapsing to `unknown`.
 
 ## Runtime Executor Preflight
 

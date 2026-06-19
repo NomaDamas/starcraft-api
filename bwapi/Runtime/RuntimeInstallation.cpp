@@ -4,6 +4,7 @@
 #include <BWAPI/Runtime/RuntimeProcess.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <thread>
@@ -268,6 +270,111 @@ namespace BWAPI::Runtime
       if (first == std::string::npos)
         return {};
       return value.substr(first);
+    }
+
+    bool isDigit(char ch)
+    {
+      return std::isdigit(static_cast<unsigned char>(ch)) != 0;
+    }
+
+    bool parseFixedInt(
+      const std::string& value,
+      std::size_t offset,
+      std::size_t count,
+      int& parsed)
+    {
+      if (offset + count > value.size())
+        return false;
+
+      int result = 0;
+      for (std::size_t i = 0; i < count; ++i)
+      {
+        const char ch = value[offset + i];
+        if (!isDigit(ch))
+          return false;
+        result = result * 10 + (ch - '0');
+      }
+
+      parsed = result;
+      return true;
+    }
+
+    std::int64_t daysFromCivil(int year, unsigned month, unsigned day)
+    {
+      year -= month <= 2 ? 1 : 0;
+      const int era = (year >= 0 ? year : year - 399) / 400;
+      const unsigned yearOfEra = static_cast<unsigned>(year - era * 400);
+      const unsigned adjustedMonth = month > 2 ? month - 3 : month + 9;
+      const unsigned dayOfYear = (153 * adjustedMonth + 2) / 5 + day - 1;
+      const unsigned dayOfEra =
+        yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+      return static_cast<std::int64_t>(era) * 146097 + static_cast<std::int64_t>(dayOfEra);
+    }
+
+    bool parseLogTimestampMilliseconds(
+      const std::string& line,
+      std::string& timestamp,
+      std::int64_t& milliseconds)
+    {
+      for (std::size_t offset = 0; offset + 19 <= line.size(); ++offset)
+      {
+        if (!isDigit(line[offset])
+            || !isDigit(line[offset + 1])
+            || !isDigit(line[offset + 2])
+            || !isDigit(line[offset + 3])
+            || line[offset + 4] != '-'
+            || line[offset + 7] != '-'
+            || line[offset + 10] != ' '
+            || line[offset + 13] != ':'
+            || line[offset + 16] != ':')
+          continue;
+
+        int year = 0;
+        int month = 0;
+        int day = 0;
+        int hour = 0;
+        int minute = 0;
+        int second = 0;
+        if (!parseFixedInt(line, offset, 4, year)
+            || !parseFixedInt(line, offset + 5, 2, month)
+            || !parseFixedInt(line, offset + 8, 2, day)
+            || !parseFixedInt(line, offset + 11, 2, hour)
+            || !parseFixedInt(line, offset + 14, 2, minute)
+            || !parseFixedInt(line, offset + 17, 2, second))
+          continue;
+
+        if (month < 1 || month > 12 || day < 1 || day > 31
+            || hour < 0 || hour > 23 || minute < 0 || minute > 59
+            || second < 0 || second > 60)
+          continue;
+
+        int fractionalMilliseconds = 0;
+        std::size_t timestampEnd = offset + 19;
+        if (timestampEnd < line.size() && line[timestampEnd] == '.')
+        {
+          ++timestampEnd;
+          int scale = 100;
+          while (timestampEnd < line.size() && isDigit(line[timestampEnd]))
+          {
+            if (scale > 0)
+            {
+              fractionalMilliseconds += (line[timestampEnd] - '0') * scale;
+              scale /= 10;
+            }
+            ++timestampEnd;
+          }
+        }
+
+        const std::int64_t days =
+          daysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
+        milliseconds =
+          (((days * 24 + hour) * 60 + minute) * 60 + second) * 1000
+          + fractionalMilliseconds;
+        timestamp = line.substr(offset, timestampEnd - offset);
+        return true;
+      }
+
+      return false;
     }
 
     std::string sanitizeEvidenceValue(std::string value)
@@ -684,6 +791,139 @@ namespace BWAPI::Runtime
       return { tail.begin(), tail.end() };
     }
 
+    void updateSessionDurationRange(RuntimeSessionSummary& summary, int durationMilliseconds)
+    {
+      if (durationMilliseconds < 0)
+        return;
+
+      if (summary.shortestDurationMilliseconds < 0
+          || durationMilliseconds < summary.shortestDurationMilliseconds)
+        summary.shortestDurationMilliseconds = durationMilliseconds;
+
+      if (summary.longestDurationMilliseconds < 0
+          || durationMilliseconds > summary.longestDurationMilliseconds)
+        summary.longestDurationMilliseconds = durationMilliseconds;
+
+      summary.latestTransitionDurationMilliseconds = durationMilliseconds;
+    }
+
+    RuntimeSessionSummary summarizeRuntimeSessionEvents(
+      const std::vector<RuntimeSessionEvent>& events)
+    {
+      RuntimeSessionSummary summary;
+      RuntimeSessionEvent openStart;
+      std::string openStartTimestamp;
+      std::int64_t openStartMilliseconds = 0;
+      bool hasOpenStart = false;
+      bool hasOpenStartTimestamp = false;
+
+      for (const RuntimeSessionEvent& event : events)
+      {
+        if (event.category == "starcraft-session-started")
+        {
+          ++summary.startedEventCount;
+          summary.latestState = "running";
+          summary.latestReason = "latest StarCraft s1 event reports a running session";
+
+          if (!hasOpenStart)
+          {
+            openStart = event;
+            hasOpenStart = true;
+            hasOpenStartTimestamp =
+              parseLogTimestampMilliseconds(event.line, openStartTimestamp, openStartMilliseconds);
+          }
+          continue;
+        }
+
+        if (event.category == "starcraft-session-ended")
+        {
+          ++summary.endedEventCount;
+          summary.latestState = "stopped";
+          summary.latestReason = "latest StarCraft s1 event reports a stopped session";
+
+          if (hasOpenStart)
+          {
+            RuntimeSessionTransition transition;
+            transition.complete = true;
+            transition.startPath = openStart.path;
+            transition.endPath = event.path;
+            transition.startLine = openStart.line;
+            transition.endLine = event.line;
+            transition.startTimestamp = openStartTimestamp;
+
+            std::string endTimestamp;
+            std::int64_t endMilliseconds = 0;
+            const bool hasEndTimestamp =
+              parseLogTimestampMilliseconds(event.line, endTimestamp, endMilliseconds);
+            transition.endTimestamp = endTimestamp;
+
+            if (hasOpenStartTimestamp && hasEndTimestamp)
+            {
+              const std::int64_t duration = std::max<std::int64_t>(
+                0,
+                endMilliseconds - openStartMilliseconds);
+              transition.durationMilliseconds = duration > std::numeric_limits<int>::max()
+                ? std::numeric_limits<int>::max()
+                : static_cast<int>(duration);
+              transition.reason =
+                "StarCraft s1 session ended after "
+                + std::to_string(transition.durationMilliseconds)
+                + " ms";
+              updateSessionDurationRange(summary, transition.durationMilliseconds);
+            }
+            else
+            {
+              transition.reason = "StarCraft s1 session ended; timestamp unavailable";
+            }
+
+            ++summary.completeTransitionCount;
+            summary.transitions.push_back(transition);
+            hasOpenStart = false;
+            hasOpenStartTimestamp = false;
+          }
+          continue;
+        }
+
+        if (event.category == "starcraft-session-preexisting")
+        {
+          ++summary.preexistingEventCount;
+          summary.latestState = "preexisting";
+          summary.latestReason = "Battle.net reported a pre-existing StarCraft s1 session";
+          continue;
+        }
+
+        if (event.category == "starcraft-install-state")
+        {
+          ++summary.installStateEventCount;
+          continue;
+        }
+
+        ++summary.relatedEventCount;
+      }
+
+      if (hasOpenStart)
+      {
+        RuntimeSessionTransition transition;
+        transition.complete = false;
+        transition.startPath = openStart.path;
+        transition.startLine = openStart.line;
+        transition.startTimestamp = openStartTimestamp;
+        transition.reason = "StarCraft s1 session start has no matching stop event in collected logs";
+        ++summary.incompleteTransitionCount;
+        summary.transitions.push_back(transition);
+        summary.latestState = "running";
+        summary.latestReason = transition.reason;
+      }
+
+      if (summary.latestState.empty())
+      {
+        summary.latestState = "unknown";
+        summary.latestReason = "no StarCraft s1 session start/stop events were collected";
+      }
+
+      return summary;
+    }
+
 #if !defined(_WIN32)
     bool forkExecProcess(
       const std::string& target,
@@ -957,6 +1197,7 @@ namespace BWAPI::Runtime
     evidence.processes = collectObservedProcesses(installation);
     evidence.logs = collectRuntimeLogExcerpts(installation, 4, 20);
     evidence.sessionEvents = collectRuntimeSessionEvents(installation, 8, 50);
+    evidence.sessionSummary = summarizeRuntimeSessionEvents(evidence.sessionEvents);
     return evidence;
   }
 
@@ -1014,6 +1255,55 @@ namespace BWAPI::Runtime
     }
 
     writeEvidenceField(output, "session.event_count", static_cast<int>(evidence.sessionEvents.size()));
+    writeEvidenceField(output, "session.started_event_count", evidence.sessionSummary.startedEventCount);
+    writeEvidenceField(output, "session.ended_event_count", evidence.sessionSummary.endedEventCount);
+    writeEvidenceField(output, "session.preexisting_event_count", evidence.sessionSummary.preexistingEventCount);
+    writeEvidenceField(output, "session.install_state_event_count", evidence.sessionSummary.installStateEventCount);
+    writeEvidenceField(output, "session.related_event_count", evidence.sessionSummary.relatedEventCount);
+    writeEvidenceField(
+      output,
+      "session.transition_count",
+      static_cast<int>(evidence.sessionSummary.transitions.size()));
+    writeEvidenceField(
+      output,
+      "session.complete_transition_count",
+      evidence.sessionSummary.completeTransitionCount);
+    writeEvidenceField(
+      output,
+      "session.incomplete_transition_count",
+      evidence.sessionSummary.incompleteTransitionCount);
+    if (evidence.sessionSummary.shortestDurationMilliseconds >= 0)
+      writeEvidenceField(
+        output,
+        "session.shortest_transition_duration_ms",
+        evidence.sessionSummary.shortestDurationMilliseconds);
+    if (evidence.sessionSummary.longestDurationMilliseconds >= 0)
+      writeEvidenceField(
+        output,
+        "session.longest_transition_duration_ms",
+        evidence.sessionSummary.longestDurationMilliseconds);
+    if (evidence.sessionSummary.latestTransitionDurationMilliseconds >= 0)
+      writeEvidenceField(
+        output,
+        "session.latest_transition_duration_ms",
+        evidence.sessionSummary.latestTransitionDurationMilliseconds);
+    writeEvidenceField(output, "session.latest_state", evidence.sessionSummary.latestState);
+    writeEvidenceField(output, "session.latest_reason", evidence.sessionSummary.latestReason);
+    for (std::size_t i = 0; i < evidence.sessionSummary.transitions.size(); ++i)
+    {
+      const RuntimeSessionTransition& transition = evidence.sessionSummary.transitions[i];
+      const std::string prefix = "session.transition." + std::to_string(i) + ".";
+      writeEvidenceField(output, prefix + "complete", transition.complete);
+      if (transition.durationMilliseconds >= 0)
+        writeEvidenceField(output, prefix + "duration_ms", transition.durationMilliseconds);
+      writeEvidenceField(output, prefix + "start_timestamp", transition.startTimestamp);
+      writeEvidenceField(output, prefix + "end_timestamp", transition.endTimestamp);
+      writeEvidenceField(output, prefix + "start_path", transition.startPath);
+      writeEvidenceField(output, prefix + "end_path", transition.endPath);
+      writeEvidenceField(output, prefix + "start_line", transition.startLine);
+      writeEvidenceField(output, prefix + "end_line", transition.endLine);
+      writeEvidenceField(output, prefix + "reason", transition.reason);
+    }
     for (std::size_t i = 0; i < evidence.sessionEvents.size(); ++i)
     {
       const RuntimeSessionEvent& event = evidence.sessionEvents[i];

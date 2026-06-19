@@ -59,8 +59,8 @@ int main()
   writeFile(
     logFile,
     "first line\n"
-    "I 2026-06-19 [InstallManager] Setting Process Running: true uid=s1 binaryType=game any=true\n"
-    "I 2026-06-19 [InstallManager] Game is no longer running: s1\n"
+    "I 2026-06-19 08:00:00.100000 [InstallManager] Setting Process Running: true uid=s1 binaryType=game any=true\n"
+    "I 2026-06-19 08:00:06.350000 [InstallManager] Game is no longer running: s1\n"
     "launch handoff failed in test\n");
 
   setEnvValue("STARCRAFT_API_INSTALL_DIR", installRoot.string());
@@ -104,12 +104,24 @@ int main()
   assert(evidence.logs.front().path.find("battle.net-test.log") != std::string::npos);
   assert(evidence.sessionEvents.size() == 2);
   assert(evidence.sessionEvents.front().category == "starcraft-session-started");
+  assert(evidence.sessionSummary.startedEventCount == 1);
+  assert(evidence.sessionSummary.endedEventCount == 1);
+  assert(evidence.sessionSummary.completeTransitionCount == 1);
+  assert(evidence.sessionSummary.incompleteTransitionCount == 0);
+  assert(evidence.sessionSummary.latestState == "stopped");
+  assert(evidence.sessionSummary.latestTransitionDurationMilliseconds == 6250);
+  assert(evidence.sessionSummary.transitions.size() == 1);
+  assert(evidence.sessionSummary.transitions.front().complete);
+  assert(evidence.sessionSummary.transitions.front().durationMilliseconds == 6250);
 
   const std::string report = makeRuntimeEvidenceReport(evidence);
   assert(report.find("evidence.schema=starcraft-api.runtime-evidence.v1") != std::string::npos);
   assert(report.find("runtime.reason=unit test launch did not run") != std::string::npos);
   assert(report.find("executable.fnv1a64=") != std::string::npos);
   assert(report.find("launch handoff failed in test") != std::string::npos);
+  assert(report.find("session.complete_transition_count=1") != std::string::npos);
+  assert(report.find("session.latest_transition_duration_ms=6250") != std::string::npos);
+  assert(report.find("session.transition.0.duration_ms=6250") != std::string::npos);
   assert(report.find("session.event.0.category=starcraft-session-started") != std::string::npos);
   assert(report.find("session.event.1.category=starcraft-session-ended") != std::string::npos);
 

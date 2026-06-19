@@ -95,6 +95,14 @@ starcraft-runtime-gap-report \
 
 Incomplete bootstrap manifests remain non-production, but the report preserves product/version identity so the remaining gaps are attributed to the StarCraft Remastered backend instead of collapsing to `unknown`.
 
+`starcraft-runtime-launch --evidence-out` also summarizes parsed Battle.net `s1` session transitions:
+
+- `session.latest_state` records whether the latest collected StarCraft session event is running, stopped, pre-existing, or unknown.
+- `session.shortest_transition_duration_ms`, `session.longest_transition_duration_ms`, and `session.latest_transition_duration_ms` quantify how long observed StarCraft sessions stayed running before Battle.net reported stop events.
+- `session.transition.*` keeps the paired start/stop timestamps and source log lines for attach debugging.
+
+These fields are diagnostic evidence, not readiness evidence. If sessions stop after only a few seconds and no stable StarCraft process id is visible, the production gate must continue to fail with `runtime-process-identified` and executor preflight gaps.
+
 ## Runtime Executor Preflight
 
 `RuntimeExecutor` separates three release-gate signals:

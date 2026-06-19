@@ -30,7 +30,7 @@ The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `
 
 If Battle.net is already handling StarCraft startup, the launcher does not spawn another Battle.net instance. It only exports `STARCRAFT_API_PROCESS_ID` when the actual StarCraft game executable is visible and stable.
 
-Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, and parsed StarCraft session start/stop events. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
+Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, parsed StarCraft session start/stop events, and session transition duration summaries. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
 
 ## Validation
 

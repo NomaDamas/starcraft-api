@@ -47,6 +47,11 @@ int main()
   ContractValidationResult resolvedValidation = validateRuntimeContract(resolved);
   assert(resolvedValidation.valid);
   assert(resolvedValidation.errors.empty());
+  assert(findRuntimeBinding(resolved, "BW::BWDATA::Game", BindingKind::DataAddress) != nullptr);
+  assert(findRuntimeBinding(resolved, "BW::BWDATA::Game", BindingKind::FunctionAddress) == nullptr);
+  assert(findStructureLayout(resolved, "BW::CUnit") != nullptr);
+  assert(findStructureField(resolved, "BW::CUnit", "position") != nullptr);
+  assert(findStructureField(resolved, "BW::CUnit", "missing") == nullptr);
 
   RuntimeProbeResult incompleteProbe;
   incompleteProbe.supported = true;

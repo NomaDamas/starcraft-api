@@ -74,6 +74,17 @@ namespace BWAPI::Runtime
 
   RuntimeContract makeBroodWar1161ParityContract();
   RuntimeContract makeRemasteredParityContract(std::string version);
+  const RuntimeBinding* findRuntimeBinding(
+    const RuntimeContract& contract,
+    const std::string& name,
+    BindingKind kind);
+  const StructureLayout* findStructureLayout(
+    const RuntimeContract& contract,
+    const std::string& name);
+  const StructureField* findStructureField(
+    const RuntimeContract& contract,
+    const std::string& structureName,
+    const std::string& fieldName);
   ContractValidationResult validateRuntimeContract(const RuntimeContract& contract);
   bool hasCapability(const RuntimeProbeResult& probe, Capability capability);
   bool canClaimProductionSupport(const RuntimeProbeResult& probe, const RuntimeContract& contract);

@@ -174,6 +174,54 @@ namespace BWAPI::Runtime
     return contract;
   }
 
+  const RuntimeBinding* findRuntimeBinding(
+    const RuntimeContract& contract,
+    const std::string& name,
+    BindingKind kind)
+  {
+    auto it = std::find_if(
+      contract.bindings.begin(),
+      contract.bindings.end(),
+      [&](const RuntimeBinding& binding)
+      {
+        return binding.name == name && binding.kind == kind;
+      });
+    return it == contract.bindings.end() ? nullptr : &*it;
+  }
+
+  const StructureLayout* findStructureLayout(
+    const RuntimeContract& contract,
+    const std::string& name)
+  {
+    auto it = std::find_if(
+      contract.structures.begin(),
+      contract.structures.end(),
+      [&](const StructureLayout& structure)
+      {
+        return structure.name == name;
+      });
+    return it == contract.structures.end() ? nullptr : &*it;
+  }
+
+  const StructureField* findStructureField(
+    const RuntimeContract& contract,
+    const std::string& structureName,
+    const std::string& fieldName)
+  {
+    const StructureLayout* structure = findStructureLayout(contract, structureName);
+    if (structure == nullptr)
+      return nullptr;
+
+    auto it = std::find_if(
+      structure->fields.begin(),
+      structure->fields.end(),
+      [&](const StructureField& field)
+      {
+        return field.name == fieldName;
+      });
+    return it == structure->fields.end() ? nullptr : &*it;
+  }
+
   ContractValidationResult validateRuntimeContract(const RuntimeContract& contract)
   {
     ContractValidationResult result;

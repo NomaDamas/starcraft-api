@@ -26,3 +26,5 @@ The production gate is `canClaimProductionSupport(probe, contract)`. A backend c
 - The backend exposes every BWAPI parity capability required by the contract.
 
 Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, and `STARCRAFT_API_EXECUTABLE` for non-interactive runtime selection. Use `starcraft-runtime-probe --require-production` in release gates; it exits non-zero until full parity support is validated.
+
+Use `bwapi-api-surface-audit` to lock the public abstract API surface. The current parity baseline is 385 pure virtual methods across `Game`, `UnitInterface`, `PlayerInterface`, `BulletInterface`, `RegionInterface`, and `ForceInterface`.

@@ -62,6 +62,13 @@ cxxflags=${CXXFLAGS:-}
 "$bin_dir/starcraft-runtime-probe" >/dev/null
 
 "$cxx" -std=c++17 $cxxflags \
+  -DSTARCRAFT_API_SOURCE_DIR="\"$repo_root\"" \
+  "$repo_root/tools/api_surface_audit.cpp" \
+  -o "$bin_dir/bwapi-api-surface-audit"
+
+"$bin_dir/bwapi-api-surface-audit" >/dev/null
+
+"$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
   -I "$generated_dir" \
   "$repo_root/bwapi/BWAPILIB/Source/AIModule.cpp" \

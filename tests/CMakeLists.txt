@@ -26,6 +26,10 @@ if(TARGET starcraft-runtime-probe)
   set_tests_properties(runtime_probe_require_production_fails PROPERTIES WILL_FAIL TRUE)
 endif()
 
+if(TARGET bwapi-api-surface-audit)
+  add_test(NAME bwapi_api_surface_audit COMMAND bwapi-api-surface-audit)
+endif()
+
 add_executable(public_api_smoke_test
   public_api_smoke_test.cpp
 )

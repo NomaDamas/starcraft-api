@@ -97,6 +97,14 @@ if(STARCRAFT_API_BUILD_TOOLS)
     PRIVATE
       StarCraftAPI::runtime
   )
+
+  add_executable(bwapi-api-surface-audit
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/api_surface_audit.cpp"
+  )
+  target_compile_definitions(bwapi-api-surface-audit
+    PRIVATE
+      STARCRAFT_API_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  )
 endif()
 
 if(STARCRAFT_API_BUILD_TESTS)

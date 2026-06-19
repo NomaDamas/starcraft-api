@@ -84,6 +84,40 @@ namespace BWAPI::Runtime
     return "unknown";
   }
 
+  bool parseBindingKind(const std::string& value, BindingKind& kind)
+  {
+    if (value == "data-address")
+      kind = BindingKind::DataAddress;
+    else if (value == "function-address")
+      kind = BindingKind::FunctionAddress;
+    else if (value == "imported-function")
+      kind = BindingKind::ImportedFunction;
+    else if (value == "structure-layout")
+      kind = BindingKind::StructureLayout;
+    else if (value == "hook-point")
+      kind = BindingKind::HookPoint;
+    else if (value == "command-queue")
+      kind = BindingKind::CommandQueue;
+    else if (value == "transport")
+      kind = BindingKind::Transport;
+    else
+      return false;
+
+    return true;
+  }
+
+  bool parseBindingRequirement(const std::string& value, BindingRequirement& requirement)
+  {
+    if (value == "required")
+      requirement = BindingRequirement::Required;
+    else if (value == "optional")
+      requirement = BindingRequirement::Optional;
+    else
+      return false;
+
+    return true;
+  }
+
   RuntimeContract makeBroodWar1161ParityContract()
   {
     RuntimeContract contract;

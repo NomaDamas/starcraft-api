@@ -45,6 +45,7 @@ namespace BWAPI::Runtime
     Product product = Product::Unknown;
     std::string version;
     std::string executablePath;
+    std::string manifestPath;
 
     static RuntimeEnvironment detectHost();
   };
@@ -90,6 +91,7 @@ namespace BWAPI::Runtime
   const char* toString(RuntimeSessionState state);
   Platform parsePlatform(const std::string& value);
   Product parseProduct(const std::string& value);
+  bool parseCapability(const std::string& value, Capability& capability);
 
   std::unique_ptr<RuntimeBackend> createRuntimeBackend(const RuntimeEnvironment& environment);
 }

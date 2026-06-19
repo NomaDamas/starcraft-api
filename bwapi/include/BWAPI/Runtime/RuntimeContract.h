@@ -69,6 +69,8 @@ namespace BWAPI::Runtime
 
   const char* toString(BindingKind kind);
   const char* toString(BindingRequirement requirement);
+  bool parseBindingKind(const std::string& value, BindingKind& kind);
+  bool parseBindingRequirement(const std::string& value, BindingRequirement& requirement);
 
   RuntimeContract makeBroodWar1161ParityContract();
   RuntimeContract makeRemasteredParityContract(std::string version);

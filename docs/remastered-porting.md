@@ -26,6 +26,31 @@ The production gate is `canClaimProductionSupport(probe, contract)`. A backend c
 - The backend exposes every BWAPI parity capability required by the contract.
 - The backend reports at least 385 implemented BWAPI abstract API methods.
 
-Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, and `STARCRAFT_API_EXECUTABLE` for non-interactive runtime selection. Use `starcraft-runtime-probe --require-production` in release gates; it exits non-zero until full parity support is validated.
+Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, `STARCRAFT_API_EXECUTABLE`, and `STARCRAFT_API_MANIFEST` for non-interactive runtime selection. Use `starcraft-runtime-probe --require-production` in release gates; it exits non-zero until full parity support is validated.
 
 Use `bwapi-api-surface-audit` to lock the public abstract API surface. The current parity baseline is 385 pure virtual methods across `Game`, `UnitInterface`, `PlayerInterface`, `BulletInterface`, `RegionInterface`, and `ForceInterface`.
+
+## Runtime Manifest Format
+
+StarCraft Remastered support must be described by a version-specific runtime manifest before code can claim parity. The manifest is line based, has no external parser dependency, supports `#` comments, and uses these directives:
+
+```text
+product starcraft-remastered
+version <exact-client-build>
+api-surface-methods 385
+capability <capability-name>
+binding <name> <kind> <required|optional> <evidence-id>
+structure <name> <size> <required|optional>
+field <structure>.<field> <offset> <size>
+```
+
+`binding`, `structure`, and `field` entries are matched against the BWAPI parity contract. Unknown entries produce warnings; missing required entries keep the contract invalid. A complete fixture exists at `tests/fixtures/remastered-complete.manifest`, and `runtime_manifest_test` proves that a full manifest validates while an incomplete manifest fails.
+
+Run a manifest through the probe with:
+
+```sh
+STARCRAFT_API_PRODUCT=starcraft-remastered \
+  starcraft-runtime-probe --manifest tests/fixtures/remastered-complete.manifest
+```
+
+A valid manifest only proves that versioned offsets, symbols, structure fields, capabilities, and API surface declarations are complete. It does not by itself prove that the macOS/Linux runtime executor can attach, read state, issue commands, render overlays, or satisfy Battle.net synchronization rules; `production.supported` remains false until the backend probe proves those runtime behaviors.

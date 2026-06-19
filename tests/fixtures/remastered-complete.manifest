@@ -1,0 +1,62 @@
+# StarCraft Remastered parity manifest fixture.
+product starcraft-remastered
+version test-build
+api-surface-methods 385
+
+capability read-game-state
+capability read-map-data
+capability read-unit-data
+capability read-bullet-data
+capability read-player-data
+capability read-region-data
+capability issue-commands
+capability draw-overlays
+capability dispatch-events
+capability replay-analysis
+capability multiplayer-sync
+capability battle-net
+capability load-ai-modules
+capability shared-memory-client
+
+binding BW::BWDATA::Game data-address required fixture:game
+binding BW::BWDATA::Players data-address required fixture:players
+binding BW::BWDATA::UnitNodeTable data-address required fixture:unit-node-table
+binding BW::BWDATA::BulletNodeTable data-address required fixture:bullet-node-table
+binding BW::BWDATA::MapTileArray data-address required fixture:map-tile-array
+binding BW::BWDATA::sgdwBytesInCmdQueue command-queue required fixture:bytes-in-command-queue
+binding BW::BWDATA::TurnBuffer command-queue required fixture:turn-buffer
+binding BW::BWFXN_ExecuteGameTriggers function-address required fixture:execute-game-triggers
+binding Storm::SNetReceiveMessage imported-function required fixture:snet-receive-message
+binding Storm::SNetSendTurn imported-function required fixture:snet-send-turn
+binding draw-game-layer-hook hook-point required fixture:draw-game-layer-hook
+binding ai-module-loader transport required fixture:ai-module-loader
+binding shared-memory-client-transport transport required fixture:shared-memory-client
+
+structure BW::BWGame 256 required
+field BW::BWGame.players 0x00 4
+field BW::BWGame.alliance 0x04 4
+field BW::BWGame.elapsedFrames 0x08 4
+
+structure BW::CUnit 512 required
+field BW::CUnit.id 0x00 4
+field BW::CUnit.position 0x04 8
+field BW::CUnit.hitPoints 0x0c 4
+field BW::CUnit.order 0x10 4
+field BW::CUnit.player 0x14 4
+
+structure BW::CBullet 128 required
+field BW::CBullet.position 0x00 8
+field BW::CBullet.velocity 0x08 8
+field BW::CBullet.sourceUnit 0x10 8
+field BW::CBullet.target 0x18 8
+
+structure BW::PlayerInfo 128 required
+field BW::PlayerInfo.stormId 0x00 4
+field BW::PlayerInfo.race 0x04 4
+field BW::PlayerInfo.resources 0x08 8
+field BW::PlayerInfo.supply 0x10 8
+
+structure BW::ReplayHeader 256 required
+field BW::ReplayHeader.mapName 0x00 32
+field BW::ReplayHeader.frameCount 0x20 4
+field BW::ReplayHeader.playerCount 0x24 4

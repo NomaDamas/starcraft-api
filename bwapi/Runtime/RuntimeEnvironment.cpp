@@ -24,6 +24,8 @@ namespace BWAPI::Runtime
       environment.version = version;
     if (const char* executable = std::getenv("STARCRAFT_API_EXECUTABLE"))
       environment.executablePath = executable;
+    if (const char* manifest = std::getenv("STARCRAFT_API_MANIFEST"))
+      environment.manifestPath = manifest;
 
     return environment;
   }

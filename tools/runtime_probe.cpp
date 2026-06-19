@@ -1,5 +1,6 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeManifest.h>
 
 #include <iostream>
 #include <memory>
@@ -34,14 +35,24 @@ namespace
 int main(int argc, char** argv)
 {
   bool requireProduction = false;
+  std::string manifestPath;
   for (int i = 1; i < argc; ++i)
   {
     const std::string arg = argv[i];
     if (arg == "--require-production")
       requireProduction = true;
+    else if (arg == "--manifest")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--manifest requires a path\n";
+        return 64;
+      }
+      manifestPath = argv[++i];
+    }
     else if (arg == "--help" || arg == "-h")
     {
-      std::cout << "usage: starcraft-runtime-probe [--require-production]\n";
+      std::cout << "usage: starcraft-runtime-probe [--manifest <path>] [--require-production]\n";
       return 0;
     }
     else
@@ -52,11 +63,16 @@ int main(int argc, char** argv)
   }
 
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
+  if (!manifestPath.empty())
+    environment.manifestPath = manifestPath;
+
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);
 
   std::cout << "platform=" << toString(environment.platform) << '\n';
   std::cout << "product=" << toString(environment.product) << '\n';
   std::cout << "version=" << (environment.version.empty() ? "unknown" : environment.version) << '\n';
+  if (!environment.manifestPath.empty())
+    std::cout << "manifest.path=" << environment.manifestPath << '\n';
   std::cout << "backend.name=" << backend->name() << '\n';
 
   RuntimeProbeResult probe = backend->probe();
@@ -76,6 +92,24 @@ int main(int argc, char** argv)
   std::cout << "state.after_close=" << toString(backend->state()) << '\n';
 
   RuntimeContract contract = contractFor(environment);
+  if (!environment.manifestPath.empty())
+  {
+    RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
+    std::cout << "manifest.loaded=" << (manifest.loaded ? "true" : "false") << '\n';
+    for (const std::string& error : manifest.errors)
+      std::cout << "manifest.error=" << error << '\n';
+    for (const std::string& warning : manifest.warnings)
+      std::cout << "manifest.warning=" << warning << '\n';
+    if (manifest.loaded)
+    {
+      contract = manifest.manifest.contract;
+      std::cout << "manifest.implemented_api_surface_methods="
+                << manifest.manifest.implementedApiSurfaceMethods << '\n';
+      for (Capability capability : manifest.manifest.capabilities)
+        std::cout << "manifest.capability=" << toString(capability) << '\n';
+    }
+  }
+
   std::cout << "contract.required_api_surface_methods=" << contract.requiredApiSurfaceMethods << '\n';
   ContractValidationResult validation = validateRuntimeContract(contract);
   printValidation(validation);

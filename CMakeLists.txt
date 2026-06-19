@@ -70,6 +70,7 @@ add_library(starcraft_runtime STATIC
   "${BWAPI_ROOT}/Runtime/RuntimeBackendFactory.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeContract.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeEnvironment.cpp"
+  "${BWAPI_ROOT}/Runtime/RuntimeManifest.cpp"
   "${BWAPI_ROOT}/Runtime/UnsupportedRuntimeBackend.cpp"
 )
 

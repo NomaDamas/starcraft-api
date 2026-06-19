@@ -1,6 +1,7 @@
 #include "RemasteredRuntimeBackend.h"
 
 #include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeManifest.h>
 
 #include <sstream>
 #include <utility>
@@ -12,12 +13,21 @@ namespace BWAPI::Runtime
     std::string unsupportedReason(const RuntimeEnvironment& environment)
     {
       RuntimeContract contract = makeRemasteredParityContract(environment.version.empty() ? "unknown" : environment.version);
+      if (!environment.manifestPath.empty())
+      {
+        RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
+        if (manifest.loaded)
+          contract = manifest.manifest.contract;
+      }
+
       ContractValidationResult validation = validateRuntimeContract(contract);
 
       std::ostringstream message;
-      message << "StarCraft Remastered runtime adapter is not implemented. "
+      message << "StarCraft Remastered runtime executor is not implemented. "
               << "The parity contract currently has " << validation.errors.size()
               << " unresolved production gate error(s).";
+      if (!environment.manifestPath.empty())
+        message << " Runtime manifest: " << environment.manifestPath << '.';
       return message.str();
     }
   }

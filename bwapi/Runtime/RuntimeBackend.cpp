@@ -103,4 +103,41 @@ namespace BWAPI::Runtime
       return Product::StarCraftBroodWar1161;
     return Product::Unknown;
   }
+
+  bool parseCapability(const std::string& value, Capability& capability)
+  {
+    const std::string key = normalized(value);
+    if (key == "read-game-state")
+      capability = Capability::ReadGameState;
+    else if (key == "read-map-data")
+      capability = Capability::ReadMapData;
+    else if (key == "read-unit-data")
+      capability = Capability::ReadUnitData;
+    else if (key == "read-bullet-data")
+      capability = Capability::ReadBulletData;
+    else if (key == "read-player-data")
+      capability = Capability::ReadPlayerData;
+    else if (key == "read-region-data")
+      capability = Capability::ReadRegionData;
+    else if (key == "issue-commands")
+      capability = Capability::IssueCommands;
+    else if (key == "draw-overlays")
+      capability = Capability::DrawOverlays;
+    else if (key == "dispatch-events")
+      capability = Capability::DispatchEvents;
+    else if (key == "replay-analysis")
+      capability = Capability::ReplayAnalysis;
+    else if (key == "multiplayer-sync")
+      capability = Capability::MultiplayerSync;
+    else if (key == "battle-net")
+      capability = Capability::BattleNet;
+    else if (key == "load-ai-modules")
+      capability = Capability::LoadAIModules;
+    else if (key == "shared-memory-client")
+      capability = Capability::SharedMemoryClient;
+    else
+      return false;
+
+    return true;
+  }
 }

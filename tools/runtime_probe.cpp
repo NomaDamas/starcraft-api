@@ -2,6 +2,7 @@
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
+#include <BWAPI/Runtime/RuntimeReadiness.h>
 
 #include <iostream>
 #include <memory>
@@ -67,6 +68,21 @@ int main(int argc, char** argv)
   if (!manifestPath.empty())
     environment.manifestPath = manifestPath;
 
+  RuntimeManifestLoadResult manifest;
+  if (!environment.manifestPath.empty())
+  {
+    manifest = loadRuntimeManifestFile(environment.manifestPath);
+    if (manifest.loaded)
+    {
+      environment.product = manifest.manifest.contract.product;
+      environment.version = manifest.manifest.contract.version;
+    }
+  }
+
+  RuntimeContract contract = contractFor(environment);
+  if (manifest.loaded)
+    contract = manifest.manifest.contract;
+
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);
 
   std::cout << "platform=" << toString(environment.platform) << '\n';
@@ -99,10 +115,8 @@ int main(int argc, char** argv)
   backend->close();
   std::cout << "state.after_close=" << toString(backend->state()) << '\n';
 
-  RuntimeContract contract = contractFor(environment);
   if (!environment.manifestPath.empty())
   {
-    RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
     std::cout << "manifest.loaded=" << (manifest.loaded ? "true" : "false") << '\n';
     for (const std::string& error : manifest.errors)
       std::cout << "manifest.error=" << error << '\n';
@@ -139,7 +153,11 @@ int main(int argc, char** argv)
   for (const std::string& warning : preflight.warnings)
     std::cout << "executor.warning=" << warning << '\n';
 
-  const bool productionSupported = canClaimProductionSupport(probe, contract);
+  RuntimeReadinessReport readiness = evaluateProductionReadiness(probe, contract, preflight);
+  for (const RuntimeReadinessCheck& gap : blockingReadinessGaps(readiness))
+    std::cout << "production.gap=" << gap.id << '\n';
+
+  const bool productionSupported = readiness.productionReady;
   std::cout << "production.supported=" << (productionSupported ? "true" : "false") << '\n';
 
   if (requireProduction && !productionSupported)

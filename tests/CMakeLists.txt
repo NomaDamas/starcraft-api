@@ -63,6 +63,17 @@ target_link_libraries(runtime_executor_test
 
 add_test(NAME runtime_executor_test COMMAND runtime_executor_test)
 
+add_executable(runtime_readiness_test
+  runtime_readiness_test.cpp
+)
+
+target_link_libraries(runtime_readiness_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_readiness_test COMMAND runtime_readiness_test)
+
 add_executable(runtime_process_memory_test
   runtime_process_memory_test.cpp
 )
@@ -89,6 +100,12 @@ if(TARGET starcraft-runtime-probe)
   add_test(NAME runtime_probe_cli_test COMMAND starcraft-runtime-probe)
   add_test(NAME runtime_probe_require_production_fails COMMAND starcraft-runtime-probe --require-production)
   set_tests_properties(runtime_probe_require_production_fails PROPERTIES WILL_FAIL TRUE)
+endif()
+
+if(TARGET starcraft-runtime-gap-report)
+  add_test(NAME runtime_gap_report_cli_test COMMAND starcraft-runtime-gap-report)
+  add_test(NAME runtime_gap_report_require_production_fails COMMAND starcraft-runtime-gap-report --require-production)
+  set_tests_properties(runtime_gap_report_require_production_fails PROPERTIES WILL_FAIL TRUE)
 endif()
 
 if(TARGET bwapi-api-surface-audit)

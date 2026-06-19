@@ -75,6 +75,7 @@ add_library(starcraft_runtime STATIC
   "${BWAPI_ROOT}/Runtime/RuntimeManifest.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeProcess.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeProcessMemory.cpp"
+  "${BWAPI_ROOT}/Runtime/RuntimeReadiness.cpp"
   "${BWAPI_ROOT}/Runtime/UnsupportedRuntimeBackend.cpp"
 )
 
@@ -99,6 +100,14 @@ if(STARCRAFT_API_BUILD_TOOLS)
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_probe.cpp"
   )
   target_link_libraries(starcraft-runtime-probe
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+
+  add_executable(starcraft-runtime-gap-report
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_gap_report.cpp"
+  )
+  target_link_libraries(starcraft-runtime-gap-report
     PRIVATE
       StarCraftAPI::runtime
   )

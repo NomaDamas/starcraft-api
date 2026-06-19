@@ -54,6 +54,18 @@ namespace BWAPI::Runtime
   RuntimeProbeResult RemasteredRuntimeBackend::probe() const
   {
     RuntimeProbeResult result;
+    if (!environment_.manifestPath.empty())
+    {
+      RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment_.manifestPath);
+      if (manifest.loaded)
+      {
+        result.capabilities = manifest.manifest.capabilities;
+        result.implementedUnitCommands = manifest.manifest.unitCommands;
+        result.implementedGameActions = manifest.manifest.gameActions;
+        result.implementedApiSurfaceMethods = manifest.manifest.implementedApiSurfaceMethods;
+        result.implementedCommandSurfaceEntries = manifest.manifest.implementedCommandSurfaceEntries;
+      }
+    }
     result.supported = false;
     result.reason = unsupportedReason(environment_);
     return result;

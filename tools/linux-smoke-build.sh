@@ -32,6 +32,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_backend_test.cpp" \
   -o "$bin_dir/runtime_backend_test"
@@ -59,6 +60,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_contract_test.cpp" \
   -o "$bin_dir/runtime_contract_test"
@@ -79,6 +81,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_manifest_test.cpp" \
   -o "$bin_dir/runtime_manifest_test"
@@ -99,11 +102,23 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_executor_test.cpp" \
   -o "$bin_dir/runtime_executor_test"
 
 "$bin_dir/runtime_executor_test"
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
+  "$repo_root/tests/runtime_readiness_test.cpp" \
+  -o "$bin_dir/runtime_readiness_test"
+
+"$bin_dir/runtime_readiness_test"
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
@@ -136,11 +151,31 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tools/runtime_probe.cpp" \
   -o "$bin_dir/starcraft-runtime-probe"
 
 "$bin_dir/starcraft-runtime-probe" >/dev/null
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/Legacy1161RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
+  "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/tools/runtime_gap_report.cpp" \
+  -o "$bin_dir/starcraft-runtime-gap-report"
+
+"$bin_dir/starcraft-runtime-gap-report" >/dev/null
 
 "$cxx" -std=c++17 $cxxflags \
   -DSTARCRAFT_API_SOURCE_DIR="\"$repo_root\"" \

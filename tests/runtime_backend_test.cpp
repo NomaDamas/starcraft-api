@@ -11,6 +11,10 @@ int main()
   RuntimeEnvironment detected = RuntimeEnvironment::detectHost();
   assert(detected.platform != Platform::Unknown);
   assert(std::string(toString(detected.platform)) != "unknown");
+  assert(parsePlatform("darwin") == Platform::MacOS);
+  assert(parsePlatform("linux") == Platform::Linux);
+  assert(parseProduct("scr") == Product::StarCraftRemastered);
+  assert(parseProduct("bw_1_16_1") == Product::StarCraftBroodWar1161);
 
   RuntimeEnvironment remastered = detected;
   remastered.product = Product::StarCraftRemastered;

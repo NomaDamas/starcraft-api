@@ -1,5 +1,7 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 
+#include <cstdlib>
+
 namespace BWAPI::Runtime
 {
   RuntimeEnvironment RuntimeEnvironment::detectHost()
@@ -15,6 +17,13 @@ namespace BWAPI::Runtime
 #else
     environment.platform = Platform::Unknown;
 #endif
+
+    if (const char* product = std::getenv("STARCRAFT_API_PRODUCT"))
+      environment.product = parseProduct(product);
+    if (const char* version = std::getenv("STARCRAFT_API_VERSION"))
+      environment.version = version;
+    if (const char* executable = std::getenv("STARCRAFT_API_EXECUTABLE"))
+      environment.executablePath = executable;
 
     return environment;
   }

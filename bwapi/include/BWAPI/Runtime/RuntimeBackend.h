@@ -87,6 +87,8 @@ namespace BWAPI::Runtime
   const char* toString(Product product);
   const char* toString(Capability capability);
   const char* toString(RuntimeSessionState state);
+  Platform parsePlatform(const std::string& value);
+  Product parseProduct(const std::string& value);
 
   std::unique_ptr<RuntimeBackend> createRuntimeBackend(const RuntimeEnvironment& environment);
 }

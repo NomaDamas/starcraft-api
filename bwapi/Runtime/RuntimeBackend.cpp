@@ -1,7 +1,29 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 namespace BWAPI::Runtime
 {
+  namespace
+  {
+    std::string normalized(std::string value)
+    {
+      std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](unsigned char ch)
+        {
+          if (ch == '_' || ch == ' ' || ch == '.')
+            return '-';
+          return static_cast<char>(std::tolower(ch));
+        });
+      return value;
+    }
+  }
+
   RuntimeBackend::~RuntimeBackend() = default;
 
   const char* toString(Platform platform)
@@ -58,5 +80,27 @@ namespace BWAPI::Runtime
     case RuntimeSessionState::Failed: return "failed";
     }
     return "unknown";
+  }
+
+  Platform parsePlatform(const std::string& value)
+  {
+    const std::string key = normalized(value);
+    if (key == "windows" || key == "win32" || key == "win64")
+      return Platform::Windows;
+    if (key == "macos" || key == "mac-os" || key == "darwin" || key == "osx")
+      return Platform::MacOS;
+    if (key == "linux")
+      return Platform::Linux;
+    return Platform::Unknown;
+  }
+
+  Product parseProduct(const std::string& value)
+  {
+    const std::string key = normalized(value);
+    if (key == "starcraft-remastered" || key == "remastered" || key == "scr")
+      return Product::StarCraftRemastered;
+    if (key == "starcraft-brood-war-1-16-1" || key == "brood-war-1-16-1" || key == "bw-1-16-1" || key == "1161")
+      return Product::StarCraftBroodWar1161;
+    return Product::Unknown;
   }
 }

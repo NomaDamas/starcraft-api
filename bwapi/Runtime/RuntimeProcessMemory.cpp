@@ -27,6 +27,13 @@ namespace BWAPI::Runtime
       return result;
     }
 
+    RuntimeMemoryWriteResult writeFailure(std::string reason)
+    {
+      RuntimeMemoryWriteResult result;
+      result.reason = std::move(reason);
+      return result;
+    }
+
     std::string errnoMessage(const char* operation)
     {
       std::ostringstream message;
@@ -139,6 +146,100 @@ namespace BWAPI::Runtime
     return result;
 #else
     return failure("process memory reads are unsupported on this platform");
+#endif
+  }
+
+  RuntimeMemoryWriteResult writeProcessMemory(
+    int processId,
+    std::uintptr_t address,
+    const void* bytes,
+    std::size_t size)
+  {
+    if (processId <= 0)
+      return writeFailure("process id must be positive");
+    if (address == 0)
+      return writeFailure("memory address must be non-zero");
+    if (bytes == nullptr)
+      return writeFailure("write buffer must be non-null");
+    if (size == 0)
+      return writeFailure("write size must be positive");
+
+#if defined(_WIN32)
+    HANDLE process = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, static_cast<DWORD>(processId));
+    if (process == nullptr)
+      return writeFailure("OpenProcess failed");
+
+    SIZE_T bytesWritten = 0;
+    const BOOL ok = WriteProcessMemory(
+      process,
+      reinterpret_cast<LPVOID>(address),
+      bytes,
+      size,
+      &bytesWritten);
+    CloseHandle(process);
+
+    if (!ok)
+      return writeFailure("WriteProcessMemory failed");
+
+    RuntimeMemoryWriteResult result;
+    result.success = true;
+    result.bytesWritten = static_cast<std::size_t>(bytesWritten);
+    return result;
+#elif defined(__APPLE__)
+    mach_port_t task = MACH_PORT_NULL;
+    if (processId == currentProcessId())
+    {
+      task = mach_task_self();
+    }
+    else
+    {
+      const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
+      if (taskResult != KERN_SUCCESS)
+        return writeFailure("task_for_pid failed: " + std::string(mach_error_string(taskResult)));
+    }
+
+    const kern_return_t writeResult = mach_vm_write(
+      task,
+      static_cast<mach_vm_address_t>(address),
+      reinterpret_cast<vm_offset_t>(const_cast<void*>(bytes)),
+      static_cast<mach_msg_type_number_t>(size));
+
+    if (task != MACH_PORT_NULL && task != mach_task_self())
+      mach_port_deallocate(mach_task_self(), task);
+
+    if (writeResult != KERN_SUCCESS)
+      return writeFailure("mach_vm_write failed: " + std::string(mach_error_string(writeResult)));
+
+    RuntimeMemoryWriteResult result;
+    result.success = true;
+    result.bytesWritten = size;
+    return result;
+#elif defined(__linux__)
+    iovec local;
+    local.iov_base = const_cast<void*>(bytes);
+    local.iov_len = size;
+
+    iovec remote;
+    remote.iov_base = reinterpret_cast<void*>(address);
+    remote.iov_len = size;
+
+    const ssize_t bytesWritten = process_vm_writev(
+      static_cast<pid_t>(processId),
+      &local,
+      1,
+      &remote,
+      1,
+      0);
+
+    if (bytesWritten < 0)
+      return writeFailure(errnoMessage("process_vm_writev"));
+
+    RuntimeMemoryWriteResult result;
+    result.success = true;
+    result.bytesWritten = static_cast<std::size_t>(bytesWritten);
+    return result;
+#else
+    return writeFailure("process memory writes are unsupported on this platform");
 #endif
   }
 }

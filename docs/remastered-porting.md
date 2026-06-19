@@ -67,10 +67,10 @@ The current macOS/Linux executor preflight can validate contracts and locate tar
 
 ## Process Memory Primitive
 
-`RuntimeProcessMemory` provides the first OS-specific read primitive:
+`RuntimeProcessMemory` provides the first OS-specific read/write primitive:
 
-- Linux uses `process_vm_readv`.
-- macOS uses `mach_vm_read_overwrite`.
-- Windows uses `ReadProcessMemory` for compatibility with the legacy target.
+- Linux uses `process_vm_readv` and `process_vm_writev`.
+- macOS uses `mach_vm_read_overwrite` and `mach_vm_write`.
+- Windows uses `ReadProcessMemory` and `WriteProcessMemory` for compatibility with the legacy target.
 
-`runtime_process_memory_test` reads a marker from the current process, so CI validates the real platform read path without attaching to StarCraft or Battle.net. This is intentionally read-only; production support still requires authorized target attach, validated address maps, command submission, event dispatch, overlay rendering, and multiplayer synchronization tests.
+`runtime_process_memory_test` reads and writes a marker in the current process, so CI validates the real platform memory path without attaching to StarCraft or Battle.net. Production support still requires authorized target attach, validated address maps, command submission, event dispatch, overlay rendering, and multiplayer synchronization tests.

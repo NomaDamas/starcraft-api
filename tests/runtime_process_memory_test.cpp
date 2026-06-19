@@ -23,6 +23,16 @@ int main()
   std::memcpy(&copied, read.bytes.data(), sizeof(copied));
   assert(copied == marker);
 
+  const std::uint64_t replacement = 0x8877665544332211ULL;
+  RuntimeMemoryWriteResult write = writeProcessMemory(
+    currentProcessId(),
+    reinterpret_cast<std::uintptr_t>(&marker),
+    &replacement,
+    sizeof(replacement));
+  assert(write.success);
+  assert(write.bytesWritten == sizeof(replacement));
+  assert(marker == replacement);
+
   RuntimeMemoryReadResult invalidPid = readProcessMemory(0, reinterpret_cast<std::uintptr_t>(&marker), sizeof(marker));
   assert(!invalidPid.success);
   assert(!invalidPid.reason.empty());
@@ -30,6 +40,10 @@ int main()
   RuntimeMemoryReadResult invalidAddress = readProcessMemory(currentProcessId(), 0, sizeof(marker));
   assert(!invalidAddress.success);
   assert(!invalidAddress.reason.empty());
+
+  RuntimeMemoryWriteResult invalidWrite = writeProcessMemory(currentProcessId(), reinterpret_cast<std::uintptr_t>(&marker), nullptr, sizeof(marker));
+  assert(!invalidWrite.success);
+  assert(!invalidWrite.reason.empty());
 
   return 0;
 }

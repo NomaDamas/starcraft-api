@@ -89,6 +89,7 @@ namespace BWAPI::Runtime
     RuntimeContract contract;
     contract.product = Product::StarCraftBroodWar1161;
     contract.version = "1.16.1";
+    contract.requiredApiSurfaceMethods = 385;
     contract.requiredCapabilities = fullParityCapabilities();
     contract.bindings = {
       requiredBinding("BW::BWDATA::Game", BindingKind::DataAddress),
@@ -149,6 +150,8 @@ namespace BWAPI::Runtime
       addError(result, "runtime version is empty");
     if (contract.requiredCapabilities.empty())
       addError(result, "runtime contract has no required capabilities");
+    if (contract.requiredApiSurfaceMethods <= 0)
+      addError(result, "runtime contract has no required API surface method count");
 
     for (const RuntimeBinding& binding : contract.bindings)
     {
@@ -215,6 +218,8 @@ namespace BWAPI::Runtime
 
     const ContractValidationResult validation = validateRuntimeContract(contract);
     if (!validation.valid)
+      return false;
+    if (probe.implementedApiSurfaceMethods < contract.requiredApiSurfaceMethods)
       return false;
 
     return std::all_of(

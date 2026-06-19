@@ -65,6 +65,7 @@ int main(int argc, char** argv)
     std::cout << "probe.reason=" << probe.reason << '\n';
   for (Capability capability : probe.capabilities)
     std::cout << "probe.capability=" << toString(capability) << '\n';
+  std::cout << "probe.implemented_api_surface_methods=" << probe.implementedApiSurfaceMethods << '\n';
 
   RuntimeOpenResult open = backend->open();
   std::cout << "open.opened=" << (open.opened ? "true" : "false") << '\n';
@@ -75,6 +76,7 @@ int main(int argc, char** argv)
   std::cout << "state.after_close=" << toString(backend->state()) << '\n';
 
   RuntimeContract contract = contractFor(environment);
+  std::cout << "contract.required_api_surface_methods=" << contract.requiredApiSurfaceMethods << '\n';
   ContractValidationResult validation = validateRuntimeContract(contract);
   printValidation(validation);
   const bool productionSupported = canClaimProductionSupport(probe, contract);

@@ -54,6 +54,7 @@ namespace BWAPI::Runtime
     bool supported = false;
     std::string reason;
     std::vector<Capability> capabilities;
+    int implementedApiSurfaceMethods = 0;
   };
 
   enum class RuntimeSessionState

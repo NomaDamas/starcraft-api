@@ -59,7 +59,12 @@ int main()
   RuntimeProbeResult fullProbe;
   fullProbe.supported = true;
   fullProbe.capabilities = resolved.requiredCapabilities;
+  fullProbe.implementedApiSurfaceMethods = resolved.requiredApiSurfaceMethods;
   assert(canClaimProductionSupport(fullProbe, resolved));
+
+  RuntimeProbeResult missingApiSurfaceProbe = fullProbe;
+  missingApiSurfaceProbe.implementedApiSurfaceMethods = resolved.requiredApiSurfaceMethods - 1;
+  assert(!canClaimProductionSupport(missingApiSurfaceProbe, resolved));
 
   assert(std::string(toString(BindingKind::CommandQueue)) == "command-queue");
   assert(std::string(toString(BindingRequirement::Required)) == "required");

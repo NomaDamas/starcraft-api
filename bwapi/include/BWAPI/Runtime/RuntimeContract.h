@@ -54,6 +54,7 @@ namespace BWAPI::Runtime
   {
     Product product = Product::Unknown;
     std::string version;
+    int requiredApiSurfaceMethods = 0;
     std::vector<Capability> requiredCapabilities;
     std::vector<RuntimeBinding> bindings;
     std::vector<StructureLayout> structures;

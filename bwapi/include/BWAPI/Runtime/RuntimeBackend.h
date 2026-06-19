@@ -44,6 +44,7 @@ namespace BWAPI::Runtime
     Platform platform = Platform::Unknown;
     Product product = Product::Unknown;
     std::string version;
+    int processId = 0;
     std::string executablePath;
     std::string manifestPath;
 

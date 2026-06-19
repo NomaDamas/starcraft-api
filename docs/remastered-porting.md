@@ -26,7 +26,7 @@ The production gate is `canClaimProductionSupport(probe, contract)`. A backend c
 - The backend exposes every BWAPI parity capability required by the contract.
 - The backend reports at least 385 implemented BWAPI abstract API methods.
 
-Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, `STARCRAFT_API_EXECUTABLE`, and `STARCRAFT_API_MANIFEST` for non-interactive runtime selection. Use `starcraft-runtime-probe --require-production` in release gates; it exits non-zero until full parity support is validated.
+Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, `STARCRAFT_API_PROCESS_ID`, `STARCRAFT_API_EXECUTABLE`, and `STARCRAFT_API_MANIFEST` for non-interactive runtime selection. Use `starcraft-runtime-probe --require-production` in release gates; it exits non-zero until full parity support is validated.
 
 Use `bwapi-api-surface-audit` to lock the public abstract API surface. The current parity baseline is 385 pure virtual methods across `Game`, `UnitInterface`, `PlayerInterface`, `BulletInterface`, `RegionInterface`, and `ForceInterface`.
 
@@ -60,10 +60,11 @@ A valid manifest only proves that versioned offsets, symbols, structure fields, 
 `RuntimeExecutor` separates three release-gate signals:
 
 - `executor.contract_valid`: the selected contract or manifest has no unresolved required BWAPI parity entries.
+- `executor.process_identified`: `STARCRAFT_API_PROCESS_ID` identifies a visible target process.
 - `executor.target_located`: `STARCRAFT_API_EXECUTABLE` points to an existing target process executable or app bundle path.
 - `executor.available`: the authorized attach/read/write/command executor is implemented for the selected product and platform.
 
-The current macOS/Linux executor preflight can validate contracts and locate targets, but it intentionally reports `executor.available=false`. This keeps release automation honest: a complete manifest is necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.
+The current macOS/Linux executor preflight can validate contracts, locate target paths, and verify a supplied target process id, but it intentionally reports `executor.available=false`. This keeps release automation honest: a complete manifest and visible process are necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.
 
 ## Process Memory Primitive
 

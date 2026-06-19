@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeProcess.h>
 
 #include <filesystem>
 
@@ -46,6 +47,11 @@ namespace BWAPI::Runtime
       else if (!result.targetLocated)
         result.errors.push_back("runtime executable path does not exist: " + environment.executablePath);
     }
+
+    RuntimeProcessOpenResult process = openRuntimeProcess(environment);
+    result.processIdentified = process.opened;
+    if (!process.opened)
+      result.errors.push_back(process.reason);
 
     result.warnings.push_back("authorized runtime executor is not implemented for this product/platform");
     result.executorAvailable = false;

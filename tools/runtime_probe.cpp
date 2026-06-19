@@ -72,6 +72,8 @@ int main(int argc, char** argv)
   std::cout << "platform=" << toString(environment.platform) << '\n';
   std::cout << "product=" << toString(environment.product) << '\n';
   std::cout << "version=" << (environment.version.empty() ? "unknown" : environment.version) << '\n';
+  if (environment.processId > 0)
+    std::cout << "process.id=" << environment.processId << '\n';
   if (!environment.manifestPath.empty())
     std::cout << "manifest.path=" << environment.manifestPath << '\n';
   std::cout << "backend.name=" << backend->name() << '\n';
@@ -117,6 +119,7 @@ int main(int argc, char** argv)
 
   RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, contract);
   std::cout << "executor.contract_valid=" << (preflight.contractValid ? "true" : "false") << '\n';
+  std::cout << "executor.process_identified=" << (preflight.processIdentified ? "true" : "false") << '\n';
   std::cout << "executor.target_located=" << (preflight.targetLocated ? "true" : "false") << '\n';
   std::cout << "executor.available=" << (preflight.executorAvailable ? "true" : "false") << '\n';
   for (const std::string& error : preflight.errors)

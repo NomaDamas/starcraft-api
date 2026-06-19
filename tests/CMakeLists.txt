@@ -63,6 +63,17 @@ target_link_libraries(runtime_process_memory_test
 
 add_test(NAME runtime_process_memory_test COMMAND runtime_process_memory_test)
 
+add_executable(runtime_process_test
+  runtime_process_test.cpp
+)
+
+target_link_libraries(runtime_process_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_process_test COMMAND runtime_process_test)
+
 if(TARGET starcraft-runtime-probe)
   add_test(NAME runtime_probe_cli_test COMMAND starcraft-runtime-probe)
   add_test(NAME runtime_probe_require_production_fails COMMAND starcraft-runtime-probe --require-production)

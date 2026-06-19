@@ -10,6 +10,7 @@ namespace BWAPI::Runtime
   struct RuntimeExecutorPreflightResult
   {
     bool contractValid = false;
+    bool processIdentified = false;
     bool targetLocated = false;
     bool executorAvailable = false;
     std::vector<std::string> errors;

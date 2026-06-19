@@ -16,6 +16,8 @@ int main()
   assert(surface.unitCommands.back() == "Place_COP");
   assert(surface.gameActions.front() == "setScreenPosition");
   assert(surface.gameActions.back() == "setRevealAll");
+  assert(containsCommandSurfaceEntry(surface.unitCommands, "Attack_Unit"));
+  assert(!containsCommandSurfaceEntry(surface.unitCommands, "Not_A_Command"));
 
   return 0;
 }

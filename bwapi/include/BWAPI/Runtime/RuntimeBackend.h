@@ -56,6 +56,8 @@ namespace BWAPI::Runtime
     bool supported = false;
     std::string reason;
     std::vector<Capability> capabilities;
+    std::vector<std::string> implementedUnitCommands;
+    std::vector<std::string> implementedGameActions;
     int implementedApiSurfaceMethods = 0;
     int implementedCommandSurfaceEntries = 0;
   };

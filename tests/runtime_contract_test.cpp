@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 
 #include <cassert>
 #include <string>
@@ -66,6 +67,9 @@ int main()
   fullProbe.capabilities = resolved.requiredCapabilities;
   fullProbe.implementedApiSurfaceMethods = resolved.requiredApiSurfaceMethods;
   fullProbe.implementedCommandSurfaceEntries = resolved.requiredCommandSurfaceEntries;
+  RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
+  fullProbe.implementedUnitCommands = commandSurface.unitCommands;
+  fullProbe.implementedGameActions = commandSurface.gameActions;
   assert(canClaimProductionSupport(fullProbe, resolved));
 
   RuntimeProbeResult missingApiSurfaceProbe = fullProbe;
@@ -75,6 +79,10 @@ int main()
   RuntimeProbeResult missingCommandSurfaceProbe = fullProbe;
   missingCommandSurfaceProbe.implementedCommandSurfaceEntries = resolved.requiredCommandSurfaceEntries - 1;
   assert(!canClaimProductionSupport(missingCommandSurfaceProbe, resolved));
+
+  RuntimeProbeResult missingCommandNameProbe = fullProbe;
+  missingCommandNameProbe.implementedUnitCommands.pop_back();
+  assert(!canClaimProductionSupport(missingCommandNameProbe, resolved));
 
   assert(std::string(toString(BindingKind::CommandQueue)) == "command-queue");
   assert(std::string(toString(BindingRequirement::Required)) == "required");

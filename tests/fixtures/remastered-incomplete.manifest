@@ -3,6 +3,8 @@ version test-build
 api-surface-methods 384
 command-surface-entries 1
 
+unit-command Attack_Move
+
 capability read-game-state
 
 binding BW::BWDATA::Game data-address required fixture:game

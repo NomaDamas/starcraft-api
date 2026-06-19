@@ -14,4 +14,5 @@ namespace BWAPI::Runtime
   };
 
   RuntimeCommandSurface makeBWAPICommandSurface();
+  bool containsCommandSurfaceEntry(const std::vector<std::string>& entries, const std::string& name);
 }

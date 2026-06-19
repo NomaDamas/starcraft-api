@@ -12,6 +12,8 @@ namespace BWAPI::Runtime
   {
     RuntimeContract contract;
     std::vector<Capability> capabilities;
+    std::vector<std::string> unitCommands;
+    std::vector<std::string> gameActions;
     int implementedApiSurfaceMethods = 0;
     int implementedCommandSurfaceEntries = 0;
   };

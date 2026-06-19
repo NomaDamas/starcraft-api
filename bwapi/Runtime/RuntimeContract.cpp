@@ -310,6 +310,18 @@ namespace BWAPI::Runtime
     if (probe.implementedCommandSurfaceEntries < contract.requiredCommandSurfaceEntries)
       return false;
 
+    const RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
+    for (const std::string& unitCommand : commandSurface.unitCommands)
+    {
+      if (!containsCommandSurfaceEntry(probe.implementedUnitCommands, unitCommand))
+        return false;
+    }
+    for (const std::string& gameAction : commandSurface.gameActions)
+    {
+      if (!containsCommandSurfaceEntry(probe.implementedGameActions, gameAction))
+        return false;
+    }
+
     return std::all_of(
       contract.requiredCapabilities.begin(),
       contract.requiredCapabilities.end(),

@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeManifest.h>
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 
 #include <algorithm>
 #include <cctype>
@@ -44,6 +45,8 @@ namespace BWAPI::Runtime
       int implementedApiSurfaceMethods = 0;
       int implementedCommandSurfaceEntries = 0;
       std::vector<Capability> capabilities;
+      std::vector<std::string> unitCommands;
+      std::vector<std::string> gameActions;
       std::vector<BindingDirective> bindings;
       std::vector<StructureDirective> structures;
       std::vector<FieldDirective> fields;
@@ -229,6 +232,26 @@ namespace BWAPI::Runtime
         fieldIt->size = directive.size;
       }
     }
+
+    void validateCommandEntries(
+      RuntimeManifestLoadResult& result,
+      const std::string& sourceName,
+      const std::vector<std::string>& actualEntries,
+      const std::vector<std::string>& requiredEntries,
+      const char* label)
+    {
+      for (const std::string& actual : actualEntries)
+      {
+        if (!containsCommandSurfaceEntry(requiredEntries, actual))
+          addError(result, sourceName, 0, std::string("manifest declares unknown ") + label + ": " + actual);
+      }
+
+      for (const std::string& required : requiredEntries)
+      {
+        if (!containsCommandSurfaceEntry(actualEntries, required))
+          addError(result, sourceName, 0, std::string("manifest is missing required ") + label + ": " + required);
+      }
+    }
   }
 
   RuntimeManifestLoadResult loadRuntimeManifest(std::istream& input, const std::string& sourceName)
@@ -304,6 +327,24 @@ namespace BWAPI::Runtime
           continue;
         }
         accumulator.capabilities.push_back(capability);
+      }
+      else if (directive == "unit-command")
+      {
+        if (tokens.size() != 2)
+        {
+          addError(result, sourceName, lineNumber, "unit-command directive expects exactly one value");
+          continue;
+        }
+        accumulator.unitCommands.push_back(tokens[1]);
+      }
+      else if (directive == "game-action")
+      {
+        if (tokens.size() != 2)
+        {
+          addError(result, sourceName, lineNumber, "game-action directive expects exactly one value");
+          continue;
+        }
+        accumulator.gameActions.push_back(tokens[1]);
       }
       else if (directive == "binding")
       {
@@ -407,6 +448,13 @@ namespace BWAPI::Runtime
     if (accumulator.implementedCommandSurfaceEntries <= 0)
       addError(result, sourceName, 0, "manifest command surface entry count is missing");
 
+    const RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
+    validateCommandEntries(result, sourceName, accumulator.unitCommands, commandSurface.unitCommands, "unit command");
+    validateCommandEntries(result, sourceName, accumulator.gameActions, commandSurface.gameActions, "game action");
+    const int declaredCommandEntries = static_cast<int>(accumulator.unitCommands.size() + accumulator.gameActions.size());
+    if (declaredCommandEntries != accumulator.implementedCommandSurfaceEntries)
+      addError(result, sourceName, 0, "manifest command surface entry count does not match declared command/action names");
+
     if (!result.errors.empty())
       return result;
 
@@ -421,6 +469,8 @@ namespace BWAPI::Runtime
 
     result.manifest.contract = std::move(contract);
     result.manifest.capabilities = std::move(accumulator.capabilities);
+    result.manifest.unitCommands = std::move(accumulator.unitCommands);
+    result.manifest.gameActions = std::move(accumulator.gameActions);
     result.manifest.implementedApiSurfaceMethods = accumulator.implementedApiSurfaceMethods;
     result.manifest.implementedCommandSurfaceEntries = accumulator.implementedCommandSurfaceEntries;
     result.loaded = result.errors.empty();

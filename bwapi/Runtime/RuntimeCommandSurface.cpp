@@ -1,5 +1,7 @@
 #include <BWAPI/Runtime/RuntimeCommandSurface.h>
 
+#include <algorithm>
+
 namespace BWAPI::Runtime
 {
   int RuntimeCommandSurface::totalEntries() const
@@ -89,5 +91,10 @@ namespace BWAPI::Runtime
     };
 
     return surface;
+  }
+
+  bool containsCommandSurfaceEntry(const std::vector<std::string>& entries, const std::string& name)
+  {
+    return std::find(entries.begin(), entries.end(), name) != entries.end();
   }
 }

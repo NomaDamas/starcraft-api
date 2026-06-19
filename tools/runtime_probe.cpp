@@ -84,6 +84,10 @@ int main(int argc, char** argv)
     std::cout << "probe.reason=" << probe.reason << '\n';
   for (Capability capability : probe.capabilities)
     std::cout << "probe.capability=" << toString(capability) << '\n';
+  for (const std::string& unitCommand : probe.implementedUnitCommands)
+    std::cout << "probe.unit_command=" << unitCommand << '\n';
+  for (const std::string& gameAction : probe.implementedGameActions)
+    std::cout << "probe.game_action=" << gameAction << '\n';
   std::cout << "probe.implemented_api_surface_methods=" << probe.implementedApiSurfaceMethods << '\n';
   std::cout << "probe.implemented_command_surface_entries=" << probe.implementedCommandSurfaceEntries << '\n';
 
@@ -113,6 +117,10 @@ int main(int argc, char** argv)
                 << manifest.manifest.implementedCommandSurfaceEntries << '\n';
       for (Capability capability : manifest.manifest.capabilities)
         std::cout << "manifest.capability=" << toString(capability) << '\n';
+      for (const std::string& unitCommand : manifest.manifest.unitCommands)
+        std::cout << "manifest.unit_command=" << unitCommand << '\n';
+      for (const std::string& gameAction : manifest.manifest.gameActions)
+        std::cout << "manifest.game_action=" << gameAction << '\n';
     }
   }
 

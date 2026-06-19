@@ -109,6 +109,7 @@ int main()
   std::ifstream commandLog(bridgePath / RuntimeExecutorBridgeCommandFile);
   std::stringstream commandLogContent;
   commandLogContent << commandLog.rdbuf();
+  commandLog.close();
   assert(commandLogContent.str().find("unit-command|Move|5|10,20") != std::string::npos);
   assert(commandLogContent.str().find("game-action|pauseGame|0|") != std::string::npos);
 

@@ -31,8 +31,26 @@ namespace
   }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+  bool requireProduction = false;
+  for (int i = 1; i < argc; ++i)
+  {
+    const std::string arg = argv[i];
+    if (arg == "--require-production")
+      requireProduction = true;
+    else if (arg == "--help" || arg == "-h")
+    {
+      std::cout << "usage: starcraft-runtime-probe [--require-production]\n";
+      return 0;
+    }
+    else
+    {
+      std::cerr << "unknown argument: " << arg << '\n';
+      return 64;
+    }
+  }
+
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);
 
@@ -59,7 +77,11 @@ int main()
   RuntimeContract contract = contractFor(environment);
   ContractValidationResult validation = validateRuntimeContract(contract);
   printValidation(validation);
-  std::cout << "production.supported=" << (canClaimProductionSupport(probe, contract) ? "true" : "false") << '\n';
+  const bool productionSupported = canClaimProductionSupport(probe, contract);
+  std::cout << "production.supported=" << (productionSupported ? "true" : "false") << '\n';
+
+  if (requireProduction && !productionSupported)
+    return 2;
 
   return 0;
 }

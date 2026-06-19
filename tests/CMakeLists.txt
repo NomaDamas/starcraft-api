@@ -22,6 +22,8 @@ add_test(NAME runtime_contract_test COMMAND runtime_contract_test)
 
 if(TARGET starcraft-runtime-probe)
   add_test(NAME runtime_probe_cli_test COMMAND starcraft-runtime-probe)
+  add_test(NAME runtime_probe_require_production_fails COMMAND starcraft-runtime-probe --require-production)
+  set_tests_properties(runtime_probe_require_production_fails PROPERTIES WILL_FAIL TRUE)
 endif()
 
 add_executable(public_api_smoke_test

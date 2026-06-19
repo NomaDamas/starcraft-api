@@ -36,6 +36,22 @@ target_link_libraries(runtime_manifest_test
 
 add_test(NAME runtime_manifest_test COMMAND runtime_manifest_test)
 
+add_executable(runtime_executor_test
+  runtime_executor_test.cpp
+)
+
+target_compile_definitions(runtime_executor_test
+  PRIVATE
+    STARCRAFT_API_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
+
+target_link_libraries(runtime_executor_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_executor_test COMMAND runtime_executor_test)
+
 if(TARGET starcraft-runtime-probe)
   add_test(NAME runtime_probe_cli_test COMMAND starcraft-runtime-probe)
   add_test(NAME runtime_probe_require_production_fails COMMAND starcraft-runtime-probe --require-production)

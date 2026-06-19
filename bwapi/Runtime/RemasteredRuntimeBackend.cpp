@@ -1,6 +1,7 @@
 #include "RemasteredRuntimeBackend.h"
 
 #include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 
 #include <sstream>
@@ -21,11 +22,14 @@ namespace BWAPI::Runtime
       }
 
       ContractValidationResult validation = validateRuntimeContract(contract);
+      RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, contract);
 
       std::ostringstream message;
       message << "StarCraft Remastered runtime executor is not implemented. "
               << "The parity contract currently has " << validation.errors.size()
-              << " unresolved production gate error(s).";
+              << " unresolved production gate error(s). "
+              << "Executor preflight has " << preflight.errors.size()
+              << " error(s) and " << preflight.warnings.size() << " warning(s).";
       if (!environment.manifestPath.empty())
         message << " Runtime manifest: " << environment.manifestPath << '.';
       return message.str();

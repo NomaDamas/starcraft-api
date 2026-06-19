@@ -1,5 +1,6 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 
 #include <iostream>
@@ -113,6 +114,16 @@ int main(int argc, char** argv)
   std::cout << "contract.required_api_surface_methods=" << contract.requiredApiSurfaceMethods << '\n';
   ContractValidationResult validation = validateRuntimeContract(contract);
   printValidation(validation);
+
+  RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, contract);
+  std::cout << "executor.contract_valid=" << (preflight.contractValid ? "true" : "false") << '\n';
+  std::cout << "executor.target_located=" << (preflight.targetLocated ? "true" : "false") << '\n';
+  std::cout << "executor.available=" << (preflight.executorAvailable ? "true" : "false") << '\n';
+  for (const std::string& error : preflight.errors)
+    std::cout << "executor.error=" << error << '\n';
+  for (const std::string& warning : preflight.warnings)
+    std::cout << "executor.warning=" << warning << '\n';
+
   const bool productionSupported = canClaimProductionSupport(probe, contract);
   std::cout << "production.supported=" << (productionSupported ? "true" : "false") << '\n';
 

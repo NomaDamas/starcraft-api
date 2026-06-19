@@ -54,3 +54,13 @@ STARCRAFT_API_PRODUCT=starcraft-remastered \
 ```
 
 A valid manifest only proves that versioned offsets, symbols, structure fields, capabilities, and API surface declarations are complete. It does not by itself prove that the macOS/Linux runtime executor can attach, read state, issue commands, render overlays, or satisfy Battle.net synchronization rules; `production.supported` remains false until the backend probe proves those runtime behaviors.
+
+## Runtime Executor Preflight
+
+`RuntimeExecutor` separates three release-gate signals:
+
+- `executor.contract_valid`: the selected contract or manifest has no unresolved required BWAPI parity entries.
+- `executor.target_located`: `STARCRAFT_API_EXECUTABLE` points to an existing target process executable or app bundle path.
+- `executor.available`: the authorized attach/read/write/command executor is implemented for the selected product and platform.
+
+The current macOS/Linux executor preflight can validate contracts and locate targets, but it intentionally reports `executor.available=false`. This keeps release automation honest: a complete manifest is necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.

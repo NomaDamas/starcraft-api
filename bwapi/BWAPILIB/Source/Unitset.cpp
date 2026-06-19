@@ -5,6 +5,7 @@
 #include <BWAPI/Game.h>
 #include <BWAPI/TechType.h>
 
+#include <cstdint>
 #include <utility>
 
 namespace BWAPI
@@ -79,7 +80,7 @@ namespace BWAPI
   }
   void Unitset::setClientInfo(int clientInfo, int index) const
   {
-    this->setClientInfo((void*)clientInfo, index);
+    this->setClientInfo(reinterpret_cast<void*>(static_cast<std::intptr_t>(clientInfo)), index);
   }
 
   Unitset Unitset::getUnitsInRadius(int radius, const UnitFilter &pred) const

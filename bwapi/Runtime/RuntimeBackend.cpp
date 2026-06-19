@@ -32,11 +32,19 @@ namespace BWAPI::Runtime
     switch (capability)
     {
     case Capability::ReadGameState: return "read-game-state";
+    case Capability::ReadMapData: return "read-map-data";
+    case Capability::ReadUnitData: return "read-unit-data";
+    case Capability::ReadBulletData: return "read-bullet-data";
+    case Capability::ReadPlayerData: return "read-player-data";
+    case Capability::ReadRegionData: return "read-region-data";
     case Capability::IssueCommands: return "issue-commands";
     case Capability::DrawOverlays: return "draw-overlays";
+    case Capability::DispatchEvents: return "dispatch-events";
     case Capability::ReplayAnalysis: return "replay-analysis";
     case Capability::MultiplayerSync: return "multiplayer-sync";
     case Capability::BattleNet: return "battle-net";
+    case Capability::LoadAIModules: return "load-ai-modules";
+    case Capability::SharedMemoryClient: return "shared-memory-client";
     }
     return "unknown";
   }

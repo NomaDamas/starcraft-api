@@ -24,11 +24,19 @@ namespace BWAPI::Runtime
   enum class Capability
   {
     ReadGameState,
+    ReadMapData,
+    ReadUnitData,
+    ReadBulletData,
+    ReadPlayerData,
+    ReadRegionData,
     IssueCommands,
     DrawOverlays,
+    DispatchEvents,
     ReplayAnalysis,
     MultiplayerSync,
-    BattleNet
+    BattleNet,
+    LoadAIModules,
+    SharedMemoryClient
   };
 
   struct RuntimeEnvironment

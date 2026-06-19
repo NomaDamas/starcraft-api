@@ -17,4 +17,10 @@ Before a StarCraft Remastered backend can be marked supported, it must provide:
 
 ## Current Refactor Step
 
-This repository now has a portable CMake entry point and a `BWAPI::Runtime` abstraction. Unsupported runtimes fail explicitly with a reason instead of silently reusing unsafe 1.16.1 memory bindings.
+This repository now has a portable CMake entry point, a `BWAPI::Runtime` abstraction, and a runtime contract validator. Unsupported runtimes fail explicitly with a reason instead of silently reusing unsafe 1.16.1 memory bindings.
+
+The production gate is `canClaimProductionSupport(probe, contract)`. A backend can only claim support when:
+
+- The backend probe reports supported.
+- The versioned runtime contract validates without unresolved required bindings.
+- The backend exposes every BWAPI parity capability required by the contract.

@@ -1,6 +1,8 @@
 #pragma once
+#include <cstdint>
 #include <map>
 #include <list>
+#include <type_traits>
 
 #include <BWAPI/InterfaceEvent.h>
 
@@ -67,9 +69,15 @@ namespace BWAPI
     };
 
     template <typename CT>
-    CT getClientInfo(int key = 0) const
+    typename std::enable_if<std::is_pointer<CT>::value, CT>::type getClientInfo(int key = 0) const
     {
-      return (CT)(int)this->getClientInfo(key);
+      return static_cast<CT>(this->getClientInfo(key));
+    };
+
+    template <typename CT>
+    typename std::enable_if<std::is_integral<CT>::value, CT>::type getClientInfo(int key = 0) const
+    {
+      return static_cast<CT>(reinterpret_cast<std::intptr_t>(this->getClientInfo(key)));
     };
 
     /// <summary>Associates one or more pointers or values with any BWAPI interface.</summary>
@@ -88,10 +96,20 @@ namespace BWAPI
     /// </param>
     ///
     /// @see getClientInfo
-    template < typename V >
-    void setClientInfo(const V &clientInfo, int key = 0)
+    void setClientInfo(void *clientInfo, int key = 0)
     {
-      this->clientInfo[key] = (void*)clientInfo;
+      this->clientInfo[key] = clientInfo;
+    };
+
+    void setClientInfo(std::nullptr_t, int key = 0)
+    {
+      this->clientInfo[key] = nullptr;
+    };
+
+    template < typename V >
+    typename std::enable_if<std::is_integral<V>::value, void>::type setClientInfo(const V &clientInfo, int key = 0)
+    {
+      this->clientInfo[key] = reinterpret_cast<void*>(static_cast<std::intptr_t>(clientInfo));
     };
 
     /// <summary>Registers an event and associates it with the current Interface object.</summary>

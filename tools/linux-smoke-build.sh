@@ -23,12 +23,25 @@ cxxflags=${CXXFLAGS:-}
   -I "$repo_root/bwapi/include" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tests/runtime_backend_test.cpp" \
   -o "$bin_dir/runtime_backend_test"
 
 "$bin_dir/runtime_backend_test"
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
+  "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/tests/runtime_contract_test.cpp" \
+  -o "$bin_dir/runtime_contract_test"
+
+"$bin_dir/runtime_contract_test"
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \

@@ -859,11 +859,13 @@ namespace BWAPI::Runtime
 
             if (hasOpenStartTimestamp && hasEndTimestamp)
             {
-              const std::int64_t duration = std::max<std::int64_t>(
-                0,
-                endMilliseconds - openStartMilliseconds);
-              transition.durationMilliseconds = duration > std::numeric_limits<int>::max()
-                ? std::numeric_limits<int>::max()
+              std::int64_t duration = endMilliseconds - openStartMilliseconds;
+              if (duration < 0)
+                duration = 0;
+
+              const int maxInt = (std::numeric_limits<int>::max)();
+              transition.durationMilliseconds = duration > maxInt
+                ? maxInt
                 : static_cast<int>(duration);
               transition.reason =
                 "StarCraft s1 session ended after "

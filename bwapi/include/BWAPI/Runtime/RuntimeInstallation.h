@@ -87,6 +87,7 @@ namespace BWAPI::Runtime
     int shortestDurationMilliseconds = -1;
     int longestDurationMilliseconds = -1;
     int latestTransitionDurationMilliseconds = -1;
+    std::string latestObservedTimestamp;
     std::string latestState;
     std::string latestReason;
     std::vector<RuntimeSessionTransition> transitions;

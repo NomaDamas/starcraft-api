@@ -810,6 +810,44 @@ namespace BWAPI::Runtime
     RuntimeSessionSummary summarizeRuntimeSessionEvents(
       const std::vector<RuntimeSessionEvent>& events)
     {
+      struct TimestampedEvent
+      {
+        RuntimeSessionEvent event;
+        std::string timestamp;
+        std::int64_t milliseconds = 0;
+        std::size_t index = 0;
+        bool hasTimestamp = false;
+      };
+
+      std::vector<TimestampedEvent> orderedEvents;
+      orderedEvents.reserve(events.size());
+      bool allEventsTimestamped = true;
+      for (std::size_t i = 0; i < events.size(); ++i)
+      {
+        TimestampedEvent timestamped;
+        timestamped.event = events[i];
+        timestamped.index = i;
+        timestamped.hasTimestamp = parseLogTimestampMilliseconds(
+          events[i].line,
+          timestamped.timestamp,
+          timestamped.milliseconds);
+        if (!timestamped.hasTimestamp)
+          allEventsTimestamped = false;
+        orderedEvents.push_back(timestamped);
+      }
+
+      if (allEventsTimestamped)
+      {
+        std::stable_sort(
+          orderedEvents.begin(),
+          orderedEvents.end(),
+          [](const TimestampedEvent& left, const TimestampedEvent& right) {
+            if (left.milliseconds != right.milliseconds)
+              return left.milliseconds < right.milliseconds;
+            return left.index < right.index;
+          });
+      }
+
       RuntimeSessionSummary summary;
       RuntimeSessionEvent openStart;
       std::string openStartTimestamp;
@@ -817,8 +855,12 @@ namespace BWAPI::Runtime
       bool hasOpenStart = false;
       bool hasOpenStartTimestamp = false;
 
-      for (const RuntimeSessionEvent& event : events)
+      for (const TimestampedEvent& timestamped : orderedEvents)
       {
+        const RuntimeSessionEvent& event = timestamped.event;
+        if (timestamped.hasTimestamp)
+          summary.latestObservedTimestamp = timestamped.timestamp;
+
         if (event.category == "starcraft-session-started")
         {
           ++summary.startedEventCount;
@@ -829,8 +871,9 @@ namespace BWAPI::Runtime
           {
             openStart = event;
             hasOpenStart = true;
-            hasOpenStartTimestamp =
-              parseLogTimestampMilliseconds(event.line, openStartTimestamp, openStartMilliseconds);
+            openStartTimestamp = timestamped.timestamp;
+            openStartMilliseconds = timestamped.milliseconds;
+            hasOpenStartTimestamp = timestamped.hasTimestamp;
           }
           continue;
         }
@@ -851,15 +894,11 @@ namespace BWAPI::Runtime
             transition.endLine = event.line;
             transition.startTimestamp = openStartTimestamp;
 
-            std::string endTimestamp;
-            std::int64_t endMilliseconds = 0;
-            const bool hasEndTimestamp =
-              parseLogTimestampMilliseconds(event.line, endTimestamp, endMilliseconds);
-            transition.endTimestamp = endTimestamp;
+            transition.endTimestamp = timestamped.timestamp;
 
-            if (hasOpenStartTimestamp && hasEndTimestamp)
+            if (hasOpenStartTimestamp && timestamped.hasTimestamp)
             {
-              std::int64_t duration = endMilliseconds - openStartMilliseconds;
+              std::int64_t duration = timestamped.milliseconds - openStartMilliseconds;
               if (duration < 0)
                 duration = 0;
 
@@ -1290,6 +1329,10 @@ namespace BWAPI::Runtime
         "session.latest_transition_duration_ms",
         evidence.sessionSummary.latestTransitionDurationMilliseconds);
     writeEvidenceField(output, "session.latest_state", evidence.sessionSummary.latestState);
+    writeEvidenceField(
+      output,
+      "session.latest_observed_timestamp",
+      evidence.sessionSummary.latestObservedTimestamp);
     writeEvidenceField(output, "session.latest_reason", evidence.sessionSummary.latestReason);
     for (std::size_t i = 0; i < evidence.sessionSummary.transitions.size(); ++i)
     {

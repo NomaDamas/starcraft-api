@@ -109,6 +109,7 @@ int main()
   assert(evidence.sessionSummary.completeTransitionCount == 1);
   assert(evidence.sessionSummary.incompleteTransitionCount == 0);
   assert(evidence.sessionSummary.latestState == "stopped");
+  assert(evidence.sessionSummary.latestObservedTimestamp == "2026-06-19 08:00:06.350000");
   assert(evidence.sessionSummary.latestTransitionDurationMilliseconds == 6250);
   assert(evidence.sessionSummary.transitions.size() == 1);
   assert(evidence.sessionSummary.transitions.front().complete);
@@ -120,6 +121,7 @@ int main()
   assert(report.find("executable.fnv1a64=") != std::string::npos);
   assert(report.find("launch handoff failed in test") != std::string::npos);
   assert(report.find("session.complete_transition_count=1") != std::string::npos);
+  assert(report.find("session.latest_observed_timestamp=2026-06-19 08:00:06.350000") != std::string::npos);
   assert(report.find("session.latest_transition_duration_ms=6250") != std::string::npos);
   assert(report.find("session.transition.0.duration_ms=6250") != std::string::npos);
   assert(report.find("session.event.0.category=starcraft-session-started") != std::string::npos);

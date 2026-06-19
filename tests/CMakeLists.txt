@@ -85,6 +85,22 @@ target_link_libraries(runtime_readiness_test
 
 add_test(NAME runtime_readiness_test COMMAND runtime_readiness_test)
 
+add_executable(runtime_production_bridge_test
+  runtime_production_bridge_test.cpp
+)
+
+target_compile_definitions(runtime_production_bridge_test
+  PRIVATE
+    STARCRAFT_API_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
+
+target_link_libraries(runtime_production_bridge_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_production_bridge_test COMMAND runtime_production_bridge_test)
+
 add_executable(runtime_process_memory_test
   runtime_process_memory_test.cpp
 )

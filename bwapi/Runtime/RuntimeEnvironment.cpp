@@ -46,6 +46,8 @@ namespace BWAPI::Runtime
       environment.executablePath = executable;
     if (const char* manifest = std::getenv("STARCRAFT_API_MANIFEST"))
       environment.manifestPath = manifest;
+    if (const char* executorBridge = std::getenv("STARCRAFT_API_EXECUTOR_BRIDGE_DIR"))
+      environment.executorBridgePath = executorBridge;
 
     return environment;
   }

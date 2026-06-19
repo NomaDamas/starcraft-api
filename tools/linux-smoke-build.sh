@@ -123,6 +123,28 @@ cxxflags=${CXXFLAGS:-}
 "$bin_dir/runtime_executor_test"
 
 "$cxx" -std=c++17 $cxxflags \
+  -DSTARCRAFT_API_TEST_FIXTURE_DIR="\"$repo_root/tests/fixtures\"" \
+  -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/Legacy1161RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandQueue.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
+  "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/tests/runtime_production_bridge_test.cpp" \
+  -o "$bin_dir/runtime_production_bridge_test"
+
+"$bin_dir/runtime_production_bridge_test"
+
+"$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeCommandQueue.cpp" \

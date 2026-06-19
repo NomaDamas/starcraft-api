@@ -94,6 +94,10 @@ int main(int argc, char** argv)
 
   std::cout << "platform=" << toString(environment.platform) << '\n';
   std::cout << "product=" << toString(environment.product) << '\n';
+  if (!environment.executorBridgePath.empty())
+    std::cout << "executor.bridge_path=" << environment.executorBridgePath << '\n';
+  if (!preflight.executorName.empty())
+    std::cout << "executor.name=" << preflight.executorName << '\n';
   std::cout << "backend.name=" << backend->name() << '\n';
   std::cout << "readiness.production_ready=" << (report.productionReady ? "true" : "false") << '\n';
   std::cout << "readiness.blocking_gap_count=" << gaps.size() << '\n';

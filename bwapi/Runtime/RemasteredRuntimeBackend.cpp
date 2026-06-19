@@ -25,7 +25,7 @@ namespace BWAPI::Runtime
       RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, contract);
 
       std::ostringstream message;
-      message << "StarCraft Remastered runtime executor is not implemented. "
+      message << "StarCraft Remastered runtime backend is not production ready. "
               << "The parity contract currently has " << validation.errors.size()
               << " unresolved production gate error(s). "
               << "Executor preflight has " << preflight.errors.size()
@@ -54,11 +54,13 @@ namespace BWAPI::Runtime
   RuntimeProbeResult RemasteredRuntimeBackend::probe() const
   {
     RuntimeProbeResult result;
+    RuntimeContract contract = makeRemasteredParityContract(environment_.version.empty() ? "unknown" : environment_.version);
     if (!environment_.manifestPath.empty())
     {
       RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment_.manifestPath);
       if (manifest.loaded)
       {
+        contract = manifest.manifest.contract;
         result.capabilities = manifest.manifest.capabilities;
         result.implementedUnitCommands = manifest.manifest.unitCommands;
         result.implementedGameActions = manifest.manifest.gameActions;
@@ -66,8 +68,14 @@ namespace BWAPI::Runtime
         result.implementedCommandSurfaceEntries = manifest.manifest.implementedCommandSurfaceEntries;
       }
     }
-    result.supported = false;
-    result.reason = unsupportedReason(environment_);
+
+    RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment_, contract);
+    result.supported = true;
+    result.supported = canClaimProductionSupport(result, contract)
+      && preflight.executorAvailable
+      && preflight.errors.empty();
+    if (!result.supported)
+      result.reason = unsupportedReason(environment_);
     return result;
   }
 

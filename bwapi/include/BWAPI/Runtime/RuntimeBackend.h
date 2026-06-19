@@ -47,6 +47,7 @@ namespace BWAPI::Runtime
     int processId = 0;
     std::string executablePath;
     std::string manifestPath;
+    std::string executorBridgePath;
 
     static RuntimeEnvironment detectHost();
   };

@@ -92,6 +92,8 @@ int main(int argc, char** argv)
     std::cout << "process.id=" << environment.processId << '\n';
   if (!environment.manifestPath.empty())
     std::cout << "manifest.path=" << environment.manifestPath << '\n';
+  if (!environment.executorBridgePath.empty())
+    std::cout << "executor.bridge_path=" << environment.executorBridgePath << '\n';
   std::cout << "backend.name=" << backend->name() << '\n';
 
   RuntimeProbeResult probe = backend->probe();
@@ -148,6 +150,8 @@ int main(int argc, char** argv)
   std::cout << "executor.process_identified=" << (preflight.processIdentified ? "true" : "false") << '\n';
   std::cout << "executor.target_located=" << (preflight.targetLocated ? "true" : "false") << '\n';
   std::cout << "executor.available=" << (preflight.executorAvailable ? "true" : "false") << '\n';
+  if (!preflight.executorName.empty())
+    std::cout << "executor.name=" << preflight.executorName << '\n';
   for (const std::string& error : preflight.errors)
     std::cout << "executor.error=" << error << '\n';
   for (const std::string& warning : preflight.warnings)

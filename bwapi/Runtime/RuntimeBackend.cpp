@@ -48,4 +48,15 @@ namespace BWAPI::Runtime
     }
     return "unknown";
   }
+
+  const char* toString(RuntimeSessionState state)
+  {
+    switch (state)
+    {
+    case RuntimeSessionState::Closed: return "closed";
+    case RuntimeSessionState::Open: return "open";
+    case RuntimeSessionState::Failed: return "failed";
+    }
+    return "unknown";
+  }
 }

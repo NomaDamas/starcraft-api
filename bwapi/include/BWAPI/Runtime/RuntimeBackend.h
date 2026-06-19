@@ -56,6 +56,20 @@ namespace BWAPI::Runtime
     std::vector<Capability> capabilities;
   };
 
+  enum class RuntimeSessionState
+  {
+    Closed,
+    Open,
+    Failed
+  };
+
+  struct RuntimeOpenResult
+  {
+    bool opened = false;
+    RuntimeSessionState state = RuntimeSessionState::Closed;
+    std::string reason;
+  };
+
   class RuntimeBackend
   {
   public:
@@ -64,11 +78,15 @@ namespace BWAPI::Runtime
     virtual const char* name() const = 0;
     virtual RuntimeEnvironment environment() const = 0;
     virtual RuntimeProbeResult probe() const = 0;
+    virtual RuntimeOpenResult open() = 0;
+    virtual void close() = 0;
+    virtual RuntimeSessionState state() const = 0;
   };
 
   const char* toString(Platform platform);
   const char* toString(Product product);
   const char* toString(Capability capability);
+  const char* toString(RuntimeSessionState state);
 
   std::unique_ptr<RuntimeBackend> createRuntimeBackend(const RuntimeEnvironment& environment);
 }

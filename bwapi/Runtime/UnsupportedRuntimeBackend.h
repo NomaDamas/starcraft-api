@@ -12,10 +12,14 @@ namespace BWAPI::Runtime
     const char* name() const override;
     RuntimeEnvironment environment() const override;
     RuntimeProbeResult probe() const override;
+    RuntimeOpenResult open() override;
+    void close() override;
+    RuntimeSessionState state() const override;
 
   private:
     RuntimeEnvironment environment_;
     std::string name_;
     std::string reason_;
+    RuntimeSessionState state_ = RuntimeSessionState::Closed;
   };
 }

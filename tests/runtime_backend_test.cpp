@@ -22,6 +22,13 @@ int main()
   assert(!remasteredProbe.supported);
   assert(!remasteredProbe.reason.empty());
   assert(remasteredProbe.capabilities.empty());
+  assert(remasteredBackend->state() == RuntimeSessionState::Closed);
+  RuntimeOpenResult remasteredOpen = remasteredBackend->open();
+  assert(!remasteredOpen.opened);
+  assert(remasteredOpen.state == RuntimeSessionState::Failed);
+  assert(remasteredBackend->state() == RuntimeSessionState::Failed);
+  remasteredBackend->close();
+  assert(remasteredBackend->state() == RuntimeSessionState::Closed);
 
   RuntimeEnvironment legacy = detected;
   legacy.product = Product::StarCraftBroodWar1161;
@@ -32,6 +39,7 @@ int main()
   assert(std::string(legacyBackend->name()) == "legacy-bwapi-1.16.1-runtime");
   assert(!legacyProbe.supported);
   assert(!legacyProbe.reason.empty());
+  assert(std::string(toString(RuntimeSessionState::Closed)) == "closed");
 
   return 0;
 }

@@ -31,4 +31,25 @@ namespace BWAPI::Runtime
     result.reason = reason_;
     return result;
   }
+
+  RuntimeOpenResult UnsupportedRuntimeBackend::open()
+  {
+    state_ = RuntimeSessionState::Failed;
+
+    RuntimeOpenResult result;
+    result.opened = false;
+    result.state = state_;
+    result.reason = reason_;
+    return result;
+  }
+
+  void UnsupportedRuntimeBackend::close()
+  {
+    state_ = RuntimeSessionState::Closed;
+  }
+
+  RuntimeSessionState UnsupportedRuntimeBackend::state() const
+  {
+    return state_;
+  }
 }

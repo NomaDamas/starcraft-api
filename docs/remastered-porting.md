@@ -99,6 +99,7 @@ Incomplete bootstrap manifests remain non-production, but the report preserves p
 
 - `session.latest_state` records whether the latest collected StarCraft session event is running, stopped, pre-existing, or unknown.
 - `session.latest_observed_timestamp` records the newest parsed Battle.net timestamp used for the session summary.
+- `session.launch_process_event_count` and `session.latest_launch_process_id` record Battle.net launch lines with transient StarCraft process ids.
 - `session.shortest_transition_duration_ms`, `session.longest_transition_duration_ms`, and `session.latest_transition_duration_ms` quantify how long observed StarCraft sessions stayed running before Battle.net reported stop events.
 - `session.transition.*` keeps the paired start/stop timestamps and source log lines for attach debugging.
 

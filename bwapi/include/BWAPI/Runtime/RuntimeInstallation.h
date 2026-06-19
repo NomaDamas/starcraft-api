@@ -81,6 +81,8 @@ namespace BWAPI::Runtime
     int endedEventCount = 0;
     int preexistingEventCount = 0;
     int installStateEventCount = 0;
+    int launchProcessEventCount = 0;
+    int latestLaunchProcessId = 0;
     int relatedEventCount = 0;
     int completeTransitionCount = 0;
     int incompleteTransitionCount = 0;

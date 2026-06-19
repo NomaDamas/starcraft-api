@@ -377,6 +377,28 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    int parseIntegerAfterMarker(const std::string& line, const std::string& marker)
+    {
+      const std::size_t markerOffset = line.find(marker);
+      if (markerOffset == std::string::npos)
+        return 0;
+
+      std::size_t offset = markerOffset + marker.size();
+      while (offset < line.size() && line[offset] == ' ')
+        ++offset;
+
+      int value = 0;
+      bool hasDigit = false;
+      while (offset < line.size() && isDigit(line[offset]))
+      {
+        hasDigit = true;
+        value = value * 10 + (line[offset] - '0');
+        ++offset;
+      }
+
+      return hasDigit ? value : 0;
+    }
+
     std::string sanitizeEvidenceValue(std::string value)
     {
       for (char& ch : value)
@@ -724,15 +746,31 @@ namespace BWAPI::Runtime
       return excerpts;
     }
 
-    std::string categorizeSessionLogLine(const std::string& line)
+    std::string categorizeSessionLogLine(
+      const RuntimeInstallation& installation,
+      const std::string& line)
     {
       const bool mentionsStarCraft = line.find("uid=s1") != std::string::npos
         || line.find("agentUid=s1") != std::string::npos
         || line.find("InstallState (s1)") != std::string::npos
         || line.find("Game is running: s1") != std::string::npos
-        || line.find("Game is no longer running: s1") != std::string::npos;
+        || line.find("Game is no longer running: s1") != std::string::npos
+        || lineContainsAny(line, {
+          "LaunchBinary: uid=s1",
+          installation.appBundlePath,
+          installation.executablePath
+        });
       if (!mentionsStarCraft)
         return {};
+
+      if (line.find("Launched ") != std::string::npos
+          && line.find("pid:") != std::string::npos
+          && lineContainsAny(line, {
+            installation.appBundlePath,
+            installation.executablePath,
+            installation.installRoot
+          }))
+        return "starcraft-launch-process";
 
       if (line.find("Game is running: s1") != std::string::npos
           || line.find("Setting Process Running: true uid=s1") != std::string::npos
@@ -774,7 +812,7 @@ namespace BWAPI::Runtime
         while (std::getline(input, line))
         {
           const std::string sanitized = sanitizeEvidenceValue(line);
-          const std::string category = categorizeSessionLogLine(sanitized);
+          const std::string category = categorizeSessionLogLine(installation, sanitized);
           if (category.empty())
             continue;
 
@@ -936,6 +974,15 @@ namespace BWAPI::Runtime
         if (event.category == "starcraft-install-state")
         {
           ++summary.installStateEventCount;
+          continue;
+        }
+
+        if (event.category == "starcraft-launch-process")
+        {
+          ++summary.launchProcessEventCount;
+          const int processId = parseIntegerAfterMarker(event.line, "pid:");
+          if (processId > 0)
+            summary.latestLaunchProcessId = processId;
           continue;
         }
 
@@ -1300,6 +1347,9 @@ namespace BWAPI::Runtime
     writeEvidenceField(output, "session.ended_event_count", evidence.sessionSummary.endedEventCount);
     writeEvidenceField(output, "session.preexisting_event_count", evidence.sessionSummary.preexistingEventCount);
     writeEvidenceField(output, "session.install_state_event_count", evidence.sessionSummary.installStateEventCount);
+    writeEvidenceField(output, "session.launch_process_event_count", evidence.sessionSummary.launchProcessEventCount);
+    if (evidence.sessionSummary.latestLaunchProcessId > 0)
+      writeEvidenceField(output, "session.latest_launch_process_id", evidence.sessionSummary.latestLaunchProcessId);
     writeEvidenceField(output, "session.related_event_count", evidence.sessionSummary.relatedEventCount);
     writeEvidenceField(
       output,

@@ -58,10 +58,13 @@ int main()
   writeFile(launcher, "fake launcher");
   writeFile(
     logFile,
-    "first line\n"
-    "I 2026-06-19 08:00:00.100000 [InstallManager] Setting Process Running: true uid=s1 binaryType=game any=true\n"
-    "I 2026-06-19 08:00:06.350000 [InstallManager] Game is no longer running: s1\n"
-    "launch handoff failed in test\n");
+    std::string("first line\n")
+      + "I 2026-06-19 08:00:00.000000 [InstallManager] {Main} Launched "
+      + appBundle.string()
+      + " with args: -launch -uid s1, pid: 777\n"
+      + "I 2026-06-19 08:00:00.100000 [InstallManager] Setting Process Running: true uid=s1 binaryType=game any=true\n"
+      + "I 2026-06-19 08:00:06.350000 [InstallManager] Game is no longer running: s1\n"
+      + "launch handoff failed in test\n");
 
   setEnvValue("STARCRAFT_API_INSTALL_DIR", installRoot.string());
   setEnvValue("STARCRAFT_API_LOG_DIR", logRoot.string());
@@ -102,8 +105,10 @@ int main()
   assert(!evidence.executable.fnv1a64.empty());
   assert(!evidence.logs.empty());
   assert(evidence.logs.front().path.find("battle.net-test.log") != std::string::npos);
-  assert(evidence.sessionEvents.size() == 2);
-  assert(evidence.sessionEvents.front().category == "starcraft-session-started");
+  assert(evidence.sessionEvents.size() == 3);
+  assert(evidence.sessionEvents[1].category == "starcraft-session-started");
+  assert(evidence.sessionSummary.launchProcessEventCount == 1);
+  assert(evidence.sessionSummary.latestLaunchProcessId == 777);
   assert(evidence.sessionSummary.startedEventCount == 1);
   assert(evidence.sessionSummary.endedEventCount == 1);
   assert(evidence.sessionSummary.completeTransitionCount == 1);
@@ -120,12 +125,15 @@ int main()
   assert(report.find("runtime.reason=unit test launch did not run") != std::string::npos);
   assert(report.find("executable.fnv1a64=") != std::string::npos);
   assert(report.find("launch handoff failed in test") != std::string::npos);
+  assert(report.find("session.launch_process_event_count=1") != std::string::npos);
+  assert(report.find("session.latest_launch_process_id=777") != std::string::npos);
   assert(report.find("session.complete_transition_count=1") != std::string::npos);
   assert(report.find("session.latest_observed_timestamp=2026-06-19 08:00:06.350000") != std::string::npos);
   assert(report.find("session.latest_transition_duration_ms=6250") != std::string::npos);
   assert(report.find("session.transition.0.duration_ms=6250") != std::string::npos);
-  assert(report.find("session.event.0.category=starcraft-session-started") != std::string::npos);
-  assert(report.find("session.event.1.category=starcraft-session-ended") != std::string::npos);
+  assert(report.find("session.event.0.category=starcraft-launch-process") != std::string::npos);
+  assert(report.find("session.event.1.category=starcraft-session-started") != std::string::npos);
+  assert(report.find("session.event.2.category=starcraft-session-ended") != std::string::npos);
 
   const std::filesystem::path evidencePath = tempRoot / "runtime.evidence";
   assert(writeRuntimeEvidenceReport(installation, launchResult, evidencePath.string(), error));

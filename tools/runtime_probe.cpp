@@ -5,7 +5,9 @@
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeReadiness.h>
 
+#include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 
 using namespace BWAPI::Runtime;
@@ -33,12 +35,26 @@ namespace
     for (const std::string& warning : validation.warnings)
       std::cout << "contract.warning=" << warning << '\n';
   }
+
+  int parsePositiveInt(const std::string& value, const char* label)
+  {
+    char* end = nullptr;
+    const long parsed = std::strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0' || parsed <= 0 || parsed > std::numeric_limits<int>::max())
+    {
+      std::cerr << label << " requires a positive integer\n";
+      return -1;
+    }
+    return static_cast<int>(parsed);
+  }
 }
 
 int main(int argc, char** argv)
 {
   bool requireProduction = false;
   std::string manifestPath;
+  RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
+
   for (int i = 1; i < argc; ++i)
   {
     const std::string arg = argv[i];
@@ -53,9 +69,71 @@ int main(int argc, char** argv)
       }
       manifestPath = argv[++i];
     }
+    else if (arg == "--product")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--product requires a value\n";
+        return 64;
+      }
+      const Product product = parseProduct(argv[++i]);
+      if (product == Product::Unknown)
+      {
+        std::cerr << "--product requires a known runtime product\n";
+        return 64;
+      }
+      environment.product = product;
+    }
+    else if (arg == "--version")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--version requires a value\n";
+        return 64;
+      }
+      environment.version = argv[++i];
+    }
+    else if (arg == "--process-id")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--process-id requires a value\n";
+        return 64;
+      }
+      const int processId = parsePositiveInt(argv[++i], "--process-id");
+      if (processId <= 0)
+        return 64;
+      environment.processId = processId;
+    }
+    else if (arg == "--executable")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--executable requires a path\n";
+        return 64;
+      }
+      environment.executablePath = argv[++i];
+    }
+    else if (arg == "--bridge")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--bridge requires a path\n";
+        return 64;
+      }
+      environment.executorBridgePath = argv[++i];
+    }
     else if (arg == "--help" || arg == "-h")
     {
-      std::cout << "usage: starcraft-runtime-probe [--manifest <path>] [--require-production]\n";
+      std::cout
+        << "usage: starcraft-runtime-probe [options]\n"
+        << "  --manifest <path>        load a runtime manifest or bootstrap manifest\n"
+        << "  --product <name>         override runtime product\n"
+        << "  --version <version>      override runtime version\n"
+        << "  --process-id <pid>       override runtime process id\n"
+        << "  --executable <path>      override runtime executable path\n"
+        << "  --bridge <path>          override runtime executor bridge directory\n"
+        << "  --require-production     return non-zero unless production readiness passes\n";
       return 0;
     }
     else
@@ -65,7 +143,6 @@ int main(int argc, char** argv)
     }
   }
 
-  RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   if (!manifestPath.empty())
     environment.manifestPath = manifestPath;
 

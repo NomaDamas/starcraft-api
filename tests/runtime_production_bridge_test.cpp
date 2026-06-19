@@ -63,6 +63,13 @@ int main()
   assert(readiness.productionReady);
   assert(blockingReadinessGaps(readiness).empty());
 
+  RuntimeOpenResult opened = backend->open();
+  assert(opened.opened);
+  assert(opened.state == RuntimeSessionState::Open);
+  assert(backend->state() == RuntimeSessionState::Open);
+  backend->close();
+  assert(backend->state() == RuntimeSessionState::Closed);
+
   std::filesystem::remove_all(bridgePath);
   return 0;
 }

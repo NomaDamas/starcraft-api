@@ -81,12 +81,21 @@ namespace BWAPI::Runtime
 
   RuntimeOpenResult RemasteredRuntimeBackend::open()
   {
-    state_ = RuntimeSessionState::Failed;
-
     RuntimeOpenResult result;
-    result.opened = false;
+    RuntimeProbeResult probeResult = probe();
+    if (!probeResult.supported)
+    {
+      state_ = RuntimeSessionState::Failed;
+      result.opened = false;
+      result.state = state_;
+      result.reason = probeResult.reason.empty() ? unsupportedReason(environment_) : probeResult.reason;
+      return result;
+    }
+
+    state_ = RuntimeSessionState::Open;
+    result.opened = true;
     result.state = state_;
-    result.reason = unsupportedReason(environment_);
+    result.reason = "StarCraft Remastered runtime backend opened";
     return result;
   }
 

@@ -45,6 +45,18 @@ cxxflags=${CXXFLAGS:-}
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
+  "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/tools/runtime_probe.cpp" \
+  -o "$bin_dir/starcraft-runtime-probe"
+
+"$bin_dir/starcraft-runtime-probe" >/dev/null
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
   -I "$generated_dir" \
   "$repo_root/bwapi/BWAPILIB/Source/AIModule.cpp" \
   "$repo_root/bwapi/BWAPILIB/Source/BWAPI.cpp" \

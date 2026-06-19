@@ -6,6 +6,7 @@ project(StarCraftAPI
 )
 
 option(STARCRAFT_API_BUILD_TESTS "Build StarCraft API portable tests" ON)
+option(STARCRAFT_API_BUILD_TOOLS "Build StarCraft API portable tools" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -85,6 +86,16 @@ target_link_libraries(starcraft_api
 add_library(StarCraftAPI::public ALIAS bwapi_public)
 add_library(StarCraftAPI::runtime ALIAS starcraft_runtime)
 add_library(StarCraftAPI::api ALIAS starcraft_api)
+
+if(STARCRAFT_API_BUILD_TOOLS)
+  add_executable(starcraft-runtime-probe
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_probe.cpp"
+  )
+  target_link_libraries(starcraft-runtime-probe
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+endif()
 
 if(STARCRAFT_API_BUILD_TESTS)
   enable_testing()

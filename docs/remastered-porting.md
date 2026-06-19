@@ -24,3 +24,5 @@ The production gate is `canClaimProductionSupport(probe, contract)`. A backend c
 - The backend probe reports supported.
 - The versioned runtime contract validates without unresolved required bindings.
 - The backend exposes every BWAPI parity capability required by the contract.
+
+Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, and `STARCRAFT_API_EXECUTABLE` for non-interactive runtime selection.

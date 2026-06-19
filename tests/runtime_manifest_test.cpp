@@ -12,6 +12,16 @@ namespace
   {
     return std::string(STARCRAFT_API_TEST_FIXTURE_DIR) + "/" + name;
   }
+
+  bool hasErrorContaining(const RuntimeManifestLoadResult& result, const std::string& value)
+  {
+    for (const std::string& error : result.errors)
+    {
+      if (error.find(value) != std::string::npos)
+        return true;
+    }
+    return false;
+  }
 }
 
 int main()
@@ -47,6 +57,21 @@ int main()
   assert(incomplete.manifest.implementedApiSurfaceMethods == 384);
   assert(incomplete.manifest.implementedCommandSurfaceEntries == 1);
   assert(incomplete.manifest.unitCommands.size() == 1);
+
+  std::istringstream bootstrap(
+    "product starcraft-remastered\n"
+    "version test-build\n"
+    "api-surface-methods 0\n"
+    "command-surface-entries 0\n");
+  RuntimeManifestLoadResult bootstrapResult = loadRuntimeManifest(bootstrap, "bootstrap");
+  assert(!bootstrapResult.loaded);
+  assert(bootstrapResult.manifest.contract.product == Product::StarCraftRemastered);
+  assert(bootstrapResult.manifest.contract.version == "test-build");
+  assert(bootstrapResult.manifest.implementedApiSurfaceMethods == 0);
+  assert(bootstrapResult.manifest.implementedCommandSurfaceEntries == 0);
+  assert(!hasErrorContaining(bootstrapResult, "manifest API surface method count is missing"));
+  assert(!hasErrorContaining(bootstrapResult, "manifest command surface entry count is missing"));
+  assert(hasErrorContaining(bootstrapResult, "manifest is missing required unit command"));
 
   std::istringstream malformed("product unknown-product\n");
   RuntimeManifestLoadResult malformedResult = loadRuntimeManifest(malformed, "inline");

@@ -124,6 +124,16 @@ int main()
 
   writeFile(
     processSnapshot,
+    "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n"
+      + "9000 1 build/starcraft-runtime-gap-report --executable "
+      + executable.string()
+      + " --require-production\n");
+  assert(findRuntimeProcessIds(installation).empty());
+
+  writeFile(
+    processSnapshot,
     "4430 4428 " + executable.string() + " -launch -uid s1\n");
   const std::vector<int> gameProcessIds = findRuntimeProcessIds(installation);
   assert(gameProcessIds.size() == 1);

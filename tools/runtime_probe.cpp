@@ -150,7 +150,7 @@ int main(int argc, char** argv)
   if (!environment.manifestPath.empty())
   {
     manifest = loadRuntimeManifestFile(environment.manifestPath);
-    if (manifest.loaded)
+    if (manifest.loaded || manifest.manifest.contract.product != Product::Unknown)
     {
       environment.product = manifest.manifest.contract.product;
       environment.version = manifest.manifest.contract.version;

@@ -136,7 +136,7 @@ int main(int argc, char** argv)
   if (!environment.manifestPath.empty())
   {
     RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
-    if (manifest.loaded)
+    if (manifest.loaded || manifest.manifest.contract.product != Product::Unknown)
     {
       if (environment.product == Product::Unknown)
         environment.product = manifest.manifest.contract.product;

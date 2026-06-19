@@ -264,6 +264,34 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    bool startsWith(std::string_view value, std::string_view prefix)
+    {
+      return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
+    }
+
+    bool commandStartsWithPath(const std::string& command, const std::string& path)
+    {
+      if (path.empty())
+        return false;
+
+      const std::size_t first = command.find_first_not_of(" \t\r\n");
+      const std::string trimmed = first == std::string::npos ? std::string() : command.substr(first);
+      if (startsWith(trimmed, path))
+        return trimmed.size() == path.size() || std::isspace(static_cast<unsigned char>(trimmed[path.size()])) != 0;
+
+      for (char quote : { '"', '\'' })
+      {
+        const std::string quotedPath = std::string(1, quote) + path + quote;
+        if (startsWith(trimmed, quotedPath))
+        {
+          return trimmed.size() == quotedPath.size()
+            || std::isspace(static_cast<unsigned char>(trimmed[quotedPath.size()])) != 0;
+        }
+      }
+
+      return false;
+    }
+
     std::string trimLeft(std::string value)
     {
       const std::size_t first = value.find_first_not_of(" \t\r\n");
@@ -494,8 +522,11 @@ namespace BWAPI::Runtime
 
     std::string categorizeProcessCommand(const RuntimeInstallation& installation, const std::string& command)
     {
-      if (lineContainsAny(command, { installation.executablePath, "StarCraft.app/Contents/MacOS/StarCraft" }))
+      if (commandStartsWithPath(command, installation.executablePath)
+          || commandStartsWithPath(command, "StarCraft.app/Contents/MacOS/StarCraft"))
+      {
         return "starcraft-game";
+      }
 
       const bool isBattleNet = lineContainsAny(command, {
         "Battle.net.app/Contents/MacOS/Battle.net",

@@ -44,6 +44,8 @@ namespace BWAPI::Runtime
       std::string version;
       int implementedApiSurfaceMethods = 0;
       int implementedCommandSurfaceEntries = 0;
+      bool hasImplementedApiSurfaceMethods = false;
+      bool hasImplementedCommandSurfaceEntries = false;
       std::vector<Capability> capabilities;
       std::vector<std::string> unitCommands;
       std::vector<std::string> gameActions;
@@ -303,6 +305,7 @@ namespace BWAPI::Runtime
           addError(result, sourceName, lineNumber, "api-surface-methods directive expects one non-negative integer");
           continue;
         }
+        accumulator.hasImplementedApiSurfaceMethods = true;
       }
       else if (directive == "command-surface-entries")
       {
@@ -311,6 +314,7 @@ namespace BWAPI::Runtime
           addError(result, sourceName, lineNumber, "command-surface-entries directive expects one non-negative integer");
           continue;
         }
+        accumulator.hasImplementedCommandSurfaceEntries = true;
       }
       else if (directive == "capability")
       {
@@ -443,9 +447,9 @@ namespace BWAPI::Runtime
       addError(result, sourceName, 0, "manifest product is missing");
     if (accumulator.version.empty())
       addError(result, sourceName, 0, "manifest version is missing");
-    if (accumulator.implementedApiSurfaceMethods <= 0)
+    if (!accumulator.hasImplementedApiSurfaceMethods)
       addError(result, sourceName, 0, "manifest API surface method count is missing");
-    if (accumulator.implementedCommandSurfaceEntries <= 0)
+    if (!accumulator.hasImplementedCommandSurfaceEntries)
       addError(result, sourceName, 0, "manifest command surface entry count is missing");
 
     const RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();

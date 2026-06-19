@@ -24,11 +24,35 @@ namespace
 #endif
   }
 
+  void unsetEnvValue(const char* name)
+  {
+#if defined(_WIN32)
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+  }
+
   void writeFile(const std::filesystem::path& path, const std::string& content)
   {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path);
     output << content;
+  }
+
+  bool containsText(const std::string& text, const std::string& needle)
+  {
+    return text.find(needle) != std::string::npos;
+  }
+
+  bool hasWarning(const RuntimeLaunchResult& result, const std::string& warning)
+  {
+    for (const std::string& candidate : result.warnings)
+    {
+      if (candidate == warning)
+        return true;
+    }
+    return false;
   }
 }
 
@@ -79,6 +103,33 @@ int main()
   assert(installation.version == "2.0.13-test");
   assert(installation.executablePath.find("StarCraft.app") != std::string::npos);
   assert(installation.launcherPath.find("StarCraft Launcher.app") != std::string::npos);
+
+#if !defined(_WIN32)
+  const std::filesystem::path processSnapshot = tempRoot / "processes.snapshot";
+  writeFile(
+    processSnapshot,
+    "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", processSnapshot.string());
+
+  const RuntimeLaunchResult existingHandoffResult = launchOrAttachRuntime(installation, true, 0);
+  assert(!existingHandoffResult.launched);
+  assert(!existingHandoffResult.running);
+  assert(existingHandoffResult.processId == 0);
+  assert(hasWarning(existingHandoffResult, "battle.net.process_count=1"));
+  assert(hasWarning(existingHandoffResult, "battle.net.process_id=4428"));
+  assert(containsText(existingHandoffResult.reason, "not launching another Battle.net instance"));
+  assert(containsText(existingHandoffResult.reason, "wait timeout"));
+
+  writeFile(
+    processSnapshot,
+    "4430 4428 " + executable.string() + " -launch -uid s1\n");
+  const std::vector<int> gameProcessIds = findRuntimeProcessIds(installation);
+  assert(gameProcessIds.size() == 1);
+  assert(gameProcessIds.front() == 4430);
+  unsetEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT");
+#endif
 
   const std::string manifest = makeRuntimeBootstrapManifest(installation);
   assert(manifest.find("product starcraft-remastered") != std::string::npos);

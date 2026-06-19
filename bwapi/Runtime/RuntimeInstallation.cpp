@@ -526,8 +526,48 @@ namespace BWAPI::Runtime
     }
 
 #if !defined(_WIN32)
+    bool parseObservedProcessLine(
+      const RuntimeInstallation& installation,
+      const std::string& line,
+      RuntimeObservedProcess& process)
+    {
+      std::istringstream parser(line);
+      if (!(parser >> process.processId >> process.parentProcessId))
+        return false;
+      if (process.processId <= 0)
+        return false;
+
+      std::getline(parser, process.command);
+      process.command = trimLeft(process.command);
+      process.category = categorizeProcessCommand(installation, process.command);
+      return isRelevantObservedProcess(process);
+    }
+
+    std::vector<RuntimeObservedProcess> collectSnapshotObservedProcesses(
+      const RuntimeInstallation& installation,
+      const std::string& snapshotPath)
+    {
+      std::vector<RuntimeObservedProcess> processes;
+      std::ifstream input(snapshotPath);
+      if (!input)
+        return processes;
+
+      std::string line;
+      while (std::getline(input, line))
+      {
+        RuntimeObservedProcess process;
+        if (parseObservedProcessLine(installation, line, process))
+          processes.push_back(process);
+      }
+      return processes;
+    }
+
     std::vector<RuntimeObservedProcess> collectPosixObservedProcesses(const RuntimeInstallation& installation)
     {
+      const std::string snapshotPath = getenvString("STARCRAFT_API_PROCESS_SNAPSHOT");
+      if (!snapshotPath.empty())
+        return collectSnapshotObservedProcesses(installation, snapshotPath);
+
       std::vector<RuntimeObservedProcess> processes;
       FILE* pipe = popen("ps -axo pid=,ppid=,command= 2>/dev/null", "r");
       if (pipe == nullptr)
@@ -536,18 +576,8 @@ namespace BWAPI::Runtime
       char buffer[4096];
       while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr)
       {
-        std::string line(buffer);
-        std::istringstream parser(line);
         RuntimeObservedProcess process;
-        if (!(parser >> process.processId >> process.parentProcessId))
-          continue;
-        if (process.processId <= 0)
-          continue;
-
-        std::getline(parser, process.command);
-        process.command = trimLeft(process.command);
-        process.category = categorizeProcessCommand(installation, process.command);
-        if (isRelevantObservedProcess(process))
+        if (parseObservedProcessLine(installation, buffer, process))
           processes.push_back(process);
       }
 
@@ -1222,39 +1252,40 @@ namespace BWAPI::Runtime
       return result;
     }
 
+    bool waitingOnExistingHandoff = false;
     const std::vector<int> handoffProcessIds = findBattleNetHandoffProcesses(installation);
     if (!handoffProcessIds.empty())
     {
-      result.reason =
-        "Battle.net StarCraft handoff is already running; not launching another Battle.net instance";
+      waitingOnExistingHandoff = true;
       result.warnings.push_back("battle.net.process_count=" + std::to_string(handoffProcessIds.size()));
       result.warnings.push_back("battle.net.process_id=" + std::to_string(handoffProcessIds.front()));
       for (std::size_t i = 0; i < handoffProcessIds.size(); ++i)
         result.warnings.push_back("battle.net.process_id." + std::to_string(i) + "=" + std::to_string(handoffProcessIds[i]));
-      return result;
     }
-
-    RuntimeLaunchResult launched = launchRuntimeProcess(installation);
-    result.launched = launched.launched;
-    result.processId = launched.processId;
-    if (!launched.launched)
+    else
     {
-      result.reason = launched.reason;
-      return result;
-    }
-
-#if defined(_WIN32)
-    if (launched.processId > 0)
-    {
-      std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-      if (runtimeProcessExists(launched.processId))
+      RuntimeLaunchResult launched = launchRuntimeProcess(installation);
+      result.launched = launched.launched;
+      result.processId = launched.processId;
+      if (!launched.launched)
       {
-        result.running = true;
-        result.processId = launched.processId;
+        result.reason = launched.reason;
         return result;
       }
-    }
+
+#if defined(_WIN32)
+      if (launched.processId > 0)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        if (runtimeProcessExists(launched.processId))
+        {
+          result.running = true;
+          result.processId = launched.processId;
+          return result;
+        }
+      }
 #endif
+    }
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMilliseconds);
     while (std::chrono::steady_clock::now() < deadline)
@@ -1270,7 +1301,11 @@ namespace BWAPI::Runtime
     }
 
     result.running = false;
-    result.reason = "StarCraft Remastered launch was requested, but no matching game process became visible before the wait timeout";
+    if (waitingOnExistingHandoff)
+      result.reason =
+        "Battle.net StarCraft handoff is already running; not launching another Battle.net instance; no matching game process became visible before the wait timeout";
+    else
+      result.reason = "StarCraft Remastered launch was requested, but no matching game process became visible before the wait timeout";
     return result;
   }
 

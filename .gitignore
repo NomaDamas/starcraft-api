@@ -14,6 +14,7 @@ Release_NoCopy
 Debug_NoCopy
 *.swp
 *.bak
+.DS_Store
 cppcheck.xml
 TestResults
 *.VC.db

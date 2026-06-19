@@ -1,0 +1,72 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+build_dir="${TMPDIR:-/tmp}/starcraft-api-linux-smoke-$$"
+generated_dir="$build_dir/generated"
+bin_dir="$build_dir/bin"
+
+mkdir -p "$generated_dir" "$bin_dir"
+
+cat > "$generated_dir/svnrev.h" <<'EOF'
+#pragma once
+
+static const int SVN_REV = 0;
+
+#include "starcraftver.h"
+EOF
+
+cxx=${CXX:-c++}
+cxxflags=${CXXFLAGS:-}
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
+  "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/tests/runtime_backend_test.cpp" \
+  -o "$bin_dir/runtime_backend_test"
+
+"$bin_dir/runtime_backend_test"
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
+  -I "$generated_dir" \
+  "$repo_root/bwapi/BWAPILIB/Source/AIModule.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/BWAPI.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/BroodwarOutputDevice.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/BulletType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Color.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/DamageType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Error.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Event.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/ExplosionType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Filters.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Forceset.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Game.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/GameType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Order.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Player.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/PlayerType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Playerset.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Position.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Race.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Region.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Regionset.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Streams.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/TechType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Unit.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/UnitCommandType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/UnitSizeType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/UnitType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/Unitset.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/UpgradeType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/Source/WeaponType.cpp" \
+  "$repo_root/bwapi/BWAPILIB/UnitCommand.cpp" \
+  "$repo_root/tests/public_api_smoke_test.cpp" \
+  -o "$bin_dir/public_api_smoke_test"
+
+"$bin_dir/public_api_smoke_test"
+
+echo "Linux smoke build passed: $build_dir"

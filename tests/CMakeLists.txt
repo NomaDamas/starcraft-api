@@ -9,6 +9,17 @@ target_link_libraries(runtime_backend_test
 
 add_test(NAME runtime_backend_test COMMAND runtime_backend_test)
 
+add_executable(runtime_command_surface_test
+  runtime_command_surface_test.cpp
+)
+
+target_link_libraries(runtime_command_surface_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_command_surface_test COMMAND runtime_command_surface_test)
+
 add_executable(runtime_contract_test
   runtime_contract_test.cpp
 )

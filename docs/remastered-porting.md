@@ -25,6 +25,7 @@ The production gate is `canClaimProductionSupport(probe, contract)`. A backend c
 - The versioned runtime contract validates without unresolved required bindings.
 - The backend exposes every BWAPI parity capability required by the contract.
 - The backend reports at least 385 implemented BWAPI abstract API methods.
+- The backend reports at least 72 implemented BWAPI command/action surface entries.
 
 Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, `STARCRAFT_API_PROCESS_ID`, `STARCRAFT_API_EXECUTABLE`, and `STARCRAFT_API_MANIFEST` for non-interactive runtime selection. Use `starcraft-runtime-probe --require-production` in release gates; it exits non-zero until full parity support is validated.
 
@@ -38,13 +39,14 @@ StarCraft Remastered support must be described by a version-specific runtime man
 product starcraft-remastered
 version <exact-client-build>
 api-surface-methods 385
+command-surface-entries 72
 capability <capability-name>
 binding <name> <kind> <required|optional> <evidence-id>
 structure <name> <size> <required|optional>
 field <structure>.<field> <offset> <size>
 ```
 
-`binding`, `structure`, and `field` entries are matched against the BWAPI parity contract. Unknown entries produce warnings; missing required entries keep the contract invalid. A complete fixture exists at `tests/fixtures/remastered-complete.manifest`, and `runtime_manifest_test` proves that a full manifest validates while an incomplete manifest fails.
+`binding`, `structure`, and `field` entries are matched against the BWAPI parity contract. Unknown entries produce warnings; missing required entries keep the contract invalid. A complete fixture exists at `tests/fixtures/remastered-complete.manifest`, and `runtime_manifest_test` proves that a full manifest validates while an incomplete manifest fails. `runtime_command_surface_test` locks 44 executable `UnitCommandTypes` plus 28 game/action methods.
 
 Run a manifest through the probe with:
 

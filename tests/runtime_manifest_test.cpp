@@ -22,6 +22,7 @@ int main()
   assert(complete.manifest.contract.product == Product::StarCraftRemastered);
   assert(complete.manifest.contract.version == "test-build");
   assert(complete.manifest.implementedApiSurfaceMethods == complete.manifest.contract.requiredApiSurfaceMethods);
+  assert(complete.manifest.implementedCommandSurfaceEntries == complete.manifest.contract.requiredCommandSurfaceEntries);
 
   ContractValidationResult completeValidation = validateRuntimeContract(complete.manifest.contract);
   assert(completeValidation.valid);
@@ -31,6 +32,7 @@ int main()
   completeProbe.supported = true;
   completeProbe.capabilities = complete.manifest.capabilities;
   completeProbe.implementedApiSurfaceMethods = complete.manifest.implementedApiSurfaceMethods;
+  completeProbe.implementedCommandSurfaceEntries = complete.manifest.implementedCommandSurfaceEntries;
   assert(canClaimProductionSupport(completeProbe, complete.manifest.contract));
 
   RuntimeManifestLoadResult incomplete = loadRuntimeManifestFile(fixturePath("remastered-incomplete.manifest"));

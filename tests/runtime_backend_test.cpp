@@ -27,6 +27,7 @@ int main()
   assert(!remasteredProbe.reason.empty());
   assert(remasteredProbe.capabilities.empty());
   assert(remasteredProbe.implementedApiSurfaceMethods == 0);
+  assert(remasteredProbe.implementedCommandSurfaceEntries == 0);
   assert(remasteredBackend->state() == RuntimeSessionState::Closed);
   RuntimeOpenResult remasteredOpen = remasteredBackend->open();
   assert(!remasteredOpen.opened);

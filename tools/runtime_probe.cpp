@@ -85,6 +85,7 @@ int main(int argc, char** argv)
   for (Capability capability : probe.capabilities)
     std::cout << "probe.capability=" << toString(capability) << '\n';
   std::cout << "probe.implemented_api_surface_methods=" << probe.implementedApiSurfaceMethods << '\n';
+  std::cout << "probe.implemented_command_surface_entries=" << probe.implementedCommandSurfaceEntries << '\n';
 
   RuntimeOpenResult open = backend->open();
   std::cout << "open.opened=" << (open.opened ? "true" : "false") << '\n';
@@ -108,12 +109,15 @@ int main(int argc, char** argv)
       contract = manifest.manifest.contract;
       std::cout << "manifest.implemented_api_surface_methods="
                 << manifest.manifest.implementedApiSurfaceMethods << '\n';
+      std::cout << "manifest.implemented_command_surface_entries="
+                << manifest.manifest.implementedCommandSurfaceEntries << '\n';
       for (Capability capability : manifest.manifest.capabilities)
         std::cout << "manifest.capability=" << toString(capability) << '\n';
     }
   }
 
   std::cout << "contract.required_api_surface_methods=" << contract.requiredApiSurfaceMethods << '\n';
+  std::cout << "contract.required_command_surface_entries=" << contract.requiredCommandSurfaceEntries << '\n';
   ContractValidationResult validation = validateRuntimeContract(contract);
   printValidation(validation);
 

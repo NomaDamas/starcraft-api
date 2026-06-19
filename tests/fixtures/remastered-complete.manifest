@@ -2,6 +2,7 @@
 product starcraft-remastered
 version test-build
 api-surface-methods 385
+command-surface-entries 72
 
 capability read-game-state
 capability read-map-data

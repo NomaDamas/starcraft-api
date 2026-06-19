@@ -13,6 +13,7 @@ namespace BWAPI::Runtime
     RuntimeContract contract;
     std::vector<Capability> capabilities;
     int implementedApiSurfaceMethods = 0;
+    int implementedCommandSurfaceEntries = 0;
   };
 
   struct RuntimeManifestLoadResult

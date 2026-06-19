@@ -42,6 +42,7 @@ namespace BWAPI::Runtime
       Product product = Product::Unknown;
       std::string version;
       int implementedApiSurfaceMethods = 0;
+      int implementedCommandSurfaceEntries = 0;
       std::vector<Capability> capabilities;
       std::vector<BindingDirective> bindings;
       std::vector<StructureDirective> structures;
@@ -280,6 +281,14 @@ namespace BWAPI::Runtime
           continue;
         }
       }
+      else if (directive == "command-surface-entries")
+      {
+        if (tokens.size() != 2 || !parseInt(tokens[1], accumulator.implementedCommandSurfaceEntries))
+        {
+          addError(result, sourceName, lineNumber, "command-surface-entries directive expects one non-negative integer");
+          continue;
+        }
+      }
       else if (directive == "capability")
       {
         if (tokens.size() != 2)
@@ -395,6 +404,8 @@ namespace BWAPI::Runtime
       addError(result, sourceName, 0, "manifest version is missing");
     if (accumulator.implementedApiSurfaceMethods <= 0)
       addError(result, sourceName, 0, "manifest API surface method count is missing");
+    if (accumulator.implementedCommandSurfaceEntries <= 0)
+      addError(result, sourceName, 0, "manifest command surface entry count is missing");
 
     if (!result.errors.empty())
       return result;
@@ -411,6 +422,7 @@ namespace BWAPI::Runtime
     result.manifest.contract = std::move(contract);
     result.manifest.capabilities = std::move(accumulator.capabilities);
     result.manifest.implementedApiSurfaceMethods = accumulator.implementedApiSurfaceMethods;
+    result.manifest.implementedCommandSurfaceEntries = accumulator.implementedCommandSurfaceEntries;
     result.loaded = result.errors.empty();
     return result;
   }

@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 
 #include <algorithm>
 #include <sstream>
@@ -124,6 +125,7 @@ namespace BWAPI::Runtime
     contract.product = Product::StarCraftBroodWar1161;
     contract.version = "1.16.1";
     contract.requiredApiSurfaceMethods = 385;
+    contract.requiredCommandSurfaceEntries = makeBWAPICommandSurface().totalEntries();
     contract.requiredCapabilities = fullParityCapabilities();
     contract.bindings = {
       requiredBinding("BW::BWDATA::Game", BindingKind::DataAddress),
@@ -234,6 +236,8 @@ namespace BWAPI::Runtime
       addError(result, "runtime contract has no required capabilities");
     if (contract.requiredApiSurfaceMethods <= 0)
       addError(result, "runtime contract has no required API surface method count");
+    if (contract.requiredCommandSurfaceEntries <= 0)
+      addError(result, "runtime contract has no required command surface entry count");
 
     for (const RuntimeBinding& binding : contract.bindings)
     {
@@ -302,6 +306,8 @@ namespace BWAPI::Runtime
     if (!validation.valid)
       return false;
     if (probe.implementedApiSurfaceMethods < contract.requiredApiSurfaceMethods)
+      return false;
+    if (probe.implementedCommandSurfaceEntries < contract.requiredCommandSurfaceEntries)
       return false;
 
     return std::all_of(

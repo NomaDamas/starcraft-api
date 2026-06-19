@@ -25,6 +25,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
@@ -39,10 +40,19 @@ cxxflags=${CXXFLAGS:-}
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
+  "$repo_root/tests/runtime_command_surface_test.cpp" \
+  -o "$bin_dir/runtime_command_surface_test"
+
+"$bin_dir/runtime_command_surface_test"
+
+"$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
   "$repo_root/bwapi/Runtime/Legacy1161RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
@@ -62,6 +72,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
@@ -81,6 +92,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
@@ -118,6 +130,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \

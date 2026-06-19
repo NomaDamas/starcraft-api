@@ -13,7 +13,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
-#include <tlhelp32.h>
+#include <TlHelp32.h>
 #else
 #include <sys/wait.h>
 #include <unistd.h>
@@ -259,6 +259,7 @@ namespace BWAPI::Runtime
       return false;
     }
 
+#if !defined(_WIN32)
     std::vector<int> parseProcessListMatching(const std::vector<std::string>& needles)
     {
       std::vector<int> processIds;
@@ -306,6 +307,7 @@ namespace BWAPI::Runtime
         installation.installRoot
       });
     }
+#endif
 
     bool containsProcessId(const std::vector<int>& processIds, int processId)
     {

@@ -123,6 +123,17 @@ target_link_libraries(runtime_process_test
 
 add_test(NAME runtime_process_test COMMAND runtime_process_test)
 
+add_executable(runtime_installation_test
+  runtime_installation_test.cpp
+)
+
+target_link_libraries(runtime_installation_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_installation_test COMMAND runtime_installation_test)
+
 if(TARGET starcraft-runtime-probe)
   add_test(NAME runtime_probe_cli_test COMMAND starcraft-runtime-probe)
   add_test(NAME runtime_probe_require_production_fails COMMAND starcraft-runtime-probe --require-production)
@@ -137,6 +148,10 @@ endif()
 
 if(TARGET starcraft-runtime-submit-command)
   add_test(NAME runtime_submit_command_help COMMAND starcraft-runtime-submit-command --help)
+endif()
+
+if(TARGET starcraft-runtime-launch)
+  add_test(NAME runtime_launch_help COMMAND starcraft-runtime-launch --help)
 endif()
 
 if(TARGET bwapi-api-surface-audit)

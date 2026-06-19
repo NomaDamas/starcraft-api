@@ -31,6 +31,26 @@ Use `starcraft-runtime-probe` to print the selected runtime, backend probe resul
 
 Use `bwapi-api-surface-audit` to lock the public abstract API surface. The current parity baseline is 385 pure virtual methods across `Game`, `UnitInterface`, `PlayerInterface`, `BulletInterface`, `RegionInterface`, and `ForceInterface`.
 
+Use `starcraft-runtime-launch` to discover and launch a local StarCraft Remastered installation before probing:
+
+```sh
+starcraft-runtime-launch \
+  --launch \
+  --require-running \
+  --manifest-out /tmp/starcraft-api-local-bootstrap.manifest \
+  --bridge /tmp/starcraft-api-local-bridge \
+  --print-env
+```
+
+The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `STARCRAFT_API_STARCRAFT_DIR`, common macOS Desktop/Application paths, and common Windows install roots. On macOS it recognizes the Battle.net layout:
+
+```text
+StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft
+StarCraft/StarCraft Launcher.app/Contents/MacOS/StarCraft Launcher
+```
+
+`--require-running` only succeeds when the actual game executable is visible and stable for the runtime process check. A transient launcher, Battle.net handoff, or short-lived splash process is reported as `runtime.running=false` and is not exported as `STARCRAFT_API_PROCESS_ID`.
+
 ## Runtime Manifest Format
 
 StarCraft Remastered support must be described by a version-specific runtime manifest before code can claim parity. The manifest is line based, has no external parser dependency, supports `#` comments, and uses these directives:
@@ -68,7 +88,9 @@ A valid manifest only proves that versioned offsets, symbols, structure fields, 
 - `executor.target_located`: `STARCRAFT_API_EXECUTABLE` points to an existing target process executable or app bundle path.
 - `executor.available`: the authorized attach/read/write/command executor is implemented for the selected product and platform.
 
-The current macOS/Linux executor preflight can validate contracts, locate target paths, and verify a supplied target process id, but it intentionally reports `executor.available=false`. This keeps release automation honest: a complete manifest and visible process are necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.
+The current macOS/Linux executor preflight can validate contracts, locate target paths, verify a supplied target process id, and verify a local filesystem bridge readiness file. This keeps release automation honest: a complete manifest, visible process, and bridge are necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.
+
+The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. This is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence. Production readiness still requires a validated in-process or otherwise authorized SC:R adapter that can read state, issue commands, draw overlays, dispatch events, and prove multiplayer synchronization behavior.
 
 ## Process Memory Primitive
 

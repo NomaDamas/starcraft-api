@@ -74,6 +74,7 @@ add_library(starcraft_runtime STATIC
   "${BWAPI_ROOT}/Runtime/RuntimeEnvironment.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeExecutor.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeManifest.cpp"
+  "${BWAPI_ROOT}/Runtime/RuntimeInstallation.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeProcess.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeProcessMemory.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeReadiness.cpp"
@@ -117,6 +118,14 @@ if(STARCRAFT_API_BUILD_TOOLS)
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_submit_command.cpp"
   )
   target_link_libraries(starcraft-runtime-submit-command
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+
+  add_executable(starcraft-runtime-launch
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_launch.cpp"
+  )
+  target_link_libraries(starcraft-runtime-launch
     PRIVATE
       StarCraftAPI::runtime
   )

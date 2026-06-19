@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeProcess.h>
 
 #include <chrono>
 #include <cstdio>
@@ -13,7 +14,6 @@
 
 #if defined(_WIN32)
 #include <windows.h>
-#include <TlHelp32.h>
 #else
 #include <sys/wait.h>
 #include <unistd.h>
@@ -335,46 +335,15 @@ namespace BWAPI::Runtime
     }
 
 #if defined(_WIN32)
-    std::vector<int> findWindowsProcessesByName(const std::string& executableName)
-    {
-      std::vector<int> processIds;
-      HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-      if (snapshot == INVALID_HANDLE_VALUE)
-        return processIds;
-
-      PROCESSENTRY32A entry;
-      entry.dwSize = sizeof(entry);
-      if (Process32FirstA(snapshot, &entry))
-      {
-        do
-        {
-          if (executableName == entry.szExeFile)
-            processIds.push_back(static_cast<int>(entry.th32ProcessID));
-        } while (Process32NextA(snapshot, &entry));
-      }
-
-      CloseHandle(snapshot);
-      return processIds;
-    }
-
     std::vector<int> findWindowsProcesses(const RuntimeInstallation& installation)
     {
-      std::filesystem::path executable(installation.executablePath);
-      const std::string expectedName = executable.filename().string().empty()
-        ? "StarCraft.exe"
-        : executable.filename().string();
-      std::vector<int> processIds = findWindowsProcessesByName(expectedName);
-      if (expectedName != "StarCraft.exe")
-      {
-        std::vector<int> fallback = findWindowsProcessesByName("StarCraft.exe");
-        processIds.insert(processIds.end(), fallback.begin(), fallback.end());
-      }
-      return processIds;
+      (void)installation;
+      return {};
     }
 
     std::vector<int> findWindowsBattleNetHandoffProcesses()
     {
-      return findWindowsProcessesByName("Battle.net.exe");
+      return {};
     }
 #endif
 
@@ -605,6 +574,19 @@ namespace BWAPI::Runtime
       result.reason = launched.reason;
       return result;
     }
+
+#if defined(_WIN32)
+    if (launched.processId > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+      if (runtimeProcessExists(launched.processId))
+      {
+        result.running = true;
+        result.processId = launched.processId;
+        return result;
+      }
+    }
+#endif
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMilliseconds);
     while (std::chrono::steady_clock::now() < deadline)

@@ -113,6 +113,14 @@ if(STARCRAFT_API_BUILD_TOOLS)
       StarCraftAPI::runtime
   )
 
+  add_executable(starcraft-runtime-submit-command
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_submit_command.cpp"
+  )
+  target_link_libraries(starcraft-runtime-submit-command
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+
   add_executable(bwapi-api-surface-audit
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/api_surface_audit.cpp"
   )

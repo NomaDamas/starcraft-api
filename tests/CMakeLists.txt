@@ -135,6 +135,10 @@ if(TARGET starcraft-runtime-gap-report)
   set_tests_properties(runtime_gap_report_require_production_fails PROPERTIES WILL_FAIL TRUE)
 endif()
 
+if(TARGET starcraft-runtime-submit-command)
+  add_test(NAME runtime_submit_command_help COMMAND starcraft-runtime-submit-command --help)
+endif()
+
 if(TARGET bwapi-api-surface-audit)
   add_test(NAME bwapi_api_surface_audit COMMAND bwapi-api-surface-audit)
 endif()

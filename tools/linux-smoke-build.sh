@@ -30,6 +30,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
@@ -68,6 +69,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
@@ -186,6 +188,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
@@ -206,6 +209,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
@@ -226,6 +230,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \

@@ -1214,6 +1214,35 @@ namespace BWAPI::Runtime
     return installation;
   }
 
+  RuntimeEnvironment resolveRuntimeEnvironment(const RuntimeEnvironment& baseEnvironment)
+  {
+    RuntimeEnvironment environment = baseEnvironment;
+    if (environment.product != Product::Unknown && environment.product != Product::StarCraftRemastered)
+      return environment;
+
+    const RuntimeInstallation installation = detectStarCraftInstallation(environment);
+    if (!installation.found)
+      return environment;
+
+    if (environment.platform == Platform::Unknown)
+      environment.platform = installation.platform;
+    if (environment.product == Product::Unknown)
+      environment.product = installation.product;
+    if (environment.version.empty())
+      environment.version = installation.version;
+    if (environment.executablePath.empty())
+      environment.executablePath = installation.executablePath;
+
+    if (environment.processId <= 0)
+    {
+      const std::vector<int> processIds = findRuntimeProcessIds(installation);
+      if (!processIds.empty())
+        environment.processId = processIds.front();
+    }
+
+    return environment;
+  }
+
   std::vector<int> findRuntimeProcessIds(const RuntimeInstallation& installation)
   {
     if (!installation.found)

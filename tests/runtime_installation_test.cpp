@@ -128,6 +128,20 @@ int main()
   const std::vector<int> gameProcessIds = findRuntimeProcessIds(installation);
   assert(gameProcessIds.size() == 1);
   assert(gameProcessIds.front() == 4430);
+
+  RuntimeEnvironment unresolvedEnvironment = RuntimeEnvironment::detectHost();
+  unresolvedEnvironment.platform = Platform::MacOS;
+  unresolvedEnvironment.product = Product::Unknown;
+  unresolvedEnvironment.version.clear();
+  unresolvedEnvironment.executablePath.clear();
+  unresolvedEnvironment.processId = 0;
+  const RuntimeEnvironment resolvedEnvironment = resolveRuntimeEnvironment(unresolvedEnvironment);
+  assert(resolvedEnvironment.platform == Platform::MacOS);
+  assert(resolvedEnvironment.product == Product::StarCraftRemastered);
+  assert(resolvedEnvironment.version == "2.0.13-test");
+  assert(resolvedEnvironment.executablePath == installation.executablePath);
+  assert(resolvedEnvironment.processId == 4430);
+
   unsetEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT");
 #endif
 

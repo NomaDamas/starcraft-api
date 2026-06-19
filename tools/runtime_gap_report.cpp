@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeReadiness.h>
 
@@ -177,7 +178,7 @@ int main(int argc, char** argv)
     }
   }
 
-  RuntimeContract contract = contractFor(environment);
+  RuntimeContract contract;
   RuntimeManifestLoadResult manifest;
   if (!environment.manifestPath.empty())
   {
@@ -197,7 +198,11 @@ int main(int argc, char** argv)
     }
   }
 
-  if (contract.product == Product::Unknown)
+  environment = resolveRuntimeEnvironment(environment);
+
+  if (manifest.loaded)
+    contract = manifest.manifest.contract;
+  else
     contract = contractFor(environment);
 
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);

@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeReadiness.h>
 
@@ -79,6 +80,8 @@ int main(int argc, char** argv)
     }
   }
 
+  environment = resolveRuntimeEnvironment(environment);
+
   RuntimeContract contract = contractFor(environment);
   if (manifest.loaded)
     contract = manifest.manifest.contract;
@@ -90,6 +93,8 @@ int main(int argc, char** argv)
   std::cout << "version=" << (environment.version.empty() ? "unknown" : environment.version) << '\n';
   if (environment.processId > 0)
     std::cout << "process.id=" << environment.processId << '\n';
+  if (!environment.executablePath.empty())
+    std::cout << "executable.path=" << environment.executablePath << '\n';
   if (!environment.manifestPath.empty())
     std::cout << "manifest.path=" << environment.manifestPath << '\n';
   if (!environment.executorBridgePath.empty())

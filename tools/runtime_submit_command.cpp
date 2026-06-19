@@ -1,5 +1,6 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeInstallation.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -22,7 +23,7 @@ namespace
   void printUsage()
   {
     std::cout
-      << "usage: starcraft-runtime-submit-command --product <product> --version <version> "
+      << "usage: starcraft-runtime-submit-command [--product <product>] [--version <version>] "
       << "--bridge <dir> (--unit-command <name> --unit <id> | --game-action <name>) [--arg <int>...]\n";
   }
 }
@@ -119,6 +120,8 @@ int main(int argc, char** argv)
     std::cerr << "unknown argument: " << arg << '\n';
     return 64;
   }
+
+  environment = resolveRuntimeEnvironment(environment);
 
   if (environment.product == Product::Unknown)
   {

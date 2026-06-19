@@ -107,6 +107,7 @@ namespace BWAPI::Runtime
   };
 
   RuntimeInstallation detectStarCraftInstallation(const RuntimeEnvironment& environment);
+  RuntimeEnvironment resolveRuntimeEnvironment(const RuntimeEnvironment& baseEnvironment);
   std::vector<int> findRuntimeProcessIds(const RuntimeInstallation& installation);
   RuntimeLaunchResult launchOrAttachRuntime(
     const RuntimeInstallation& installation,

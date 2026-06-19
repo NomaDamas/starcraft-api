@@ -16,8 +16,6 @@ file(WRITE "${bridge_dir}/ready" "protocol=starcraft-api-file-bridge-v1\nproduct
 set(manifest "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest")
 execute_process(
   COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
-    --product starcraft-remastered
-    --version test-build
     --manifest "${manifest}"
     --bridge "${bridge_dir}"
     --game-action pauseGame

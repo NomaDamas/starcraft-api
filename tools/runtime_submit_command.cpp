@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeInstallation.h>
+#include <BWAPI/Runtime/RuntimeManifest.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -130,6 +131,18 @@ int main(int argc, char** argv)
 
     std::cerr << "unknown argument: " << arg << '\n';
     return 64;
+  }
+
+  if (!environment.manifestPath.empty())
+  {
+    RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
+    if (manifest.loaded)
+    {
+      if (environment.product == Product::Unknown)
+        environment.product = manifest.manifest.contract.product;
+      if (environment.version.empty())
+        environment.version = manifest.manifest.contract.version;
+    }
   }
 
   environment = resolveRuntimeEnvironment(environment);

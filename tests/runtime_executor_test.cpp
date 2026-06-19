@@ -113,6 +113,28 @@ int main()
   assert(commandLogContent.str().find("unit-command|Move|5|10,20") != std::string::npos);
   assert(commandLogContent.str().find("game-action|pauseGame|0|") != std::string::npos);
 
+  RuntimeEnvironment noManifestEnvironment = bridgeEnvironment;
+  noManifestEnvironment.manifestPath.clear();
+  RuntimeExecutorSubmitResult rejectedWithoutManifest =
+    submitRuntimeCommands(noManifestEnvironment, { gameAction });
+  assert(!rejectedWithoutManifest.submitted);
+  assert(rejectedWithoutManifest.reason.find("runtime manifest is required") != std::string::npos);
+
+  const std::filesystem::path bootstrapManifest = bridgePath / "bootstrap.manifest";
+  {
+    std::ofstream bootstrap(bootstrapManifest);
+    bootstrap << "product starcraft-remastered\n";
+    bootstrap << "version test-build\n";
+    bootstrap << "api-surface-methods 0\n";
+    bootstrap << "command-surface-entries 0\n";
+  }
+  RuntimeEnvironment bootstrapManifestEnvironment = bridgeEnvironment;
+  bootstrapManifestEnvironment.manifestPath = bootstrapManifest.string();
+  RuntimeExecutorSubmitResult rejectedWithBootstrapManifest =
+    submitRuntimeCommands(bootstrapManifestEnvironment, { gameAction });
+  assert(!rejectedWithBootstrapManifest.submitted);
+  assert(rejectedWithBootstrapManifest.reason.find("runtime manifest failed to load") != std::string::npos);
+
   RuntimeCommandRequest invalidCommand;
   invalidCommand.kind = RuntimeCommandKind::GameAction;
   invalidCommand.name = "notARealAction";

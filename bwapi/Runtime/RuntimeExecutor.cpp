@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
 
 #include <filesystem>
@@ -123,6 +124,64 @@ namespace BWAPI::Runtime
              << serializeArguments(command.arguments);
       return output.str();
     }
+
+    bool rejectSubmit(RuntimeExecutorSubmitResult& result, const std::string& reason)
+    {
+      result.reason = reason;
+      result.errors.push_back(reason);
+      return false;
+    }
+
+    bool validateCommandsAgainstManifest(
+      const RuntimeEnvironment& environment,
+      const std::vector<RuntimeCommandRequest>& commands,
+      RuntimeExecutorSubmitResult& result)
+    {
+      if (environment.product != Product::StarCraftRemastered && environment.manifestPath.empty())
+        return true;
+
+      if (environment.manifestPath.empty())
+        return rejectSubmit(result, "runtime manifest is required for StarCraft Remastered command submission");
+
+      RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
+      if (!manifest.loaded)
+      {
+        const std::string reason = manifest.errors.empty()
+          ? "runtime manifest failed to load"
+          : "runtime manifest failed to load: " + manifest.errors.front();
+        return rejectSubmit(result, reason);
+      }
+
+      if (manifest.manifest.contract.product != environment.product)
+        return rejectSubmit(result, "runtime manifest product does not match the selected runtime");
+      if (!environment.version.empty() && manifest.manifest.contract.version != environment.version)
+        return rejectSubmit(result, "runtime manifest version does not match the selected runtime");
+
+      ContractValidationResult validation = validateRuntimeContract(manifest.manifest.contract);
+      if (!validation.valid)
+      {
+        const std::string reason = validation.errors.empty()
+          ? "runtime manifest contract is invalid"
+          : "runtime manifest contract is invalid: " + validation.errors.front();
+        return rejectSubmit(result, reason);
+      }
+
+      for (const RuntimeCommandRequest& command : commands)
+      {
+        if (command.kind == RuntimeCommandKind::UnitCommand)
+        {
+          if (!containsCommandSurfaceEntry(manifest.manifest.unitCommands, command.name))
+            return rejectSubmit(result, "runtime manifest does not declare BWAPI unit command: " + command.name);
+        }
+        else if (command.kind == RuntimeCommandKind::GameAction)
+        {
+          if (!containsCommandSurfaceEntry(manifest.manifest.gameActions, command.name))
+            return rejectSubmit(result, "runtime manifest does not declare BWAPI game action: " + command.name);
+        }
+      }
+
+      return true;
+    }
   }
 
   RuntimeExecutorPreflightResult preflightRuntimeExecutor(
@@ -183,6 +242,9 @@ namespace BWAPI::Runtime
         return result;
       }
     }
+
+    if (!validateCommandsAgainstManifest(environment, commands, result))
+      return result;
 
     if (environment.executorBridgePath.empty())
     {

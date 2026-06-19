@@ -148,6 +148,15 @@ endif()
 
 if(TARGET starcraft-runtime-submit-command)
   add_test(NAME runtime_submit_command_help COMMAND starcraft-runtime-submit-command --help)
+  add_test(
+    NAME runtime_submit_command_cli_manifest_gate
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_RUNTIME_SUBMIT_COMMAND=$<TARGET_FILE:starcraft-runtime-submit-command>
+      -DSTARCRAFT_API_TEST_FIXTURE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures
+      -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_submit_command_cli_test.cmake
+  )
 endif()
 
 if(TARGET starcraft-runtime-launch)

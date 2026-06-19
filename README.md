@@ -53,6 +53,17 @@ build/starcraft-runtime-gap-report \
   --bridge /tmp/starcraft-api-local-bridge
 ```
 
+Command submission is manifest-backed for StarCraft: Remastered. The CLI rejects command submission when the manifest is missing, incomplete, or does not declare the BWAPI command/action being submitted:
+
+```sh
+build/starcraft-runtime-submit-command \
+  --product starcraft-remastered \
+  --version 1.23.10.13515 \
+  --manifest /path/to/validated-remastered.manifest \
+  --bridge /path/to/authorized-runtime-bridge \
+  --game-action pauseGame
+```
+
 ## BWAPI Reference
 
 BWAPI is used as a compatibility reference for the public API shape, command vocabulary, and legacy StarCraft: Brood War 1.16.1 behavior.

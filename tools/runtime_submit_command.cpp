@@ -24,7 +24,8 @@ namespace
   {
     std::cout
       << "usage: starcraft-runtime-submit-command [--product <product>] [--version <version>] "
-      << "--bridge <dir> (--unit-command <name> --unit <id> | --game-action <name>) [--arg <int>...]\n";
+      << "[--manifest <path>] --bridge <dir> "
+      << "(--unit-command <name> --unit <id> | --game-action <name>) [--arg <int>...]\n";
   }
 }
 
@@ -60,6 +61,16 @@ int main(int argc, char** argv)
         return 64;
       }
       environment.version = argv[++i];
+      continue;
+    }
+    if (arg == "--manifest")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--manifest requires a path\n";
+        return 64;
+      }
+      environment.manifestPath = argv[++i];
       continue;
     }
     if (arg == "--bridge")

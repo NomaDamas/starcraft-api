@@ -39,6 +39,8 @@ int main()
   ContractValidationResult completeValidation = validateRuntimeContract(complete.manifest.contract);
   assert(completeValidation.valid);
   assert(completeValidation.errors.empty());
+  assert(!completeValidation.warnings.empty());
+  assert(contractContainsFixtureEvidence(complete.manifest.contract));
 
   RuntimeProbeResult completeProbe;
   completeProbe.supported = true;
@@ -47,7 +49,7 @@ int main()
   completeProbe.implementedGameActions = complete.manifest.gameActions;
   completeProbe.implementedApiSurfaceMethods = complete.manifest.implementedApiSurfaceMethods;
   completeProbe.implementedCommandSurfaceEntries = complete.manifest.implementedCommandSurfaceEntries;
-  assert(canClaimProductionSupport(completeProbe, complete.manifest.contract));
+  assert(!canClaimProductionSupport(completeProbe, complete.manifest.contract));
 
   RuntimeManifestLoadResult incomplete = loadRuntimeManifestFile(fixturePath("remastered-incomplete.manifest"));
   assert(!incomplete.loaded);

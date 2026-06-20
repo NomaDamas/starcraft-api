@@ -73,7 +73,7 @@ structure <name> <size> <required|optional>
 field <structure>.<field> <offset> <size>
 ```
 
-`binding`, `structure`, `field`, `unit-command`, and `game-action` entries are matched against the BWAPI parity contract. Unknown entries produce warnings or errors depending on whether they could falsely satisfy a release gate; missing required entries keep the manifest or contract invalid. A complete fixture exists at `tests/fixtures/remastered-complete.manifest`, and `runtime_manifest_test` proves that a full manifest validates while an incomplete manifest fails. `runtime_command_surface_test` locks 44 executable `UnitCommandTypes` plus 28 game/action methods.
+`binding`, `structure`, `field`, `unit-command`, and `game-action` entries are matched against the BWAPI parity contract. Unknown entries produce warnings or errors depending on whether they could falsely satisfy a release gate; missing required entries keep the manifest or contract invalid. A complete fixture exists at `tests/fixtures/remastered-complete.manifest`, and `runtime_manifest_test` proves that a full manifest validates while an incomplete manifest fails. Fixture evidence such as `fixture:*` is parser/contract test data only; production support claims reject it even when the fixture is otherwise complete. `runtime_command_surface_test` locks 44 executable `UnitCommandTypes` plus 28 game/action methods.
 
 Run a manifest through the probe with:
 

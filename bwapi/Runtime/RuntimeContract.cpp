@@ -58,6 +58,11 @@ namespace BWAPI::Runtime
     {
       result.errors.push_back(std::move(message));
     }
+
+    bool startsWith(const std::string& value, const std::string& prefix)
+    {
+      return value.rfind(prefix, 0) == 0;
+    }
   }
 
   const char* toString(BindingKind kind)
@@ -258,6 +263,12 @@ namespace BWAPI::Runtime
         message << "resolved binding is missing validation evidence: " << binding.name;
         result.warnings.push_back(message.str());
       }
+      if (binding.resolved && startsWith(binding.evidence, "fixture:"))
+      {
+        std::ostringstream message;
+        message << "resolved binding uses fixture validation evidence: " << binding.name;
+        result.warnings.push_back(message.str());
+      }
     }
 
     for (const StructureLayout& structure : contract.structures)
@@ -292,6 +303,17 @@ namespace BWAPI::Runtime
     return result;
   }
 
+  bool contractContainsFixtureEvidence(const RuntimeContract& contract)
+  {
+    return std::any_of(
+      contract.bindings.begin(),
+      contract.bindings.end(),
+      [](const RuntimeBinding& binding)
+      {
+        return binding.resolved && startsWith(binding.evidence, "fixture:");
+      });
+  }
+
   bool hasCapability(const RuntimeProbeResult& probe, Capability capability)
   {
     return std::find(probe.capabilities.begin(), probe.capabilities.end(), capability) != probe.capabilities.end();
@@ -304,6 +326,8 @@ namespace BWAPI::Runtime
 
     const ContractValidationResult validation = validateRuntimeContract(contract);
     if (!validation.valid)
+      return false;
+    if (contractContainsFixtureEvidence(contract))
       return false;
     if (probe.implementedApiSurfaceMethods < contract.requiredApiSurfaceMethods)
       return false;

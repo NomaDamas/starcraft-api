@@ -30,6 +30,8 @@ namespace BWAPI::Runtime
               << " unresolved production gate error(s). "
               << "Executor preflight has " << preflight.errors.size()
               << " error(s) and " << preflight.warnings.size() << " warning(s).";
+      if (contractContainsFixtureEvidence(contract))
+        message << " Runtime contract uses fixture validation evidence and cannot claim production support.";
       if (!environment.manifestPath.empty())
         message << " Runtime manifest: " << environment.manifestPath << '.';
       return message.str();

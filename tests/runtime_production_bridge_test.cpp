@@ -109,18 +109,17 @@ int main()
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
   readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
 
-  assert(probe.supported);
+  assert(!probe.supported);
+  assert(probe.reason.find("fixture validation evidence") != std::string::npos);
   assert(preflight.executorAvailable);
   assert(preflight.errors.empty());
-  assert(readiness.productionReady);
-  assert(blockingReadinessGaps(readiness).empty());
+  assert(!readiness.productionReady);
+  assert(!blockingReadinessGaps(readiness).empty());
 
   RuntimeOpenResult opened = backend->open();
-  assert(opened.opened);
-  assert(opened.state == RuntimeSessionState::Open);
-  assert(backend->state() == RuntimeSessionState::Open);
-  backend->close();
-  assert(backend->state() == RuntimeSessionState::Closed);
+  assert(!opened.opened);
+  assert(opened.state == RuntimeSessionState::Failed);
+  assert(backend->state() == RuntimeSessionState::Failed);
 
   std::filesystem::remove_all(bridgePath);
   return 0;

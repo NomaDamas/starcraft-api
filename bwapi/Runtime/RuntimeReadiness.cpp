@@ -230,14 +230,21 @@ namespace BWAPI::Runtime
       RuntimeReadinessSeverity::Error,
       bridgeModeDetail);
 
+    const bool behaviorProofComplete =
+      executorPreflight.executorAvailable && executorPreflight.missingBehaviorProofs.empty();
+    std::string behaviorProofDetail;
+    if (behaviorProofComplete)
+      behaviorProofDetail = "all required executor behavior proofs are present";
+    else if (!executorPreflight.missingBehaviorProofs.empty())
+      behaviorProofDetail = join(executorPreflight.missingBehaviorProofs);
+    else
+      behaviorProofDetail = "runtime executor is unavailable; behavior proofs cannot be complete";
     addCheck(
       report,
       "executor-behavior-proof-complete",
-      executorPreflight.missingBehaviorProofs.empty(),
+      behaviorProofComplete,
       RuntimeReadinessSeverity::Error,
-      executorPreflight.missingBehaviorProofs.empty()
-        ? "all required executor behavior proofs are present"
-        : join(executorPreflight.missingBehaviorProofs));
+      behaviorProofDetail);
 
     addCheck(
       report,

@@ -135,6 +135,15 @@ namespace BWAPI::Runtime
       return valid;
     }
 
+    void addMissingBehaviorProofsIfEmpty(RuntimeExecutorPreflightResult& result)
+    {
+      if (!result.missingBehaviorProofs.empty())
+        return;
+
+      for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+        result.missingBehaviorProofs.push_back(proof.readyFileLine);
+    }
+
     bool preflightExecutorBridge(const RuntimeEnvironment& environment, RuntimeExecutorPreflightResult& result)
     {
       if (environment.executorBridgePath.empty())
@@ -348,6 +357,8 @@ namespace BWAPI::Runtime
 
     if (!preflightExecutorBridge(environment, result))
       result.warnings.push_back("authorized runtime executor bridge is not configured");
+    if (!result.executorAvailable)
+      addMissingBehaviorProofsIfEmpty(result);
 
     return result;
   }

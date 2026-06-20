@@ -126,6 +126,7 @@ int main(int argc, char** argv)
   assert(readyPrerequisites.memoryAccessible);
   assert(readyPrerequisites.targetLocated);
   assert(!readyPrerequisites.executorAvailable);
+  assert(readyPrerequisites.missingBehaviorProofs.size() == proofs.size());
   assert(!readyPrerequisites.warnings.empty());
 
   RuntimeExecutorPreflightResult missingTarget =
@@ -135,6 +136,7 @@ int main(int argc, char** argv)
   assert(!missingTarget.memoryAccessible);
   assert(!missingTarget.targetLocated);
   assert(!missingTarget.executorAvailable);
+  assert(missingTarget.missingBehaviorProofs.size() == proofs.size());
   assert(!missingTarget.errors.empty());
 
   RuntimeContract unresolved = makeRemasteredParityContract("test-build");
@@ -145,6 +147,7 @@ int main(int argc, char** argv)
   assert(invalidContract.memoryAccessible);
   assert(invalidContract.targetLocated);
   assert(!invalidContract.executorAvailable);
+  assert(invalidContract.missingBehaviorProofs.size() == proofs.size());
   assert(!invalidContract.errors.empty());
 
   std::filesystem::path bridgePath = makeBridgePath();
@@ -184,6 +187,7 @@ int main(int argc, char** argv)
   assert(mismatchedIdentityPreflight.memoryAccessible);
   assert(mismatchedIdentityPreflight.targetLocated);
   assert(!mismatchedIdentityPreflight.executorAvailable);
+  assert(mismatchedIdentityPreflight.missingBehaviorProofs.size() == proofs.size());
   assert(!mismatchedIdentityPreflight.errors.empty());
 
   writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);

@@ -50,7 +50,7 @@ Use `starcraft-runtime-gap-report --require-production` as the release gate. It 
 
 For iterative gap closure, use `--summary-only` to print category totals without per-gap detail, or `--category <name>` to focus on one category such as `memory-access`, `executor-preflight`, `unit-command`, or `data-address`.
 
-Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor-behavior-proof` categories when a bridge is present but has not proven every required in-game behavior. This keeps bootstrap artifacts from being mistaken for production adapter evidence.
+Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor-behavior-proof` categories when a bridge is absent or has not proven every required in-game behavior. This keeps missing, bootstrap, or partial adapter artifacts from being mistaken for production adapter evidence.
 
 Executor bridge ready files are also bound to the selected runtime identity. If `STARCRAFT_API_PROCESS_ID` or `--process-id` is set, the ready file must contain the same `process_id`. If `STARCRAFT_API_EXECUTABLE` or `--executable` is set, the ready file must contain the same normalized `executable` path. Stale ready files from another StarCraft process are rejected before preflight or command submission can pass.
 

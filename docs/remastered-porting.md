@@ -142,7 +142,7 @@ The current macOS/Linux executor preflight can validate contracts, locate target
 
 The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. `starcraft-runtime-launch --bridge` writes `mode=launch-attach-bootstrap`, which is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence and is rejected by production preflight. `starcraft-runtime-adapter-proof` writes `proof.attach=passed` only after the selected process identity is visible and the required process-memory access succeeds.
 
-`starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category.
+`starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category, including when no validated executor bridge is configured.
 
 `starcraft-runtime-submit-command` also requires the validated adapter mode and behavior proof lines before it appends commands to the bridge. Bootstrap bridges cannot receive BWAPI commands because they have not proven in-game command execution.
 

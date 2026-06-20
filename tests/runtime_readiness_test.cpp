@@ -84,6 +84,7 @@ int main()
   RuntimeReadinessReport missingExecutor = evaluateProductionReadiness(probe, contract, unavailableExecutor);
   assert(!missingExecutor.productionReady);
   assert(hasBlockingGap(missingExecutor, "executor-available"));
+  assert(hasBlockingGap(missingExecutor, "executor-behavior-proof-complete"));
 
   RuntimeExecutorPreflightResult memoryBlocked = preflight;
   memoryBlocked.memoryAccessible = false;

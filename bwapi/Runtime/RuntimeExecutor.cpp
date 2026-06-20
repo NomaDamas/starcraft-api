@@ -55,32 +55,16 @@ namespace BWAPI::Runtime
       return {};
     }
 
-    const std::vector<std::string>& requiredValidatedAdapterProofs()
-    {
-      static const std::vector<std::string> proofs = {
-        "proof.attach=passed",
-        "proof.read_game_state=passed",
-        "proof.read_units=passed",
-        "proof.issue_commands=passed",
-        "proof.draw_overlays=passed",
-        "proof.dispatch_events=passed",
-        "proof.replay_analysis=passed",
-        "proof.multiplayer_sync=passed",
-        "proof.battle_net_policy=passed"
-      };
-      return proofs;
-    }
-
     bool validateProductionBridgeProof(
       const std::filesystem::path& readyPath,
       RuntimeExecutorPreflightResult& result)
     {
       result.executorBridgeMode = readReadyValue(readyPath, "mode");
       result.missingBehaviorProofs.clear();
-      for (const std::string& proof : requiredValidatedAdapterProofs())
+      for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       {
-        if (!fileContainsLine(readyPath, proof))
-          result.missingBehaviorProofs.push_back(proof);
+        if (!fileContainsLine(readyPath, proof.readyFileLine))
+          result.missingBehaviorProofs.push_back(proof.readyFileLine);
       }
 
       if (result.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode)
@@ -249,6 +233,22 @@ namespace BWAPI::Runtime
 
       return true;
     }
+
+    bool validateSubmissionBridgeProof(
+      const std::filesystem::path& readyPath,
+      RuntimeExecutorSubmitResult& result)
+    {
+      RuntimeExecutorPreflightResult bridgeProof;
+      if (validateProductionBridgeProof(readyPath, bridgeProof))
+        return true;
+
+      const std::string reason = bridgeProof.errors.empty()
+        ? "runtime executor bridge is not a validated runtime adapter"
+        : bridgeProof.errors.front();
+      result.reason = reason;
+      result.errors.insert(result.errors.end(), bridgeProof.errors.begin(), bridgeProof.errors.end());
+      return false;
+    }
   }
 
   RuntimeExecutorPreflightResult preflightRuntimeExecutor(
@@ -290,6 +290,67 @@ namespace BWAPI::Runtime
       result.warnings.push_back("authorized runtime executor bridge is not configured");
 
     return result;
+  }
+
+  const std::vector<RuntimeExecutorBehaviorProof>& requiredRuntimeExecutorBehaviorProofs()
+  {
+    static const std::vector<RuntimeExecutorBehaviorProof> proofs = {
+      {
+        "attach",
+        Capability::SharedMemoryClient,
+        "proof.attach=passed",
+        "authorized adapter attached to the selected StarCraft runtime process"
+      },
+      {
+        "read-game-state",
+        Capability::ReadGameState,
+        "proof.read_game_state=passed",
+        "adapter read stable frame/game-state data from the target runtime"
+      },
+      {
+        "read-units",
+        Capability::ReadUnitData,
+        "proof.read_units=passed",
+        "adapter read BWAPI-compatible unit data from the target runtime"
+      },
+      {
+        "issue-commands",
+        Capability::IssueCommands,
+        "proof.issue_commands=passed",
+        "adapter delivered a BWAPI command into the target runtime command path"
+      },
+      {
+        "draw-overlays",
+        Capability::DrawOverlays,
+        "proof.draw_overlays=passed",
+        "adapter rendered BWAPI overlay primitives in the target runtime"
+      },
+      {
+        "dispatch-events",
+        Capability::DispatchEvents,
+        "proof.dispatch_events=passed",
+        "adapter dispatched BWAPI lifecycle and unit events from observed runtime state"
+      },
+      {
+        "replay-analysis",
+        Capability::ReplayAnalysis,
+        "proof.replay_analysis=passed",
+        "adapter read replay metadata and frame progression consistently"
+      },
+      {
+        "multiplayer-sync",
+        Capability::MultiplayerSync,
+        "proof.multiplayer_sync=passed",
+        "adapter validated multiplayer command synchronization behavior"
+      },
+      {
+        "battle-net-policy",
+        Capability::BattleNet,
+        "proof.battle_net_policy=passed",
+        "adapter completed the authorized Battle.net policy validation path"
+      }
+    };
+    return proofs;
   }
 
   RuntimeExecutorSubmitResult submitRuntimeCommands(
@@ -349,6 +410,8 @@ namespace BWAPI::Runtime
       result.errors.push_back(result.reason);
       return result;
     }
+    if (!validateSubmissionBridgeProof(readyPath, result))
+      return result;
 
     std::ofstream output(commandFilePath(environment), std::ios::app);
     if (!output)

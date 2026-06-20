@@ -304,6 +304,16 @@ int main()
   assert(duplicateHandoffEvidence.diagnosis.battleNetHandoffCount == 2);
   assert(duplicateHandoffEvidence.diagnosis.multipleBattleNetHandoffsVisible);
   assert(duplicateHandoffEvidence.diagnosis.status == "blocked-multiple-battlenet-handoffs-without-game");
+
+  writeFile(
+    processSnapshot,
+    "5501 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net\n"
+    "5502 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net\n");
+  RuntimeEvidence duplicateMainEvidence = collectRuntimeEvidence(installation, currentHandoffLaunch);
+  assert(!duplicateMainEvidence.diagnosis.readyForAttach);
+  assert(duplicateMainEvidence.diagnosis.battleNetMainCount == 2);
+  assert(duplicateMainEvidence.diagnosis.multipleBattleNetMainVisible);
+  assert(duplicateMainEvidence.diagnosis.status == "blocked-multiple-battlenet-main-processes-no-game");
 #endif
 
   std::filesystem::remove_all(tempRoot);

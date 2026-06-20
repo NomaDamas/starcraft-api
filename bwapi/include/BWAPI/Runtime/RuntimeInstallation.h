@@ -100,10 +100,13 @@ namespace BWAPI::Runtime
   struct RuntimeLaunchDiagnosis
   {
     bool gameProcessVisible = false;
+    bool battleNetMainVisible = false;
     bool battleNetHandoffVisible = false;
     bool battleNetSupportVisible = false;
+    bool multipleBattleNetMainVisible = false;
     bool multipleBattleNetHandoffsVisible = false;
     int gameProcessCount = 0;
+    int battleNetMainCount = 0;
     int battleNetHandoffCount = 0;
     int battleNetSupportCount = 0;
     bool shortLivedSessionObserved = false;

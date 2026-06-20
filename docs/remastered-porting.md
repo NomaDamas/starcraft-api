@@ -104,7 +104,7 @@ Incomplete bootstrap manifests remain non-production, but the report preserves p
 - `session.shortest_transition_duration_ms`, `session.longest_transition_duration_ms`, and `session.latest_transition_duration_ms` quantify how long observed StarCraft sessions stayed running before Battle.net reported stop events.
 - `session.transition.*` keeps the paired start/stop timestamps and source log lines for attach debugging.
 - `diagnosis.status` gives the machine-readable launch/attach blocker, including `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, and `blocked-battlenet-handoff-short-lived-session`.
-- `diagnosis.game_process_count`, `diagnosis.battle_net_handoff_count`, and `diagnosis.multiple_battle_net_handoffs_visible` distinguish the real StarCraft executable from one or more Battle.net handoff processes.
+- `diagnosis.game_process_count`, `diagnosis.battle_net_main_count`, `diagnosis.battle_net_handoff_count`, `diagnosis.multiple_battle_net_main_visible`, and `diagnosis.multiple_battle_net_handoffs_visible` distinguish the real StarCraft executable from one or more Battle.net main/handoff processes.
 - `diagnosis.ready_for_attach` is only true when a stable StarCraft game executable process is visible, selected, and safe for the next authorized adapter step.
 - `diagnosis.blocker.*` records the concrete reasons the current run cannot submit commands or claim production parity.
 
@@ -126,6 +126,10 @@ The current macOS/Linux executor preflight can validate contracts, locate target
 The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. `starcraft-runtime-launch --bridge` writes `mode=launch-attach-bootstrap`, which is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence and is rejected by production preflight.
 
 `starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category.
+
+`starcraft-runtime-submit-command` also requires the validated adapter mode and behavior proof lines before it appends commands to the bridge. Bootstrap bridges cannot receive BWAPI commands because they have not proven in-game command execution.
+
+Adapter implementations should use `requiredRuntimeExecutorBehaviorProofs()` as the canonical behavior-proof inventory. The ready file strings below are generated from that same runtime contract in tests.
 
 A production executor bridge must publish `mode=validated-runtime-adapter` and behavior proof lines:
 

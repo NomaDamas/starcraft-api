@@ -11,7 +11,20 @@ endif()
 set(bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-submit-command-bridge")
 file(REMOVE_RECURSE "${bridge_dir}")
 file(MAKE_DIRECTORY "${bridge_dir}")
-file(WRITE "${bridge_dir}/ready" "protocol=starcraft-api-file-bridge-v1\nproduct=starcraft-remastered\nversion=test-build\n")
+file(WRITE "${bridge_dir}/ready"
+  "protocol=starcraft-api-file-bridge-v1\n"
+  "product=starcraft-remastered\n"
+  "version=test-build\n"
+  "mode=validated-runtime-adapter\n"
+  "proof.attach=passed\n"
+  "proof.read_game_state=passed\n"
+  "proof.read_units=passed\n"
+  "proof.issue_commands=passed\n"
+  "proof.draw_overlays=passed\n"
+  "proof.dispatch_events=passed\n"
+  "proof.replay_analysis=passed\n"
+  "proof.multiplayer_sync=passed\n"
+  "proof.battle_net_policy=passed\n")
 
 set(manifest "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest")
 execute_process(
@@ -35,6 +48,31 @@ if(NOT command_log MATCHES "game-action\\|pauseGame\\|0\\|")
   message(FATAL_ERROR "expected pauseGame command in bridge log\nlog:\n${command_log}")
 endif()
 
+set(bootstrap_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-submit-command-bootstrap-bridge")
+file(REMOVE_RECURSE "${bootstrap_bridge_dir}")
+file(MAKE_DIRECTORY "${bootstrap_bridge_dir}")
+file(WRITE "${bootstrap_bridge_dir}/ready"
+  "protocol=starcraft-api-file-bridge-v1\n"
+  "product=starcraft-remastered\n"
+  "version=test-build\n"
+  "mode=launch-attach-bootstrap\n")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --manifest "${manifest}"
+    --bridge "${bootstrap_bridge_dir}"
+    --game-action pauseGame
+  RESULT_VARIABLE bootstrap_submit_result
+  OUTPUT_VARIABLE bootstrap_submit_output
+  ERROR_VARIABLE bootstrap_submit_error
+)
+if(bootstrap_submit_result EQUAL 0)
+  message(FATAL_ERROR "expected bootstrap bridge command submission to fail\nstdout:\n${bootstrap_submit_output}\nstderr:\n${bootstrap_submit_error}")
+endif()
+if(NOT bootstrap_submit_output MATCHES "validated runtime adapter proof is required")
+  message(FATAL_ERROR "expected bootstrap bridge proof failure\nstdout:\n${bootstrap_submit_output}\nstderr:\n${bootstrap_submit_error}")
+endif()
+
 execute_process(
   COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --product starcraft-remastered
@@ -53,3 +91,4 @@ if(NOT missing_manifest_output MATCHES "runtime manifest is required")
 endif()
 
 file(REMOVE_RECURSE "${bridge_dir}")
+file(REMOVE_RECURSE "${bootstrap_bridge_dir}")

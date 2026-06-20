@@ -529,17 +529,23 @@ namespace BWAPI::Runtime
         return "starcraft-game";
       }
 
-      const bool isBattleNet = lineContainsAny(command, {
+      const bool isBattleNetMain = lineContainsAny(command, {
         "Battle.net.app/Contents/MacOS/Battle.net",
-        "Battle.net.exe",
+        "Battle.net.exe"
+      });
+      const bool isBattleNetSupport = lineContainsAny(command, {
         "Battle.net Helper",
         "Agent.app/Contents/MacOS/Agent"
       });
+      const bool isBattleNet = isBattleNetMain || isBattleNetSupport;
 
       if (isBattleNet && command.find("--game=s1") != std::string::npos)
         return "battle.net-handoff";
 
-      if (isBattleNet)
+      if (isBattleNetMain)
+        return "battle.net-main";
+
+      if (isBattleNetSupport)
         return "battle.net-support";
 
       if (lineContainsAny(command, {
@@ -1195,11 +1201,14 @@ namespace BWAPI::Runtime
 
       RuntimeLaunchDiagnosis diagnosis;
       diagnosis.gameProcessCount = countObservedCategory(evidence.processes, "starcraft-game");
+      diagnosis.battleNetMainCount = countObservedCategory(evidence.processes, "battle.net-main");
       diagnosis.battleNetHandoffCount = countObservedCategory(evidence.processes, "battle.net-handoff");
       diagnosis.battleNetSupportCount = countObservedCategory(evidence.processes, "battle.net-support");
       diagnosis.gameProcessVisible = diagnosis.gameProcessCount > 0;
+      diagnosis.battleNetMainVisible = diagnosis.battleNetMainCount > 0;
       diagnosis.battleNetHandoffVisible = diagnosis.battleNetHandoffCount > 0;
       diagnosis.battleNetSupportVisible = diagnosis.battleNetSupportCount > 0;
+      diagnosis.multipleBattleNetMainVisible = diagnosis.battleNetMainCount > 1;
       diagnosis.multipleBattleNetHandoffsVisible = diagnosis.battleNetHandoffCount > 1;
       diagnosis.shortLivedSessionObserved =
         evidence.sessionSummary.latestState == "stopped"
@@ -1270,6 +1279,16 @@ namespace BWAPI::Runtime
               + std::to_string(evidence.sessionSummary.latestTransitionDurationMilliseconds)
               + " ms");
         }
+        return diagnosis;
+      }
+
+      if (diagnosis.multipleBattleNetMainVisible && !diagnosis.gameProcessVisible)
+      {
+        diagnosis.status = "blocked-multiple-battlenet-main-processes-no-game";
+        addDiagnosisBlocker(
+          diagnosis,
+          "Multiple Battle.net main processes are visible: " + std::to_string(diagnosis.battleNetMainCount));
+        addDiagnosisBlocker(diagnosis, "StarCraft game executable is not visible");
         return diagnosis;
       }
 
@@ -1647,13 +1666,19 @@ namespace BWAPI::Runtime
 
     writeEvidenceField(output, "diagnosis.status", evidence.diagnosis.status);
     writeEvidenceField(output, "diagnosis.game_process_visible", evidence.diagnosis.gameProcessVisible);
+    writeEvidenceField(output, "diagnosis.battle_net_main_visible", evidence.diagnosis.battleNetMainVisible);
     writeEvidenceField(output, "diagnosis.battle_net_handoff_visible", evidence.diagnosis.battleNetHandoffVisible);
     writeEvidenceField(output, "diagnosis.battle_net_support_visible", evidence.diagnosis.battleNetSupportVisible);
+    writeEvidenceField(
+      output,
+      "diagnosis.multiple_battle_net_main_visible",
+      evidence.diagnosis.multipleBattleNetMainVisible);
     writeEvidenceField(
       output,
       "diagnosis.multiple_battle_net_handoffs_visible",
       evidence.diagnosis.multipleBattleNetHandoffsVisible);
     writeEvidenceField(output, "diagnosis.game_process_count", evidence.diagnosis.gameProcessCount);
+    writeEvidenceField(output, "diagnosis.battle_net_main_count", evidence.diagnosis.battleNetMainCount);
     writeEvidenceField(output, "diagnosis.battle_net_handoff_count", evidence.diagnosis.battleNetHandoffCount);
     writeEvidenceField(output, "diagnosis.battle_net_support_count", evidence.diagnosis.battleNetSupportCount);
     writeEvidenceField(output, "diagnosis.short_lived_session_observed", evidence.diagnosis.shortLivedSessionObserved);

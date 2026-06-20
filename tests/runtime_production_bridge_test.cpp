@@ -43,15 +43,8 @@ namespace
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
-    ready << "proof.attach=passed\n";
-    ready << "proof.read_game_state=passed\n";
-    ready << "proof.read_units=passed\n";
-    ready << "proof.issue_commands=passed\n";
-    ready << "proof.draw_overlays=passed\n";
-    ready << "proof.dispatch_events=passed\n";
-    ready << "proof.replay_analysis=passed\n";
-    ready << "proof.multiplayer_sync=passed\n";
-    ready << "proof.battle_net_policy=passed\n";
+    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+      ready << proof.readyFileLine << '\n';
   }
 
   void writePartialValidatedAdapterReadyFile(const std::filesystem::path& bridgePath)
@@ -61,14 +54,11 @@ namespace
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
-    ready << "proof.attach=passed\n";
-    ready << "proof.read_game_state=passed\n";
-    ready << "proof.read_units=passed\n";
-    ready << "proof.issue_commands=passed\n";
-    ready << "proof.draw_overlays=passed\n";
-    ready << "proof.dispatch_events=passed\n";
-    ready << "proof.replay_analysis=passed\n";
-    ready << "proof.battle_net_policy=passed\n";
+    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+    {
+      if (std::string(proof.id) != "multiplayer-sync")
+        ready << proof.readyFileLine << '\n';
+    }
   }
 }
 

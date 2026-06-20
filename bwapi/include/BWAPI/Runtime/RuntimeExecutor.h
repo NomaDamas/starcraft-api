@@ -15,6 +15,14 @@ namespace BWAPI::Runtime
   inline constexpr const char* RuntimeExecutorBridgeReadyFile = "ready";
   inline constexpr const char* RuntimeExecutorBridgeCommandFile = "commands.log";
 
+  struct RuntimeExecutorBehaviorProof
+  {
+    const char* id = "";
+    Capability capability = Capability::ReadGameState;
+    const char* readyFileLine = "";
+    const char* description = "";
+  };
+
   struct RuntimeExecutorPreflightResult
   {
     bool contractValid = false;
@@ -37,6 +45,7 @@ namespace BWAPI::Runtime
     std::vector<std::string> warnings;
   };
 
+  const std::vector<RuntimeExecutorBehaviorProof>& requiredRuntimeExecutorBehaviorProofs();
   RuntimeExecutorPreflightResult preflightRuntimeExecutor(
     const RuntimeEnvironment& environment,
     const RuntimeContract& contract);

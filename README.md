@@ -30,7 +30,7 @@ The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `
 
 If Battle.net is already handling StarCraft startup, the launcher does not spawn another Battle.net instance. It only exports `STARCRAFT_API_PROCESS_ID` when the actual StarCraft game executable is visible and stable.
 
-Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, parsed StarCraft launch PID/start/stop events, session transition duration summaries, and `diagnosis.*` fields. The diagnosis classifies blockers such as `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, `blocked-battlenet-handoff-short-lived-session`, and `blocked-multiple-battlenet-handoffs-without-game`; `diagnosis.ready_for_attach=true` is required before runtime attach work can proceed. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
+Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, parsed StarCraft launch PID/start/stop events, session transition duration summaries, and `diagnosis.*` fields. The diagnosis classifies blockers such as `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, `blocked-battlenet-handoff-short-lived-session`, `blocked-multiple-battlenet-handoffs-without-game`, and `blocked-multiple-battlenet-main-processes-no-game`; `diagnosis.ready_for_attach=true` is required before runtime attach work can proceed. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
 
 ## Validation
 
@@ -58,7 +58,7 @@ build/starcraft-runtime-gap-report \
   --evidence-out /tmp/starcraft-api-local-gap.evidence
 ```
 
-Command submission is manifest-backed for StarCraft: Remastered. The CLI rejects command submission when the manifest is missing, incomplete, or does not declare the BWAPI command/action being submitted:
+Command submission is manifest-backed for StarCraft: Remastered and requires a validated runtime adapter bridge. The CLI rejects command submission when the manifest is missing, incomplete, does not declare the BWAPI command/action being submitted, or the bridge is only a launch/attach bootstrap bridge:
 
 ```sh
 build/starcraft-runtime-submit-command \

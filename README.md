@@ -28,9 +28,11 @@ build/starcraft-runtime-launch \
 
 The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `STARCRAFT_API_STARCRAFT_DIR`, common macOS Desktop/Application paths, and common Windows install roots.
 
-On macOS StarCraft: Remastered, launch retries prefer the normal app bootstrap path first: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable. After each target, the launcher waits for a stable StarCraft game process before moving to the next target. The evidence report records each attempted path as `runtime.warning=runtime.launch_target=*` and records targets that produced no stable game as `runtime.warning=runtime.launch_target_no_game=*`.
+On macOS StarCraft: Remastered, launch retries prefer the normal app bootstrap path first: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable with `-launch -uid s1`. After each target, the launcher waits for a stable StarCraft game process before moving to the next target. The evidence report records each attempted path as `runtime.warning=runtime.launch_target=*` and records targets that produced no stable game as `runtime.warning=runtime.launch_target_no_game=*`.
 
 If Battle.net is already handling StarCraft startup, the launcher does not spawn another Battle.net instance. It only exports `STARCRAFT_API_PROCESS_ID` when the actual StarCraft game executable is visible and stable.
+
+POSIX launch targets are detached from the short-lived CLI process, so a successfully launched StarCraft process remains available after `starcraft-runtime-launch` exits.
 
 If a Battle.net `--game=s1` handoff is stale and no StarCraft game process appears, rerun with `--replace-stale-handoff`. The launcher terminates the visible handoff before retrying and also terminates per-target handoffs before trying the next launch target, so it does not intentionally leave multiple Battle.net StarCraft handoffs running. This option is explicit because it terminates Battle.net processes.
 

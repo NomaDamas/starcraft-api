@@ -115,7 +115,9 @@ These fields are diagnostic evidence, not readiness evidence. If sessions stop a
 
 `starcraft-runtime-launch --replace-stale-handoff` is the explicit recovery path for a stuck Battle.net `--game=s1` handoff. The default remains conservative and does not spawn a duplicate Battle.net instance while a handoff is visible. The recovery flag terminates a visible handoff before retrying and also terminates per-target handoffs before trying the next launch target, so retries do not intentionally leave multiple Battle.net StarCraft handoffs running.
 
-On macOS, launch retries prefer the platform app bootstrap path before direct executable fallback: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable. Each target is followed by a stable game-process check. Attempted paths are emitted as `runtime.warning=runtime.launch_target=*`; targets that did not produce a stable game process are emitted as `runtime.warning=runtime.launch_target_no_game=*`.
+On macOS, launch retries prefer the platform app bootstrap path before direct executable fallback: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable with `-launch -uid s1`. Each target is followed by a stable game-process check. Attempted paths are emitted as `runtime.warning=runtime.launch_target=*`; targets that did not produce a stable game process are emitted as `runtime.warning=runtime.launch_target_no_game=*`.
+
+POSIX launch children are detached from the short-lived CLI process before `exec`, so a stable StarCraft process remains attachable after `starcraft-runtime-launch` exits.
 
 For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to emit only readiness and implementation category totals. Use `starcraft-runtime-gap-report --category <name>` to print only one implementation gap category while preserving the global category counts. When `--evidence-out` is enabled, the gap report also mirrors launch diagnosis rows to stdout, including `diagnosis.status`, `diagnosis.ready_for_attach`, `diagnosis.battle_net_support_*`, and `diagnosis.blocker.*`.
 

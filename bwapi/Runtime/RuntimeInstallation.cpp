@@ -1613,6 +1613,9 @@ namespace BWAPI::Runtime
 
       if (processId == 0)
       {
+        // Keep GUI/game launch targets alive after the short-lived CLI exits.
+        setsid();
+
         if (!workingDirectory.empty())
           chdir(workingDirectory.c_str());
 
@@ -1679,10 +1682,18 @@ namespace BWAPI::Runtime
         });
       }
 
+      std::vector<std::string> executableArguments = { installation.executablePath };
+      if (installation.product == Product::StarCraftRemastered)
+      {
+        executableArguments.push_back("-launch");
+        executableArguments.push_back("-uid");
+        executableArguments.push_back("s1");
+      }
+
       launchTargets.push_back({
         "executable",
         installation.executablePath,
-        { installation.executablePath },
+        executableArguments,
         false
       });
       return launchTargets;

@@ -212,6 +212,7 @@ int main()
   writeFile(
     fallbackExecutable,
     "#!/bin/sh\n"
+    "if [ \"$1\" != \"-launch\" ] || [ \"$2\" != \"-uid\" ] || [ \"$3\" != \"s1\" ]; then exit 64; fi\n"
     "printf '%s 1 %s -launch -uid s1\\n' \"$$\" \"$STARCRAFT_API_TEST_EXECUTABLE\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
     "sleep 2\n");
   makeExecutable(fallbackLauncher);
@@ -250,6 +251,7 @@ int main()
   writeFile(
     handoffExecutable,
     "#!/bin/sh\n"
+    "if [ \"$1\" != \"-launch\" ] || [ \"$2\" != \"-uid\" ] || [ \"$3\" != \"s1\" ]; then exit 64; fi\n"
     "printf '%s 1 %s -launch -uid s1\\n' \"$$\" \"$STARCRAFT_API_TEST_EXECUTABLE\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
     "sleep 2\n");
   makeExecutable(handoffLauncher);

@@ -1155,17 +1155,17 @@ namespace BWAPI::Runtime
       return summary;
     }
 
-    bool hasObservedCategory(
+    int countObservedCategory(
       const std::vector<RuntimeObservedProcess>& processes,
       const std::string& category)
     {
-      return std::any_of(
+      return static_cast<int>(std::count_if(
         processes.begin(),
         processes.end(),
         [&](const RuntimeObservedProcess& process)
         {
           return process.category == category;
-        });
+        }));
     }
 
     void addDiagnosisBlocker(RuntimeLaunchDiagnosis& diagnosis, std::string blocker)
@@ -1194,9 +1194,13 @@ namespace BWAPI::Runtime
       constexpr int ShortLivedSessionThresholdMilliseconds = 15000;
 
       RuntimeLaunchDiagnosis diagnosis;
-      diagnosis.gameProcessVisible = hasObservedCategory(evidence.processes, "starcraft-game");
-      diagnosis.battleNetHandoffVisible = hasObservedCategory(evidence.processes, "battle.net-handoff");
-      diagnosis.battleNetSupportVisible = hasObservedCategory(evidence.processes, "battle.net-support");
+      diagnosis.gameProcessCount = countObservedCategory(evidence.processes, "starcraft-game");
+      diagnosis.battleNetHandoffCount = countObservedCategory(evidence.processes, "battle.net-handoff");
+      diagnosis.battleNetSupportCount = countObservedCategory(evidence.processes, "battle.net-support");
+      diagnosis.gameProcessVisible = diagnosis.gameProcessCount > 0;
+      diagnosis.battleNetHandoffVisible = diagnosis.battleNetHandoffCount > 0;
+      diagnosis.battleNetSupportVisible = diagnosis.battleNetSupportCount > 0;
+      diagnosis.multipleBattleNetHandoffsVisible = diagnosis.battleNetHandoffCount > 1;
       diagnosis.shortLivedSessionObserved =
         evidence.sessionSummary.latestState == "stopped"
         && latestObservedEventCompletesTransition(evidence.sessionSummary)
@@ -1239,9 +1243,22 @@ namespace BWAPI::Runtime
 
       if (diagnosis.battleNetHandoffVisible && !diagnosis.gameProcessVisible)
       {
-        diagnosis.status = diagnosis.shortLivedSessionObserved
-          ? "blocked-battlenet-handoff-short-lived-session"
-          : "blocked-battlenet-handoff-without-game";
+        if (diagnosis.multipleBattleNetHandoffsVisible)
+        {
+          diagnosis.status = diagnosis.shortLivedSessionObserved
+            ? "blocked-multiple-battlenet-handoffs-short-lived-session"
+            : "blocked-multiple-battlenet-handoffs-without-game";
+          addDiagnosisBlocker(
+            diagnosis,
+            "Multiple Battle.net StarCraft handoff processes are visible: "
+              + std::to_string(diagnosis.battleNetHandoffCount));
+        }
+        else
+        {
+          diagnosis.status = diagnosis.shortLivedSessionObserved
+            ? "blocked-battlenet-handoff-short-lived-session"
+            : "blocked-battlenet-handoff-without-game";
+        }
         addDiagnosisBlocker(
           diagnosis,
           "Battle.net StarCraft handoff is visible, but the StarCraft game executable is not visible");
@@ -1632,6 +1649,13 @@ namespace BWAPI::Runtime
     writeEvidenceField(output, "diagnosis.game_process_visible", evidence.diagnosis.gameProcessVisible);
     writeEvidenceField(output, "diagnosis.battle_net_handoff_visible", evidence.diagnosis.battleNetHandoffVisible);
     writeEvidenceField(output, "diagnosis.battle_net_support_visible", evidence.diagnosis.battleNetSupportVisible);
+    writeEvidenceField(
+      output,
+      "diagnosis.multiple_battle_net_handoffs_visible",
+      evidence.diagnosis.multipleBattleNetHandoffsVisible);
+    writeEvidenceField(output, "diagnosis.game_process_count", evidence.diagnosis.gameProcessCount);
+    writeEvidenceField(output, "diagnosis.battle_net_handoff_count", evidence.diagnosis.battleNetHandoffCount);
+    writeEvidenceField(output, "diagnosis.battle_net_support_count", evidence.diagnosis.battleNetSupportCount);
     writeEvidenceField(output, "diagnosis.short_lived_session_observed", evidence.diagnosis.shortLivedSessionObserved);
     writeEvidenceField(output, "diagnosis.stale_handoff_suspected", evidence.diagnosis.staleHandoffSuspected);
     writeEvidenceField(output, "diagnosis.ready_for_attach", evidence.diagnosis.readyForAttach);

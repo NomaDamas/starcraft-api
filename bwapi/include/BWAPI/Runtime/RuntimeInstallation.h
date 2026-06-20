@@ -102,6 +102,10 @@ namespace BWAPI::Runtime
     bool gameProcessVisible = false;
     bool battleNetHandoffVisible = false;
     bool battleNetSupportVisible = false;
+    bool multipleBattleNetHandoffsVisible = false;
+    int gameProcessCount = 0;
+    int battleNetHandoffCount = 0;
+    int battleNetSupportCount = 0;
     bool shortLivedSessionObserved = false;
     bool staleHandoffSuspected = false;
     bool readyForAttach = false;

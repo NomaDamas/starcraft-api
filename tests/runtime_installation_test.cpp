@@ -222,11 +222,14 @@ int main()
   assert(evidence.sessionSummary.transitions.front().durationMilliseconds == 6250);
   assert(!evidence.diagnosis.readyForAttach);
   assert(!evidence.diagnosis.gameProcessVisible);
+  assert(evidence.diagnosis.gameProcessCount == 0);
   assert(evidence.diagnosis.shortLivedSessionObserved);
   assert(!evidence.diagnosis.blockers.empty());
 
 #if !defined(_WIN32)
   assert(evidence.diagnosis.battleNetHandoffVisible);
+  assert(evidence.diagnosis.battleNetHandoffCount == 1);
+  assert(!evidence.diagnosis.multipleBattleNetHandoffsVisible);
   assert(evidence.diagnosis.staleHandoffSuspected);
   assert(evidence.diagnosis.status == "blocked-battlenet-handoff-short-lived-session");
   unsetEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT");
@@ -274,12 +277,33 @@ int main()
     logRoot / "battle.net-new-handoff.log",
     "I 2026-06-20 03:18:14.277562 [GameController] {Main} Selecting game by uid. uid=s1 prioritizeUpdate=1\n");
 
+  writeFile(
+    processSnapshot,
+    "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", processSnapshot.string());
+
   RuntimeLaunchResult currentHandoffLaunch;
   RuntimeEvidence currentHandoffEvidence = collectRuntimeEvidence(installation, currentHandoffLaunch);
   assert(currentHandoffEvidence.sessionSummary.latestObservedTimestamp == "2026-06-20 03:18:14.277562");
   assert(currentHandoffEvidence.sessionSummary.latestState == "handoff");
   assert(!currentHandoffEvidence.diagnosis.shortLivedSessionObserved);
   assert(currentHandoffEvidence.diagnosis.status == "blocked-battlenet-handoff-without-game");
+
+  writeFile(
+    processSnapshot,
+    "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n"
+      + "4431 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n");
+  RuntimeEvidence duplicateHandoffEvidence = collectRuntimeEvidence(installation, currentHandoffLaunch);
+  assert(!duplicateHandoffEvidence.diagnosis.readyForAttach);
+  assert(duplicateHandoffEvidence.diagnosis.battleNetHandoffCount == 2);
+  assert(duplicateHandoffEvidence.diagnosis.multipleBattleNetHandoffsVisible);
+  assert(duplicateHandoffEvidence.diagnosis.status == "blocked-multiple-battlenet-handoffs-without-game");
 #endif
 
   std::filesystem::remove_all(tempRoot);

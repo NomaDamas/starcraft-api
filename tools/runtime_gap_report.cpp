@@ -54,14 +54,18 @@ namespace
 int main(int argc, char** argv)
 {
   bool requireProduction = false;
+  bool summaryOnly = false;
   std::string manifestPath;
   std::string evidenceOut;
+  std::string categoryFilter;
 
   for (int i = 1; i < argc; ++i)
   {
     const std::string arg = argv[i];
     if (arg == "--require-production")
       requireProduction = true;
+    else if (arg == "--summary-only")
+      summaryOnly = true;
     else if (arg == "--manifest")
     {
       if (i + 1 >= argc)
@@ -79,6 +83,15 @@ int main(int argc, char** argv)
         return 64;
       }
       evidenceOut = argv[++i];
+    }
+    else if (arg == "--category")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--category requires a value\n";
+        return 64;
+      }
+      categoryFilter = argv[++i];
     }
     else if (arg == "--product"
              || arg == "--version"
@@ -104,6 +117,8 @@ int main(int argc, char** argv)
         << "  --executable <path>      override runtime executable path\n"
         << "  --bridge <path>          override runtime executor bridge directory\n"
         << "  --evidence-out <path>    write launch/attach diagnostic evidence\n"
+        << "  --category <name>        print only implementation gaps for one category\n"
+        << "  --summary-only           omit per-check and per-gap detail rows\n"
         << "  --require-production     return non-zero unless production readiness passes\n";
       return 0;
     }
@@ -129,7 +144,14 @@ int main(int argc, char** argv)
     {
       ++i;
     }
+    else if (arg == "--category")
+    {
+      ++i;
+    }
     else if (arg == "--require-production")
+    {
+    }
+    else if (arg == "--summary-only")
     {
     }
     else if (arg == "--product")
@@ -251,6 +273,12 @@ int main(int argc, char** argv)
     collectRuntimeImplementationGaps(probe, contract, preflight);
   std::vector<RuntimeImplementationGapCategoryCount> implementationGapCategories =
     summarizeRuntimeImplementationGapsByCategory(implementationGaps);
+  std::vector<RuntimeImplementationGap> displayedImplementationGaps;
+  for (const RuntimeImplementationGap& gap : implementationGaps)
+  {
+    if (categoryFilter.empty() || gap.category == categoryFilter)
+      displayedImplementationGaps.push_back(gap);
+  }
 
   std::cout << "platform=" << toString(environment.platform) << '\n';
   std::cout << "product=" << toString(environment.product) << '\n';
@@ -268,19 +296,34 @@ int main(int argc, char** argv)
   std::cout << "readiness.blocking_gap_count=" << gaps.size() << '\n';
   std::cout << "implementation_gap.count=" << implementationGaps.size() << '\n';
   std::cout << "implementation_gap.category_count=" << implementationGapCategories.size() << '\n';
+  if (!categoryFilter.empty())
+  {
+    std::cout << "implementation_gap.filter.category=" << categoryFilter << '\n';
+    std::cout << "implementation_gap.filtered_count=" << displayedImplementationGaps.size() << '\n';
+  }
 
-  for (const RuntimeReadinessCheck& check : report.checks)
-    printCheck(check);
+  if (!summaryOnly)
+  {
+    for (const RuntimeReadinessCheck& check : report.checks)
+      printCheck(check);
 
-  for (const RuntimeReadinessCheck& gap : gaps)
-    std::cout << "readiness.blocking_gap=" << gap.id << '\n';
+    for (const RuntimeReadinessCheck& gap : gaps)
+      std::cout << "readiness.blocking_gap=" << gap.id << '\n';
+  }
 
   for (const RuntimeImplementationGapCategoryCount& category : implementationGapCategories)
     std::cout << "implementation_gap.category." << category.category << ".count=" << category.count << '\n';
 
-  for (std::size_t i = 0; i < implementationGaps.size(); ++i)
+  if (summaryOnly)
   {
-    const RuntimeImplementationGap& gap = implementationGaps[i];
+    if (requireProduction && !report.productionReady)
+      return 2;
+    return 0;
+  }
+
+  for (std::size_t i = 0; i < displayedImplementationGaps.size(); ++i)
+  {
+    const RuntimeImplementationGap& gap = displayedImplementationGaps[i];
     std::cout << "implementation_gap." << i << ".category=" << gap.category << '\n';
     std::cout << "implementation_gap." << i << ".id=" << gap.id << '\n';
     if (!gap.detail.empty())

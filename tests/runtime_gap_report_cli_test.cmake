@@ -73,9 +73,77 @@ foreach(needle
     "runtime.reason=gap report did not launch runtime and no matching StarCraft game process is selected"
     "diagnosis.status=blocked-no-game-process"
     "diagnosis.ready_for_attach=false"
+    "diagnosis.game_process_count=0"
     "diagnosis.blocker_count=1")
   string(FIND "${evidence}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "gap report evidence missing '${needle}'\n${evidence}")
   endif()
 endforeach()
+
+execute_process(
+  COMMAND
+    "${STARCRAFT_RUNTIME_GAP_REPORT}"
+    --product starcraft-remastered
+    --version test-build
+    --executable "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
+    --category unit-command
+  RESULT_VARIABLE filtered_result
+  OUTPUT_VARIABLE filtered_output
+  ERROR_VARIABLE filtered_error
+)
+
+if(NOT filtered_result EQUAL 0)
+  message(FATAL_ERROR "gap report category command failed: ${filtered_error}\n${filtered_output}")
+endif()
+
+foreach(needle
+    "implementation_gap.filter.category=unit-command"
+    "implementation_gap.filtered_count="
+    "implementation_gap.0.category=unit-command"
+    "implementation_gap.0.id=Attack_Move")
+  string(FIND "${filtered_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "gap report category output missing '${needle}'\n${filtered_output}")
+  endif()
+endforeach()
+
+string(FIND "${filtered_output}" "implementation_gap.0.category=backend" backend_index)
+if(NOT backend_index EQUAL -1)
+  message(FATAL_ERROR "gap report category output included an unfiltered backend gap\n${filtered_output}")
+endif()
+
+execute_process(
+  COMMAND
+    "${STARCRAFT_RUNTIME_GAP_REPORT}"
+    --product starcraft-remastered
+    --version test-build
+    --executable "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
+    --summary-only
+  RESULT_VARIABLE summary_result
+  OUTPUT_VARIABLE summary_output
+  ERROR_VARIABLE summary_error
+)
+
+if(NOT summary_result EQUAL 0)
+  message(FATAL_ERROR "gap report summary command failed: ${summary_error}\n${summary_output}")
+endif()
+
+foreach(needle
+    "implementation_gap.count="
+    "implementation_gap.category.backend.count=1")
+  string(FIND "${summary_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "gap report summary output missing '${needle}'\n${summary_output}")
+  endif()
+endforeach()
+
+string(FIND "${summary_output}" "readiness.check.id=" check_index)
+if(NOT check_index EQUAL -1)
+  message(FATAL_ERROR "gap report summary output included readiness detail rows\n${summary_output}")
+endif()
+
+string(FIND "${summary_output}" "implementation_gap.0.category=" gap_index)
+if(NOT gap_index EQUAL -1)
+  message(FATAL_ERROR "gap report summary output included implementation gap detail rows\n${summary_output}")
+endif()

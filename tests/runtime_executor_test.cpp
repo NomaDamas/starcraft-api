@@ -73,8 +73,11 @@ namespace
   }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+  assert(argc > 0);
+  const std::string selfExecutable = std::filesystem::absolute(argv[0]).lexically_normal().string();
+
   const std::vector<RuntimeExecutorBehaviorProof>& proofs = requiredRuntimeExecutorBehaviorProofs();
   assert(proofs.size() == 9);
   assert(std::string(proofs.front().readyFileLine) == "proof.attach=passed");
@@ -84,7 +87,7 @@ int main()
   assert(complete.loaded);
 
   RuntimeExecutorPreflightResult readyPrerequisites =
-    preflightRuntimeExecutor(remasteredEnvironment(fixturePath("remastered-complete.manifest")), complete.manifest.contract);
+    preflightRuntimeExecutor(remasteredEnvironment(selfExecutable), complete.manifest.contract);
   assert(readyPrerequisites.contractValid);
   assert(readyPrerequisites.processIdentified);
   assert(readyPrerequisites.targetLocated);
@@ -94,14 +97,14 @@ int main()
   RuntimeExecutorPreflightResult missingTarget =
     preflightRuntimeExecutor(remasteredEnvironment(fixturePath("missing-starcraft")), complete.manifest.contract);
   assert(missingTarget.contractValid);
-  assert(missingTarget.processIdentified);
+  assert(!missingTarget.processIdentified);
   assert(!missingTarget.targetLocated);
   assert(!missingTarget.executorAvailable);
   assert(!missingTarget.errors.empty());
 
   RuntimeContract unresolved = makeRemasteredParityContract("test-build");
   RuntimeExecutorPreflightResult invalidContract =
-    preflightRuntimeExecutor(remasteredEnvironment(fixturePath("remastered-complete.manifest")), unresolved);
+    preflightRuntimeExecutor(remasteredEnvironment(selfExecutable), unresolved);
   assert(!invalidContract.contractValid);
   assert(invalidContract.processIdentified);
   assert(invalidContract.targetLocated);
@@ -110,7 +113,7 @@ int main()
 
   std::filesystem::path bridgePath = makeBridgePath();
   writeBootstrapReadyFile(bridgePath);
-  RuntimeEnvironment bridgeEnvironment = remasteredEnvironment(fixturePath("remastered-complete.manifest"));
+  RuntimeEnvironment bridgeEnvironment = remasteredEnvironment(selfExecutable);
   bridgeEnvironment.executorBridgePath = bridgePath.string();
   RuntimeExecutorPreflightResult bootstrapPreflight =
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);

@@ -15,6 +15,14 @@ int main()
   RuntimeProcessOpenResult opened = openRuntimeProcess(environment);
   assert(opened.opened);
   assert(opened.processId == environment.processId);
+  assert(!runtimeProcessExecutablePath(environment.processId).empty());
+  assert(!opened.executablePath.empty());
+
+  RuntimeEnvironment mismatch = environment;
+  mismatch.executablePath = "/definitely/not/the/current/runtime/process";
+  RuntimeProcessOpenResult mismatchResult = openRuntimeProcess(mismatch);
+  assert(!mismatchResult.opened);
+  assert(mismatchResult.reason.find("executable does not match") != std::string::npos);
 
   RuntimeEnvironment missing;
   missing.processId = 0;

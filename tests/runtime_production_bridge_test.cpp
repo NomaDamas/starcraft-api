@@ -62,8 +62,11 @@ namespace
   }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+  assert(argc > 0);
+  const std::string selfExecutable = std::filesystem::absolute(argv[0]).lexically_normal().string();
+
   RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(fixturePath("remastered-complete.manifest"));
   assert(manifest.loaded);
 
@@ -74,7 +77,7 @@ int main()
   environment.product = Product::StarCraftRemastered;
   environment.version = "test-build";
   environment.processId = currentProcessId();
-  environment.executablePath = fixturePath("remastered-complete.manifest");
+  environment.executablePath = selfExecutable;
   environment.manifestPath = fixturePath("remastered-complete.manifest");
   environment.executorBridgePath = bridgePath.string();
 

@@ -15,5 +15,6 @@ namespace BWAPI::Runtime
   };
 
   bool runtimeProcessExists(int processId);
+  std::string runtimeProcessExecutablePath(int processId);
   RuntimeProcessOpenResult openRuntimeProcess(const RuntimeEnvironment& environment);
 }

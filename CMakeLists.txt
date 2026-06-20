@@ -139,6 +139,14 @@ if(STARCRAFT_API_BUILD_TOOLS)
       StarCraftAPI::runtime
   )
 
+  add_executable(starcraft-runtime-adapter-proof
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_adapter_proof.cpp"
+  )
+  target_link_libraries(starcraft-runtime-adapter-proof
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+
   add_executable(bwapi-api-surface-audit
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/api_surface_audit.cpp"
   )

@@ -188,6 +188,18 @@ if(TARGET starcraft-runtime-memory-probe)
   add_test(NAME runtime_memory_probe_self_open COMMAND starcraft-runtime-memory-probe --self --require-open)
 endif()
 
+if(TARGET starcraft-runtime-adapter-proof)
+  add_test(NAME runtime_adapter_proof_help COMMAND starcraft-runtime-adapter-proof --help)
+  add_test(
+    NAME runtime_adapter_proof_cli_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_RUNTIME_ADAPTER_PROOF=$<TARGET_FILE:starcraft-runtime-adapter-proof>
+      -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_adapter_proof_cli_test.cmake
+  )
+endif()
+
 if(TARGET bwapi-api-surface-audit)
   add_test(NAME bwapi_api_surface_audit COMMAND bwapi-api-surface-audit)
 endif()

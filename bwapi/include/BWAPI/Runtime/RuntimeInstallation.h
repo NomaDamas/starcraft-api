@@ -27,6 +27,8 @@ namespace BWAPI::Runtime
     bool launched = false;
     bool running = false;
     int processId = 0;
+    int requiredStableMilliseconds = 0;
+    int observedStableMilliseconds = 0;
     std::string reason;
     std::vector<std::string> warnings;
   };
@@ -125,7 +127,8 @@ namespace BWAPI::Runtime
   RuntimeLaunchResult launchOrAttachRuntime(
     const RuntimeInstallation& installation,
     bool launchIfMissing,
-    int waitMilliseconds);
+    int waitMilliseconds,
+    int stableMilliseconds = 5000);
   RuntimeEvidence collectRuntimeEvidence(
     const RuntimeInstallation& installation,
     const RuntimeLaunchResult& launchResult);

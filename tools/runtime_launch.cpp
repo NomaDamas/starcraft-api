@@ -28,6 +28,7 @@ namespace
       << "  --launch                 launch StarCraft if no matching process is running\n"
       << "  --require-running        return non-zero unless a matching process is visible\n"
       << "  --wait-ms <milliseconds> wait after launch while scanning for the process (default: 10000)\n"
+      << "  --stable-ms <milliseconds> require the same StarCraft process to survive this long (default: 5000)\n"
       << "  --manifest-out <path>    write a local bootstrap manifest\n"
       << "  --evidence-out <path>    write a launch/attach diagnostic evidence report\n"
       << "  --bridge <path>          write a filesystem bridge ready file\n"
@@ -48,6 +49,7 @@ int main(int argc, char** argv)
   bool requireRunning = false;
   bool printEnv = false;
   int waitMilliseconds = 10000;
+  int stableMilliseconds = 5000;
   std::string manifestOut;
   std::string evidenceOut;
   std::string bridgePath;
@@ -70,6 +72,17 @@ int main(int argc, char** argv)
       }
       waitMilliseconds = parseNonNegativeInt(argv[++i], "--wait-ms");
       if (waitMilliseconds < 0)
+        return 64;
+    }
+    else if (arg == "--stable-ms")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--stable-ms requires a value\n";
+        return 64;
+      }
+      stableMilliseconds = parseNonNegativeInt(argv[++i], "--stable-ms");
+      if (stableMilliseconds < 0)
         return 64;
     }
     else if (arg == "--manifest-out")
@@ -137,6 +150,7 @@ int main(int argc, char** argv)
     if (!evidenceOut.empty())
     {
       RuntimeLaunchResult launchResult;
+      launchResult.requiredStableMilliseconds = stableMilliseconds;
       launchResult.reason = installation.reason;
       std::string error;
       if (!writeRuntimeEvidenceReport(installation, launchResult, evidenceOut, error))
@@ -149,9 +163,11 @@ int main(int argc, char** argv)
     return 2;
   }
 
-  RuntimeLaunchResult launchResult = launchOrAttachRuntime(installation, launch, waitMilliseconds);
+  RuntimeLaunchResult launchResult = launchOrAttachRuntime(installation, launch, waitMilliseconds, stableMilliseconds);
   std::cout << "runtime.launched=" << (launchResult.launched ? "true" : "false") << '\n';
   std::cout << "runtime.running=" << (launchResult.running ? "true" : "false") << '\n';
+  std::cout << "runtime.required_stable_ms=" << launchResult.requiredStableMilliseconds << '\n';
+  std::cout << "runtime.observed_stable_ms=" << launchResult.observedStableMilliseconds << '\n';
   if (launchResult.running && launchResult.processId > 0)
     std::cout << "runtime.process_id=" << launchResult.processId << '\n';
   else if (launchResult.launched && launchResult.processId > 0)

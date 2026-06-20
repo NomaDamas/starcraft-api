@@ -2,10 +2,12 @@
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 #if defined(_WIN32)
 #include <stdlib.h>
@@ -154,6 +156,26 @@ int main()
 
   writeFile(
     processSnapshot,
+    "4430 4428 " + executable.string() + " -launch -uid s1\n");
+  std::thread transientProcess(
+    [&]()
+    {
+      std::this_thread::sleep_for(std::chrono::milliseconds(25));
+      writeFile(
+        processSnapshot,
+        "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+          + installRoot.string()
+          + "/\n");
+    });
+  const RuntimeLaunchResult transientResult = launchOrAttachRuntime(installation, false, 0, 100);
+  transientProcess.join();
+  assert(!transientResult.running);
+  assert(transientResult.processId == 0);
+  assert(transientResult.requiredStableMilliseconds == 100);
+  assert(transientResult.observedStableMilliseconds == 0);
+
+  writeFile(
+    processSnapshot,
     "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
       + installRoot.string()
       + "/\n");
@@ -215,6 +237,8 @@ int main()
   const std::string report = makeRuntimeEvidenceReport(evidence);
   assert(report.find("evidence.schema=starcraft-api.runtime-evidence.v1") != std::string::npos);
   assert(report.find("runtime.reason=unit test launch did not run") != std::string::npos);
+  assert(report.find("runtime.required_stable_ms=0") != std::string::npos);
+  assert(report.find("runtime.observed_stable_ms=0") != std::string::npos);
   assert(report.find("diagnosis.status=") != std::string::npos);
   assert(report.find("diagnosis.ready_for_attach=false") != std::string::npos);
   assert(report.find("diagnosis.short_lived_session_observed=true") != std::string::npos);
@@ -234,6 +258,29 @@ int main()
   const std::filesystem::path evidencePath = tempRoot / "runtime.evidence";
   assert(writeRuntimeEvidenceReport(installation, launchResult, evidencePath.string(), error));
   assert(std::filesystem::is_regular_file(evidencePath));
+
+#if !defined(_WIN32)
+  std::string noisyOldLog;
+  for (int i = 0; i < 60; ++i)
+  {
+    noisyOldLog += "I 2026-06-18 07:00:";
+    noisyOldLog += i < 10 ? "0" : "";
+    noisyOldLog += std::to_string(i);
+    noisyOldLog += ".000000 [InstallManager] Game is no longer running: s1\n";
+  }
+  writeFile(logRoot / "battle.net-old-noisy.log", noisyOldLog);
+  std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  writeFile(
+    logRoot / "battle.net-new-handoff.log",
+    "I 2026-06-20 03:18:14.277562 [GameController] {Main} Selecting game by uid. uid=s1 prioritizeUpdate=1\n");
+
+  RuntimeLaunchResult currentHandoffLaunch;
+  RuntimeEvidence currentHandoffEvidence = collectRuntimeEvidence(installation, currentHandoffLaunch);
+  assert(currentHandoffEvidence.sessionSummary.latestObservedTimestamp == "2026-06-20 03:18:14.277562");
+  assert(currentHandoffEvidence.sessionSummary.latestState == "handoff");
+  assert(!currentHandoffEvidence.diagnosis.shortLivedSessionObserved);
+  assert(currentHandoffEvidence.diagnosis.status == "blocked-battlenet-handoff-without-game");
+#endif
 
   std::filesystem::remove_all(tempRoot);
   return 0;

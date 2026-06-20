@@ -651,14 +651,15 @@ namespace BWAPI::Runtime
       return false;
     }
 
-    int findStableProcessId(const RuntimeInstallation& installation)
+    int findStableProcessId(const RuntimeInstallation& installation, int stableMilliseconds)
     {
       const std::vector<int> firstPass = findRuntimeProcessIds(installation);
       if (firstPass.empty())
         return 0;
 
       const int processId = firstPass.front();
-      std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+      if (stableMilliseconds > 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(stableMilliseconds));
 
       const std::vector<int> secondPass = findRuntimeProcessIds(installation);
       if (containsProcessId(secondPass, processId))
@@ -858,8 +859,18 @@ namespace BWAPI::Runtime
       std::size_t maxFiles,
       std::size_t maxEvents)
     {
-      std::deque<RuntimeSessionEvent> tail;
+      struct TimestampedSessionEvent
+      {
+        RuntimeSessionEvent event;
+        std::int64_t milliseconds = 0;
+        std::size_t index = 0;
+        bool hasTimestamp = false;
+      };
+
+      std::vector<TimestampedSessionEvent> collectedEvents;
       std::size_t inspectedFiles = 0;
+      std::size_t collectedIndex = 0;
+      bool allEventsTimestamped = true;
       for (const CandidateLogFile& file : collectRuntimeLogFiles(installation))
       {
         if (inspectedFiles >= maxFiles)
@@ -878,17 +889,68 @@ namespace BWAPI::Runtime
           if (category.empty())
             continue;
 
-          RuntimeSessionEvent event;
-          event.path = pathString(file.path);
-          event.category = category;
-          event.line = sanitized;
-          tail.push_back(event);
-          while (tail.size() > maxEvents)
-            tail.pop_front();
+          TimestampedSessionEvent event;
+          event.event.path = pathString(file.path);
+          event.event.category = category;
+          event.event.line = sanitized;
+          event.index = collectedIndex++;
+          std::string timestamp;
+          event.hasTimestamp = parseLogTimestampMilliseconds(
+            sanitized,
+            timestamp,
+            event.milliseconds);
+          if (!event.hasTimestamp)
+            allEventsTimestamped = false;
+          collectedEvents.push_back(event);
         }
       }
 
-      return { tail.begin(), tail.end() };
+      if (collectedEvents.size() > maxEvents)
+      {
+        if (allEventsTimestamped)
+        {
+          std::stable_sort(
+            collectedEvents.begin(),
+            collectedEvents.end(),
+            [](const TimestampedSessionEvent& left, const TimestampedSessionEvent& right) {
+              if (left.milliseconds != right.milliseconds)
+                return left.milliseconds > right.milliseconds;
+              return left.index > right.index;
+            });
+          collectedEvents.resize(maxEvents);
+        }
+        else
+        {
+          collectedEvents.resize(maxEvents);
+        }
+      }
+
+      if (allEventsTimestamped)
+      {
+        std::stable_sort(
+          collectedEvents.begin(),
+          collectedEvents.end(),
+          [](const TimestampedSessionEvent& left, const TimestampedSessionEvent& right) {
+            if (left.milliseconds != right.milliseconds)
+              return left.milliseconds < right.milliseconds;
+            return left.index < right.index;
+          });
+      }
+      else
+      {
+        std::stable_sort(
+          collectedEvents.begin(),
+          collectedEvents.end(),
+          [](const TimestampedSessionEvent& left, const TimestampedSessionEvent& right) {
+            return left.index < right.index;
+          });
+      }
+
+      std::vector<RuntimeSessionEvent> events;
+      events.reserve(collectedEvents.size());
+      for (const TimestampedSessionEvent& event : collectedEvents)
+        events.push_back(event.event);
+      return events;
     }
 
     void updateSessionDurationRange(RuntimeSessionSummary& summary, int durationMilliseconds)
@@ -1036,6 +1098,21 @@ namespace BWAPI::Runtime
         if (event.category == "starcraft-install-state")
         {
           ++summary.installStateEventCount;
+          if (lineContainsAny(event.line, { "gameRunning=1", "isGameProcessRunning=1" }))
+          {
+            summary.latestState = "running";
+            summary.latestReason = "latest StarCraft s1 install state reports a running game process";
+          }
+          else if (lineContainsAny(event.line, { "gameRunning=0", "isGameProcessRunning=0" }))
+          {
+            summary.latestState = "stopped";
+            summary.latestReason = "latest StarCraft s1 install state reports no running game process";
+          }
+          else
+          {
+            summary.latestState = "handoff";
+            summary.latestReason = "latest StarCraft s1 install state is a Battle.net handoff/update, not a running game session";
+          }
           continue;
         }
 
@@ -1045,10 +1122,14 @@ namespace BWAPI::Runtime
           const int processId = parseIntegerAfterMarker(event.line, "pid:");
           if (processId > 0)
             summary.latestLaunchProcessId = processId;
+          summary.latestState = "launch-process";
+          summary.latestReason = "latest StarCraft s1 event reports a launch process, but no running session is confirmed";
           continue;
         }
 
         ++summary.relatedEventCount;
+        summary.latestState = "handoff";
+        summary.latestReason = "latest StarCraft s1 event is a Battle.net handoff/update, not a running game session";
       }
 
       if (hasOpenStart)
@@ -1092,6 +1173,22 @@ namespace BWAPI::Runtime
       diagnosis.blockers.push_back(std::move(blocker));
     }
 
+    bool latestObservedEventCompletesTransition(const RuntimeSessionSummary& summary)
+    {
+      if (summary.latestObservedTimestamp.empty())
+        return false;
+
+      return std::any_of(
+        summary.transitions.begin(),
+        summary.transitions.end(),
+        [&](const RuntimeSessionTransition& transition)
+        {
+          return transition.complete
+            && !transition.endTimestamp.empty()
+            && transition.endTimestamp == summary.latestObservedTimestamp;
+        });
+    }
+
     RuntimeLaunchDiagnosis diagnoseRuntimeEvidence(const RuntimeEvidence& evidence)
     {
       constexpr int ShortLivedSessionThresholdMilliseconds = 15000;
@@ -1102,6 +1199,7 @@ namespace BWAPI::Runtime
       diagnosis.battleNetSupportVisible = hasObservedCategory(evidence.processes, "battle.net-support");
       diagnosis.shortLivedSessionObserved =
         evidence.sessionSummary.latestState == "stopped"
+        && latestObservedEventCompletesTransition(evidence.sessionSummary)
         && evidence.sessionSummary.latestTransitionDurationMilliseconds >= 0
         && evidence.sessionSummary.latestTransitionDurationMilliseconds <= ShortLivedSessionThresholdMilliseconds;
       diagnosis.staleHandoffSuspected =
@@ -1398,20 +1496,23 @@ namespace BWAPI::Runtime
   RuntimeLaunchResult launchOrAttachRuntime(
     const RuntimeInstallation& installation,
     bool launchIfMissing,
-    int waitMilliseconds)
+    int waitMilliseconds,
+    int stableMilliseconds)
   {
     RuntimeLaunchResult result;
+    result.requiredStableMilliseconds = stableMilliseconds;
     if (!installation.found)
     {
       result.reason = installation.reason;
       return result;
     }
 
-    int stableProcessId = findStableProcessId(installation);
+    int stableProcessId = findStableProcessId(installation, stableMilliseconds);
     if (stableProcessId > 0)
     {
       result.running = true;
       result.processId = stableProcessId;
+      result.observedStableMilliseconds = stableMilliseconds;
       return result;
     }
 
@@ -1459,11 +1560,12 @@ namespace BWAPI::Runtime
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMilliseconds);
     while (std::chrono::steady_clock::now() < deadline)
     {
-      stableProcessId = findStableProcessId(installation);
+      stableProcessId = findStableProcessId(installation, stableMilliseconds);
       if (stableProcessId > 0)
       {
         result.running = true;
         result.processId = stableProcessId;
+        result.observedStableMilliseconds = stableMilliseconds;
         return result;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -1520,6 +1622,8 @@ namespace BWAPI::Runtime
     writeEvidenceField(output, "runtime.launched", evidence.launchResult.launched);
     writeEvidenceField(output, "runtime.running", evidence.launchResult.running);
     writeEvidenceField(output, "runtime.process_id", evidence.launchResult.processId);
+    writeEvidenceField(output, "runtime.required_stable_ms", evidence.launchResult.requiredStableMilliseconds);
+    writeEvidenceField(output, "runtime.observed_stable_ms", evidence.launchResult.observedStableMilliseconds);
     writeEvidenceField(output, "runtime.reason", evidence.launchResult.reason);
     for (std::size_t i = 0; i < evidence.launchResult.warnings.size(); ++i)
       writeEvidenceField(output, "runtime.warning." + std::to_string(i), evidence.launchResult.warnings[i]);

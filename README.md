@@ -52,6 +52,8 @@ For iterative gap closure, use `--summary-only` to print category totals without
 
 Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor-behavior-proof` categories when a bridge is present but has not proven every required in-game behavior. This keeps bootstrap artifacts from being mistaken for production adapter evidence.
 
+Executor bridge ready files are also bound to the selected runtime identity. If `STARCRAFT_API_PROCESS_ID` or `--process-id` is set, the ready file must contain the same `process_id`. If `STARCRAFT_API_EXECUTABLE` or `--executable` is set, the ready file must contain the same normalized `executable` path. Stale ready files from another StarCraft process are rejected before preflight or command submission can pass.
+
 Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process is visible to the runtime process primitive. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
 
 When using a bootstrap manifest, pass the runtime identity explicitly so the report attributes gaps to StarCraft Remastered instead of an unknown runtime:
@@ -72,12 +74,14 @@ Command submission is manifest-backed for StarCraft: Remastered and requires a v
 build/starcraft-runtime-submit-command \
   --product starcraft-remastered \
   --version 1.23.10.13515 \
+  --process-id 94840 \
+  --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
   --manifest /path/to/validated-remastered.manifest \
   --bridge /path/to/authorized-runtime-bridge \
   --game-action pauseGame
 ```
 
-The bridge written by `starcraft-runtime-launch --bridge` is `mode=launch-attach-bootstrap`. It is only bootstrap/plumbing evidence and cannot satisfy production readiness. A production executor must publish `mode=validated-runtime-adapter` plus behavior proof lines for attach, game-state reads, unit reads, command issue, overlay drawing, event dispatch, replay analysis, multiplayer sync, and Battle.net policy validation.
+The bridge written by `starcraft-runtime-launch --bridge` is `mode=launch-attach-bootstrap` and includes the selected `process_id` and `executable`. It is only bootstrap/plumbing evidence and cannot satisfy production readiness. A production executor must publish matching runtime identity, `mode=validated-runtime-adapter`, and behavior proof lines for attach, game-state reads, unit reads, command issue, overlay drawing, event dispatch, replay analysis, multiplayer sync, and Battle.net policy validation.
 
 ## BWAPI Reference
 

@@ -144,7 +144,15 @@ The local filesystem bridge can now create a readiness file for launch/attach bo
 
 Adapter implementations should use `requiredRuntimeExecutorBehaviorProofs()` as the canonical behavior-proof inventory. The ready file strings below are generated from that same runtime contract in tests.
 
-A production executor bridge must publish `mode=validated-runtime-adapter` and behavior proof lines:
+A production executor bridge must publish identity for the selected runtime, `mode=validated-runtime-adapter`, and behavior proof lines. When `STARCRAFT_API_PROCESS_ID` or `--process-id` is set, `process_id` must match. When `STARCRAFT_API_EXECUTABLE` or `--executable` is set, `executable` must match after path normalization. This prevents a stale ready file from another StarCraft process from satisfying preflight or accepting commands.
+
+```text
+process_id=<selected-runtime-pid>
+executable=<selected-runtime-executable>
+mode=validated-runtime-adapter
+```
+
+The required behavior proof lines are:
 
 ```text
 proof.attach=passed

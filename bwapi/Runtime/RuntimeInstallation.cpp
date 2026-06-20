@@ -1714,76 +1714,63 @@ namespace BWAPI::Runtime
       return command.str();
     }
 
-    RuntimeLaunchResult launchRuntimeProcess(const RuntimeInstallation& installation)
+    RuntimeLaunchResult launchRuntimeTarget(
+      const RuntimeInstallation& installation,
+      const RuntimeLaunchTarget& target)
     {
       RuntimeLaunchResult result;
-      const std::vector<RuntimeLaunchTarget> launchTargets = makeRuntimeLaunchTargets(installation);
 
 #if defined(_WIN32)
       STARTUPINFOA startupInfo;
       ZeroMemory(&startupInfo, sizeof(startupInfo));
       startupInfo.cb = sizeof(startupInfo);
 
-      for (const RuntimeLaunchTarget& target : launchTargets)
+      std::string command = makeCommandLine(target.arguments);
+      PROCESS_INFORMATION processInfo;
+      ZeroMemory(&processInfo, sizeof(processInfo));
+      if (!CreateProcessA(
+            nullptr,
+            command.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            0,
+            nullptr,
+            installation.installRoot.empty() ? nullptr : installation.installRoot.c_str(),
+            &startupInfo,
+            &processInfo))
       {
-        std::string command = makeCommandLine(target.arguments);
-        PROCESS_INFORMATION processInfo;
-        ZeroMemory(&processInfo, sizeof(processInfo));
-        if (!CreateProcessA(
-              nullptr,
-              command.data(),
-              nullptr,
-              nullptr,
-              FALSE,
-              0,
-              nullptr,
-              installation.installRoot.empty() ? nullptr : installation.installRoot.c_str(),
-              &startupInfo,
-              &processInfo))
-        {
-          result.warnings.push_back(
-            "runtime.launch_target_failed=" + target.kind + ": CreateProcess failed with Windows error "
-            + std::to_string(GetLastError()));
-          continue;
-        }
-
-        result.launched = true;
-        result.processId = static_cast<int>(processInfo.dwProcessId);
-        result.warnings.push_back("runtime.launch_target=" + target.kind);
-        CloseHandle(processInfo.hThread);
-        CloseHandle(processInfo.hProcess);
+        result.warnings.push_back(
+          "runtime.launch_target_failed=" + target.kind + ": CreateProcess failed with Windows error "
+          + std::to_string(GetLastError()));
+        result.reason = result.warnings.back();
         return result;
       }
 
-      result.reason = result.warnings.empty()
-        ? "CreateProcess failed for all launch targets"
-        : result.warnings.back();
+      result.launched = true;
+      result.processId = static_cast<int>(processInfo.dwProcessId);
+      result.warnings.push_back("runtime.launch_target=" + target.kind);
+      CloseHandle(processInfo.hThread);
+      CloseHandle(processInfo.hProcess);
 #else
-      for (const RuntimeLaunchTarget& target : launchTargets)
+      pid_t pid = 0;
+      std::string reason;
+      if (!forkExecProcess(
+            target.executable,
+            target.arguments,
+            installation.installRoot,
+            target.allowImmediateSuccessExit,
+            pid,
+            reason))
       {
-        pid_t pid = 0;
-        std::string reason;
-        if (!forkExecProcess(
-              target.executable,
-              target.arguments,
-              installation.installRoot,
-              target.allowImmediateSuccessExit,
-              pid,
-              reason))
-        {
-          result.warnings.push_back("runtime.launch_target_failed=" + target.kind + ": " + reason);
-          continue;
-        }
-
-        result.launched = true;
-        result.processId = static_cast<int>(pid);
-        result.warnings.push_back("runtime.launch_target=" + target.kind);
+        result.warnings.push_back("runtime.launch_target_failed=" + target.kind + ": " + reason);
+        result.reason = result.warnings.back();
         return result;
       }
 
-      result.reason = result.warnings.empty()
-        ? "fork/exec failed for all launch targets"
-        : result.warnings.back();
+      result.launched = true;
+      result.processId = static_cast<int>(pid);
+      result.warnings.push_back("runtime.launch_target=" + target.kind);
 #endif
 
       return result;
@@ -1881,6 +1868,119 @@ namespace BWAPI::Runtime
     void appendLaunchWarnings(RuntimeLaunchResult& result, const RuntimeLaunchResult& launched)
     {
       result.warnings.insert(result.warnings.end(), launched.warnings.begin(), launched.warnings.end());
+    }
+
+    int waitForStableRuntimeProcess(
+      const RuntimeInstallation& installation,
+      int waitMilliseconds,
+      int stableMilliseconds)
+    {
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMilliseconds);
+      while (true)
+      {
+        const int stableProcessId = findStableProcessId(installation, stableMilliseconds);
+        if (stableProcessId > 0)
+          return stableProcessId;
+
+        if (waitMilliseconds <= 0 || std::chrono::steady_clock::now() >= deadline)
+          return 0;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      }
+    }
+
+    void appendBattleNetHandoffWarnings(
+      RuntimeLaunchResult& result,
+      const std::vector<int>& handoffProcessIds,
+      const std::string& suffix)
+    {
+      if (handoffProcessIds.empty())
+        return;
+
+      result.warnings.push_back(
+        "battle.net.process_count" + suffix + "=" + std::to_string(handoffProcessIds.size()));
+      result.warnings.push_back(
+        "battle.net.process_id" + suffix + "=" + std::to_string(handoffProcessIds.front()));
+      for (std::size_t i = 0; i < handoffProcessIds.size(); ++i)
+      {
+        result.warnings.push_back(
+          "battle.net.process_id" + suffix + "." + std::to_string(i) + "="
+          + std::to_string(handoffProcessIds[i]));
+      }
+    }
+
+    RuntimeLaunchResult launchRuntimeProcessWithFallback(
+      const RuntimeInstallation& installation,
+      int waitMilliseconds,
+      int stableMilliseconds,
+      bool replaceStaleHandoff)
+    {
+      RuntimeLaunchResult result;
+      result.requiredStableMilliseconds = stableMilliseconds;
+      const std::vector<RuntimeLaunchTarget> launchTargets = makeRuntimeLaunchTargets(installation);
+
+      for (const RuntimeLaunchTarget& target : launchTargets)
+      {
+        RuntimeLaunchResult launched = launchRuntimeTarget(installation, target);
+        appendLaunchWarnings(result, launched);
+        if (!launched.launched)
+          continue;
+
+        result.launched = true;
+        result.processId = launched.processId;
+
+#if defined(_WIN32)
+        if (target.kind == "executable" && launched.processId > 0)
+        {
+          std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+          if (runtimeProcessExists(launched.processId))
+          {
+            result.running = true;
+            result.processId = launched.processId;
+            return result;
+          }
+        }
+#endif
+
+        const int stableProcessId = waitForStableRuntimeProcess(installation, waitMilliseconds, stableMilliseconds);
+        if (stableProcessId > 0)
+        {
+          result.running = true;
+          result.processId = stableProcessId;
+          result.observedStableMilliseconds = stableMilliseconds;
+          return result;
+        }
+
+        result.warnings.push_back("runtime.launch_target_no_game=" + target.kind);
+
+        const std::vector<int> handoffProcessIds = findBattleNetHandoffProcesses(installation);
+        if (handoffProcessIds.empty())
+          continue;
+
+        appendBattleNetHandoffWarnings(result, handoffProcessIds, "_after_launch");
+        if (!replaceStaleHandoff)
+        {
+          result.reason =
+            "Battle.net StarCraft handoff became visible after launch target "
+            + target.kind
+            + "; not launching another Battle.net instance; no matching game process became visible before the wait timeout";
+          return result;
+        }
+
+        if (!terminateRuntimeProcessIds(handoffProcessIds, result))
+          return result;
+      }
+
+      result.reason = result.launched
+        ? "StarCraft Remastered launch targets were tried, but no matching game process became visible before the wait timeout"
+        : (result.warnings.empty()
+#if defined(_WIN32)
+          ? "CreateProcess failed for all launch targets"
+#else
+          ? "fork/exec failed for all launch targets"
+#endif
+          : result.warnings.back());
+      return result;
     }
 
     void writeAllCommandSurface(std::ostringstream& output)
@@ -2011,15 +2111,19 @@ namespace BWAPI::Runtime
         if (!terminateRuntimeProcessIds(handoffProcessIds, result))
           return result;
 
-        RuntimeLaunchResult launched = launchRuntimeProcess(installation);
+        RuntimeLaunchResult launched =
+          launchRuntimeProcessWithFallback(installation, waitMilliseconds, stableMilliseconds, replaceStaleHandoff);
         appendLaunchWarnings(result, launched);
         result.launched = launched.launched;
         result.processId = launched.processId;
-        if (!launched.launched)
+        result.running = launched.running;
+        result.observedStableMilliseconds = launched.observedStableMilliseconds;
+        if (!launched.running)
         {
           result.reason = launched.reason;
           return result;
         }
+        return result;
       }
       else
       {
@@ -2028,28 +2132,19 @@ namespace BWAPI::Runtime
     }
     else
     {
-      RuntimeLaunchResult launched = launchRuntimeProcess(installation);
+      RuntimeLaunchResult launched =
+        launchRuntimeProcessWithFallback(installation, waitMilliseconds, stableMilliseconds, replaceStaleHandoff);
       appendLaunchWarnings(result, launched);
       result.launched = launched.launched;
       result.processId = launched.processId;
-      if (!launched.launched)
+      result.running = launched.running;
+      result.observedStableMilliseconds = launched.observedStableMilliseconds;
+      if (!launched.running)
       {
         result.reason = launched.reason;
         return result;
       }
-
-#if defined(_WIN32)
-      if (launched.processId > 0)
-      {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-        if (runtimeProcessExists(launched.processId))
-        {
-          result.running = true;
-          result.processId = launched.processId;
-          return result;
-        }
-      }
-#endif
+      return result;
     }
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMilliseconds);

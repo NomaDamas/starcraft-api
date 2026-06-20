@@ -1306,4 +1306,6 @@ namespace BWAPI
   }
 
   static_assert(sizeof(UnitType) == sizeof(int), "Expected type to resolve to primitive size.");
+  template <>
+  const std::string Type<UnitType, UnitTypes::Enum::Unknown>::typeNames[UnitTypes::Enum::MAX];
 }

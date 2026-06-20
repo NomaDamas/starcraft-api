@@ -113,9 +113,9 @@ Incomplete bootstrap manifests remain non-production, but the report preserves p
 
 These fields are diagnostic evidence, not readiness evidence. If sessions stop after only a few seconds and no stable StarCraft process id is visible, the production gate must continue to fail with `runtime-process-identified` and executor preflight gaps.
 
-`starcraft-runtime-launch --replace-stale-handoff` is the explicit recovery path for a stuck Battle.net `--game=s1` handoff. The default remains conservative and does not spawn a duplicate Battle.net instance while a handoff is visible; the recovery flag first terminates the handoff and then performs one launch retry.
+`starcraft-runtime-launch --replace-stale-handoff` is the explicit recovery path for a stuck Battle.net `--game=s1` handoff. The default remains conservative and does not spawn a duplicate Battle.net instance while a handoff is visible. The recovery flag terminates a visible handoff before retrying and also terminates per-target handoffs before trying the next launch target, so retries do not intentionally leave multiple Battle.net StarCraft handoffs running.
 
-On macOS, launch retries prefer the platform app bootstrap path before direct executable fallback: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable. The selected path is emitted as `runtime.warning=runtime.launch_target=*` in evidence.
+On macOS, launch retries prefer the platform app bootstrap path before direct executable fallback: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable. Each target is followed by a stable game-process check. Attempted paths are emitted as `runtime.warning=runtime.launch_target=*`; targets that did not produce a stable game process are emitted as `runtime.warning=runtime.launch_target_no_game=*`.
 
 For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to emit only readiness and implementation category totals. Use `starcraft-runtime-gap-report --category <name>` to print only one implementation gap category while preserving the global category counts. When `--evidence-out` is enabled, the gap report also mirrors launch diagnosis rows to stdout, including `diagnosis.status`, `diagnosis.ready_for_attach`, `diagnosis.battle_net_support_*`, and `diagnosis.blocker.*`.
 

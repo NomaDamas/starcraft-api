@@ -42,6 +42,18 @@ namespace
     output << content;
   }
 
+#if !defined(_WIN32)
+  void makeExecutable(const std::filesystem::path& path)
+  {
+    std::filesystem::permissions(
+      path,
+      std::filesystem::perms::owner_exec
+        | std::filesystem::perms::group_exec
+        | std::filesystem::perms::others_exec,
+      std::filesystem::perm_options::add);
+  }
+#endif
+
   bool containsText(const std::string& text, const std::string& needle)
   {
     return text.find(needle) != std::string::npos;
@@ -189,11 +201,88 @@ int main()
   assert(transientResult.requiredStableMilliseconds == 100);
   assert(transientResult.observedStableMilliseconds == 0);
 
+  const std::filesystem::path fallbackRoot = tempRoot / "fallback";
+  const std::filesystem::path fallbackLauncher = fallbackRoot / "launcher";
+  const std::filesystem::path fallbackExecutable = fallbackRoot / "StarCraft";
+  const std::filesystem::path fallbackSnapshot = fallbackRoot / "processes.snapshot";
+  writeFile(
+    fallbackLauncher,
+    "#!/bin/sh\n"
+    "exit 0\n");
+  writeFile(
+    fallbackExecutable,
+    "#!/bin/sh\n"
+    "printf '%s 1 %s -launch -uid s1\\n' \"$$\" \"$STARCRAFT_API_TEST_EXECUTABLE\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
+    "sleep 2\n");
+  makeExecutable(fallbackLauncher);
+  makeExecutable(fallbackExecutable);
+  writeFile(fallbackSnapshot, "");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", fallbackSnapshot.string());
+  setEnvValue("STARCRAFT_API_TEST_EXECUTABLE", fallbackExecutable.string());
+
+  RuntimeInstallation fallbackInstallation;
+  fallbackInstallation.found = true;
+  fallbackInstallation.product = Product::StarCraftRemastered;
+  fallbackInstallation.platform = Platform::Linux;
+  fallbackInstallation.installRoot = fallbackRoot.string();
+  fallbackInstallation.executablePath = fallbackExecutable.string();
+  fallbackInstallation.launcherPath = fallbackLauncher.string();
+
+  const RuntimeLaunchResult fallbackResult = launchOrAttachRuntime(fallbackInstallation, true, 0, 0);
+  assert(fallbackResult.launched);
+  assert(fallbackResult.running);
+  assert(fallbackResult.processId > 0);
+  assert(fallbackResult.observedStableMilliseconds == 0);
+  assert(hasWarning(fallbackResult, "runtime.launch_target=launcher"));
+  assert(hasWarning(fallbackResult, "runtime.launch_target_no_game=launcher"));
+  assert(hasWarning(fallbackResult, "runtime.launch_target=executable"));
+
+  const std::filesystem::path handoffRoot = tempRoot / "handoff-after-launch";
+  const std::filesystem::path handoffLauncher = handoffRoot / "launcher";
+  const std::filesystem::path handoffExecutable = handoffRoot / "StarCraft";
+  const std::filesystem::path handoffSnapshot = handoffRoot / "processes.snapshot";
+  writeFile(
+    handoffLauncher,
+    "#!/bin/sh\n"
+    "printf '9910 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath=%s/\\n' "
+      "\"$STARCRAFT_API_TEST_INSTALL_ROOT\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
+    "sleep 2\n");
+  writeFile(
+    handoffExecutable,
+    "#!/bin/sh\n"
+    "printf '%s 1 %s -launch -uid s1\\n' \"$$\" \"$STARCRAFT_API_TEST_EXECUTABLE\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
+    "sleep 2\n");
+  makeExecutable(handoffLauncher);
+  makeExecutable(handoffExecutable);
+  writeFile(handoffSnapshot, "");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", handoffSnapshot.string());
+  setEnvValue("STARCRAFT_API_TEST_EXECUTABLE", handoffExecutable.string());
+  setEnvValue("STARCRAFT_API_TEST_INSTALL_ROOT", handoffRoot.string());
+
+  RuntimeInstallation handoffInstallation;
+  handoffInstallation.found = true;
+  handoffInstallation.product = Product::StarCraftRemastered;
+  handoffInstallation.platform = Platform::Linux;
+  handoffInstallation.installRoot = handoffRoot.string();
+  handoffInstallation.executablePath = handoffExecutable.string();
+  handoffInstallation.launcherPath = handoffLauncher.string();
+
+  const RuntimeLaunchResult handoffAfterLaunchResult = launchOrAttachRuntime(handoffInstallation, true, 0, 0);
+  assert(handoffAfterLaunchResult.launched);
+  assert(!handoffAfterLaunchResult.running);
+  assert(hasWarning(handoffAfterLaunchResult, "runtime.launch_target=launcher"));
+  assert(hasWarning(handoffAfterLaunchResult, "runtime.launch_target_no_game=launcher"));
+  assert(hasWarning(handoffAfterLaunchResult, "battle.net.process_count_after_launch=1"));
+  assert(!hasWarning(handoffAfterLaunchResult, "runtime.launch_target=executable"));
+  assert(containsText(handoffAfterLaunchResult.reason, "not launching another Battle.net instance"));
+
   writeFile(
     processSnapshot,
     "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
       + installRoot.string()
       + "/\n");
+  unsetEnvValue("STARCRAFT_API_TEST_EXECUTABLE");
+  unsetEnvValue("STARCRAFT_API_TEST_INSTALL_ROOT");
 #endif
 
   const std::string manifest = makeRuntimeBootstrapManifest(installation);

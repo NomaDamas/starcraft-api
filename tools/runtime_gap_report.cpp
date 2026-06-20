@@ -7,6 +7,7 @@
 #include <BWAPI/Runtime/RuntimeReadiness.h>
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -36,6 +37,31 @@ namespace
     std::cout << "readiness.check.severity=" << toString(check.severity) << '\n';
     if (!check.detail.empty())
       std::cout << "readiness.check.detail=" << check.detail << '\n';
+  }
+
+  void printLaunchDiagnosis(const RuntimeEvidence& evidence)
+  {
+    std::cout << "diagnosis.status=" << evidence.diagnosis.status << '\n';
+    std::cout << "diagnosis.ready_for_attach="
+              << (evidence.diagnosis.readyForAttach ? "true" : "false") << '\n';
+    std::cout << "diagnosis.game_process_count=" << evidence.diagnosis.gameProcessCount << '\n';
+    std::cout << "diagnosis.battle_net_handoff_count="
+              << evidence.diagnosis.battleNetHandoffCount << '\n';
+    std::cout << "diagnosis.battle_net_support_count="
+              << evidence.diagnosis.battleNetSupportCount << '\n';
+    if (!evidence.diagnosis.battleNetSupportCode.empty())
+    {
+      std::cout << "diagnosis.battle_net_support_code="
+                << evidence.diagnosis.battleNetSupportCode << '\n';
+      if (!evidence.diagnosis.battleNetSupportUrl.empty())
+      {
+        std::cout << "diagnosis.battle_net_support_url="
+                  << evidence.diagnosis.battleNetSupportUrl << '\n';
+      }
+    }
+    std::cout << "diagnosis.blocker_count=" << evidence.diagnosis.blockers.size() << '\n';
+    for (std::size_t i = 0; i < evidence.diagnosis.blockers.size(); ++i)
+      std::cout << "diagnosis.blocker." << i << '=' << evidence.diagnosis.blockers[i] << '\n';
   }
 
   int parsePositiveInt(const std::string& value, const char* label)
@@ -240,6 +266,8 @@ int main(int argc, char** argv)
 
   environment = resolveRuntimeEnvironment(environment);
 
+  RuntimeEvidence launchEvidence;
+  bool hasLaunchEvidence = false;
   if (!evidenceOut.empty())
   {
     RuntimeInstallation installation = detectStarCraftInstallation(environment);
@@ -250,12 +278,16 @@ int main(int argc, char** argv)
       ? "gap report selected an existing runtime process id"
       : "gap report did not launch runtime and no matching StarCraft game process is selected";
 
-    std::string error;
-    if (!writeRuntimeEvidenceReport(installation, launchResult, evidenceOut, error))
+    launchEvidence = collectRuntimeEvidence(installation, launchResult);
+    hasLaunchEvidence = true;
+
+    std::ofstream output(evidenceOut);
+    if (!output)
     {
-      std::cerr << error << '\n';
+      std::cerr << "unable to write runtime evidence report: " << evidenceOut << '\n';
       return 1;
     }
+    output << makeRuntimeEvidenceReport(launchEvidence);
     std::cout << "evidence.path=" << evidenceOut << '\n';
   }
 
@@ -295,6 +327,8 @@ int main(int argc, char** argv)
     std::cout << "executor.bridge_mode=" << preflight.executorBridgeMode << '\n';
   std::cout << "executor.behavior_proof.missing_count=" << preflight.missingBehaviorProofs.size() << '\n';
   std::cout << "backend.name=" << backend->name() << '\n';
+  if (hasLaunchEvidence)
+    printLaunchDiagnosis(launchEvidence);
   std::cout << "readiness.production_ready=" << (report.productionReady ? "true" : "false") << '\n';
   std::cout << "readiness.blocking_gap_count=" << gaps.size() << '\n';
   std::cout << "implementation_gap.count=" << implementationGaps.size() << '\n';

@@ -89,7 +89,11 @@ int main()
       + appBundle.string()
       + " with args: -launch -uid s1, pid: 777\n"
       + "I 2026-06-19 08:00:00.100000 [InstallManager] Setting Process Running: true uid=s1 binaryType=game any=true\n"
+      + "D 2026-06-19 08:00:02.000000 [Telemetry] Unrelated BLZIGNORED00000000 token\n"
       + "I 2026-06-19 08:00:06.350000 [InstallManager] Game is no longer running: s1\n"
+      + "D 2026-06-19 08:00:06.450000 [UrlManager] {Main} Resolved URL: "
+      + "key=/client/error/BLZBNTBNA00000005; region=KR; "
+      + "endpoint=https://kr.battle.net/support/ko/article/BLZBNTBNA00000005?utm_medium=internal\n"
       + "launch handoff failed in test\n");
 
   setEnvValue("STARCRAFT_API_INSTALL_DIR", installRoot.string());
@@ -233,11 +237,17 @@ int main()
   assert(evidence.sessionSummary.transitions.size() == 1);
   assert(evidence.sessionSummary.transitions.front().complete);
   assert(evidence.sessionSummary.transitions.front().durationMilliseconds == 6250);
+  assert(evidence.supportErrors.size() == 1);
+  assert(evidence.supportErrors.front().code == "BLZBNTBNA00000005");
+  assert(containsText(evidence.supportErrors.front().url, "https://kr.battle.net/support/ko/article/BLZBNTBNA00000005"));
   assert(!evidence.diagnosis.readyForAttach);
   assert(!evidence.diagnosis.gameProcessVisible);
   assert(evidence.diagnosis.gameProcessCount == 0);
   assert(evidence.diagnosis.shortLivedSessionObserved);
   assert(evidence.diagnosis.shortLivedSessionAgeMilliseconds == 0);
+  assert(evidence.diagnosis.battleNetSupportCode == "BLZBNTBNA00000005");
+  assert(containsText(evidence.diagnosis.battleNetSupportUrl, "BLZBNTBNA00000005"));
+  assert(containsText(evidence.diagnosis.battleNetSupportLine, "Resolved URL"));
   assert(!evidence.diagnosis.blockers.empty());
 
 #if !defined(_WIN32)
@@ -245,10 +255,10 @@ int main()
   assert(evidence.diagnosis.battleNetHandoffCount == 1);
   assert(!evidence.diagnosis.multipleBattleNetHandoffsVisible);
   assert(evidence.diagnosis.staleHandoffSuspected);
-  assert(evidence.diagnosis.status == "blocked-battlenet-handoff-short-lived-session");
+  assert(evidence.diagnosis.status == "blocked-battlenet-handoff-short-lived-session-support-error");
   unsetEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT");
 #else
-  assert(evidence.diagnosis.status == "blocked-short-lived-session-no-game-process");
+  assert(evidence.diagnosis.status == "blocked-short-lived-session-support-error-no-game-process");
 #endif
 
   const std::string report = makeRuntimeEvidenceReport(evidence);
@@ -260,6 +270,11 @@ int main()
   assert(report.find("diagnosis.ready_for_attach=false") != std::string::npos);
   assert(report.find("diagnosis.short_lived_session_observed=true") != std::string::npos);
   assert(report.find("diagnosis.short_lived_session_age_ms=0") != std::string::npos);
+  assert(report.find("diagnosis.battle_net_support_code=BLZBNTBNA00000005") != std::string::npos);
+  assert(report.find("diagnosis.battle_net_support_url=https://kr.battle.net/support/ko/article/BLZBNTBNA00000005") != std::string::npos);
+  assert(report.find("support.error_count=1") != std::string::npos);
+  assert(report.find("support.error.0.code=BLZBNTBNA00000005") != std::string::npos);
+  assert(report.find("Battle.net reported support error BLZBNTBNA00000005") != std::string::npos);
   assert(report.find("diagnosis.blocker_count=") != std::string::npos);
   assert(report.find("executable.fnv1a64=") != std::string::npos);
   assert(report.find("launch handoff failed in test") != std::string::npos);
@@ -288,7 +303,7 @@ int main()
   assert(handoffAfterShortSessionEvidence.sessionSummary.latestState == "handoff");
   assert(handoffAfterShortSessionEvidence.diagnosis.shortLivedSessionObserved);
   assert(handoffAfterShortSessionEvidence.diagnosis.shortLivedSessionAgeMilliseconds == 1900);
-  assert(handoffAfterShortSessionEvidence.diagnosis.status == "blocked-battlenet-handoff-short-lived-session");
+  assert(handoffAfterShortSessionEvidence.diagnosis.status == "blocked-battlenet-handoff-short-lived-session-support-error");
 
   std::string noisyOldLog;
   for (int i = 0; i < 60; ++i)
@@ -316,7 +331,7 @@ int main()
   assert(currentHandoffEvidence.sessionSummary.latestObservedTimestamp == "2026-06-20 03:18:14.277562");
   assert(currentHandoffEvidence.sessionSummary.latestState == "handoff");
   assert(!currentHandoffEvidence.diagnosis.shortLivedSessionObserved);
-  assert(currentHandoffEvidence.diagnosis.status == "blocked-battlenet-handoff-without-game");
+  assert(currentHandoffEvidence.diagnosis.status == "blocked-battlenet-handoff-support-error");
 
   writeFile(
     processSnapshot,
@@ -330,7 +345,7 @@ int main()
   assert(!duplicateHandoffEvidence.diagnosis.readyForAttach);
   assert(duplicateHandoffEvidence.diagnosis.battleNetHandoffCount == 2);
   assert(duplicateHandoffEvidence.diagnosis.multipleBattleNetHandoffsVisible);
-  assert(duplicateHandoffEvidence.diagnosis.status == "blocked-multiple-battlenet-handoffs-without-game");
+  assert(duplicateHandoffEvidence.diagnosis.status == "blocked-multiple-battlenet-handoffs-support-error");
 
   writeFile(
     processSnapshot,
@@ -340,7 +355,7 @@ int main()
   assert(!duplicateMainEvidence.diagnosis.readyForAttach);
   assert(duplicateMainEvidence.diagnosis.battleNetMainCount == 2);
   assert(duplicateMainEvidence.diagnosis.multipleBattleNetMainVisible);
-  assert(duplicateMainEvidence.diagnosis.status == "blocked-multiple-battlenet-main-processes-no-game");
+  assert(duplicateMainEvidence.diagnosis.status == "blocked-multiple-battlenet-main-processes-support-error-no-game");
 #endif
 
   std::filesystem::remove_all(tempRoot);

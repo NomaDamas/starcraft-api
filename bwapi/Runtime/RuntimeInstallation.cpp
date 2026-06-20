@@ -431,6 +431,70 @@ namespace BWAPI::Runtime
       return hasDigit ? value : 0;
     }
 
+    bool isBattleNetSupportCodeChar(char ch)
+    {
+      return std::isupper(static_cast<unsigned char>(ch)) != 0
+        || std::isdigit(static_cast<unsigned char>(ch)) != 0;
+    }
+
+    bool isBattleNetSupportErrorLine(const std::string& line)
+    {
+      return line.find("/client/error/") != std::string::npos
+        || line.find("battle.net/support") != std::string::npos
+        || line.find("support.blizzard.com") != std::string::npos;
+    }
+
+    std::string extractBattleNetSupportCode(const std::string& line)
+    {
+      if (!isBattleNetSupportErrorLine(line))
+        return {};
+
+      std::size_t offset = line.find("BLZ");
+      while (offset != std::string::npos)
+      {
+        std::size_t end = offset;
+        while (end < line.size() && isBattleNetSupportCodeChar(line[end]))
+          ++end;
+
+        if (end - offset >= 8)
+          return line.substr(offset, end - offset);
+
+        offset = line.find("BLZ", offset + 3);
+      }
+
+      return {};
+    }
+
+    std::string extractSupportUrl(const std::string& line, const std::string& supportCode)
+    {
+      std::size_t codeOffset = supportCode.empty()
+        ? std::string::npos
+        : line.find(supportCode);
+      if (codeOffset == std::string::npos)
+        codeOffset = 0;
+
+      std::size_t urlOffset = line.rfind("https://", codeOffset);
+      if (urlOffset == std::string::npos)
+        urlOffset = line.rfind("http://", codeOffset);
+      if (urlOffset == std::string::npos)
+      {
+        urlOffset = line.find("https://");
+        if (urlOffset == std::string::npos)
+          urlOffset = line.find("http://");
+      }
+      if (urlOffset == std::string::npos)
+        return {};
+
+      std::size_t end = urlOffset;
+      while (end < line.size() && !std::isspace(static_cast<unsigned char>(line[end])))
+        ++end;
+
+      std::string url = line.substr(urlOffset, end - urlOffset);
+      while (!url.empty() && (url.back() == ')' || url.back() == ']' || url.back() == ';' || url.back() == ','))
+        url.pop_back();
+      return url;
+    }
+
     std::string sanitizeEvidenceValue(std::string value)
     {
       for (char& ch : value)
@@ -835,6 +899,98 @@ namespace BWAPI::Runtime
       return excerpts;
     }
 
+    std::vector<RuntimeSupportError> collectRuntimeSupportErrors(
+      const RuntimeInstallation& installation,
+      std::size_t maxFiles,
+      std::size_t maxErrors)
+    {
+      struct TimestampedSupportError
+      {
+        RuntimeSupportError error;
+        std::int64_t milliseconds = 0;
+        std::size_t index = 0;
+        bool hasTimestamp = false;
+      };
+
+      std::vector<TimestampedSupportError> collected;
+      std::size_t inspectedFiles = 0;
+      std::size_t collectedIndex = 0;
+      bool allErrorsTimestamped = true;
+      for (const CandidateLogFile& file : collectRuntimeLogFiles(installation))
+      {
+        if (inspectedFiles >= maxFiles)
+          break;
+        ++inspectedFiles;
+
+        std::ifstream input(file.path);
+        if (!input)
+          continue;
+
+        std::string line;
+        while (std::getline(input, line))
+        {
+          const std::string sanitized = sanitizeEvidenceValue(line);
+          const std::string supportCode = extractBattleNetSupportCode(sanitized);
+          if (supportCode.empty())
+            continue;
+
+          TimestampedSupportError supportError;
+          supportError.error.path = pathString(file.path);
+          supportError.error.code = supportCode;
+          supportError.error.url = extractSupportUrl(sanitized, supportCode);
+          supportError.error.line = sanitized;
+          supportError.index = collectedIndex++;
+
+          std::string timestamp;
+          supportError.hasTimestamp = parseLogTimestampMilliseconds(
+            sanitized,
+            timestamp,
+            supportError.milliseconds);
+          if (!supportError.hasTimestamp)
+            allErrorsTimestamped = false;
+
+          collected.push_back(std::move(supportError));
+        }
+      }
+
+      if (allErrorsTimestamped)
+      {
+        std::stable_sort(
+          collected.begin(),
+          collected.end(),
+          [](const TimestampedSupportError& left, const TimestampedSupportError& right) {
+            if (left.milliseconds != right.milliseconds)
+              return left.milliseconds < right.milliseconds;
+            return left.index < right.index;
+          });
+      }
+      else
+      {
+        std::stable_sort(
+          collected.begin(),
+          collected.end(),
+          [](const TimestampedSupportError& left, const TimestampedSupportError& right) {
+            return left.index < right.index;
+          });
+      }
+
+      while (collected.size() > maxErrors)
+        collected.erase(collected.begin());
+
+      std::vector<RuntimeSupportError> errors;
+      errors.reserve(collected.size());
+      for (const TimestampedSupportError& supportError : collected)
+        errors.push_back(supportError.error);
+      return errors;
+    }
+
+    const RuntimeSupportError* latestRuntimeSupportError(const std::vector<RuntimeSupportError>& errors)
+    {
+      if (errors.empty())
+        return nullptr;
+      return &errors.back();
+    }
+
     std::string categorizeSessionLogLine(
       const RuntimeInstallation& installation,
       const std::string& line)
@@ -1218,6 +1374,18 @@ namespace BWAPI::Runtime
       diagnosis.blockers.push_back(std::move(blocker));
     }
 
+    void addSupportErrorBlocker(RuntimeLaunchDiagnosis& diagnosis)
+    {
+      if (diagnosis.battleNetSupportCode.empty())
+        return;
+
+      std::string blocker =
+        "Battle.net reported support error " + diagnosis.battleNetSupportCode;
+      if (!diagnosis.battleNetSupportUrl.empty())
+        blocker += ": " + diagnosis.battleNetSupportUrl;
+      addDiagnosisBlocker(diagnosis, std::move(blocker));
+    }
+
     bool latestObservedEventCompletesTransition(const RuntimeSessionSummary& summary)
     {
       if (summary.latestObservedTimestamp.empty())
@@ -1257,6 +1425,12 @@ namespace BWAPI::Runtime
       diagnosis.battleNetMainVisible = diagnosis.battleNetMainCount > 0;
       diagnosis.battleNetHandoffVisible = diagnosis.battleNetHandoffCount > 0;
       diagnosis.battleNetSupportVisible = diagnosis.battleNetSupportCount > 0;
+      if (const RuntimeSupportError* supportError = latestRuntimeSupportError(evidence.supportErrors))
+      {
+        diagnosis.battleNetSupportCode = supportError->code;
+        diagnosis.battleNetSupportUrl = supportError->url;
+        diagnosis.battleNetSupportLine = supportError->line;
+      }
       diagnosis.multipleBattleNetMainVisible = diagnosis.battleNetMainCount > 1;
       diagnosis.multipleBattleNetHandoffsVisible = diagnosis.battleNetHandoffCount > 1;
       const bool latestCompleteTransitionIsShortLived =
@@ -1306,11 +1480,21 @@ namespace BWAPI::Runtime
 
       if (diagnosis.battleNetHandoffVisible && !diagnosis.gameProcessVisible)
       {
+        const bool supportErrorObserved = !diagnosis.battleNetSupportCode.empty();
         if (diagnosis.multipleBattleNetHandoffsVisible)
         {
-          diagnosis.status = diagnosis.shortLivedSessionObserved
-            ? "blocked-multiple-battlenet-handoffs-short-lived-session"
-            : "blocked-multiple-battlenet-handoffs-without-game";
+          if (supportErrorObserved)
+          {
+            diagnosis.status = diagnosis.shortLivedSessionObserved
+              ? "blocked-multiple-battlenet-handoffs-short-lived-session-support-error"
+              : "blocked-multiple-battlenet-handoffs-support-error";
+          }
+          else
+          {
+            diagnosis.status = diagnosis.shortLivedSessionObserved
+              ? "blocked-multiple-battlenet-handoffs-short-lived-session"
+              : "blocked-multiple-battlenet-handoffs-without-game";
+          }
           addDiagnosisBlocker(
             diagnosis,
             "Multiple Battle.net StarCraft handoff processes are visible: "
@@ -1318,9 +1502,18 @@ namespace BWAPI::Runtime
         }
         else
         {
-          diagnosis.status = diagnosis.shortLivedSessionObserved
-            ? "blocked-battlenet-handoff-short-lived-session"
-            : "blocked-battlenet-handoff-without-game";
+          if (supportErrorObserved)
+          {
+            diagnosis.status = diagnosis.shortLivedSessionObserved
+              ? "blocked-battlenet-handoff-short-lived-session-support-error"
+              : "blocked-battlenet-handoff-support-error";
+          }
+          else
+          {
+            diagnosis.status = diagnosis.shortLivedSessionObserved
+              ? "blocked-battlenet-handoff-short-lived-session"
+              : "blocked-battlenet-handoff-without-game";
+          }
         }
         addDiagnosisBlocker(
           diagnosis,
@@ -1333,24 +1526,37 @@ namespace BWAPI::Runtime
               + std::to_string(evidence.sessionSummary.latestTransitionDurationMilliseconds)
               + " ms");
         }
+        addSupportErrorBlocker(diagnosis);
         return diagnosis;
       }
 
       if (diagnosis.multipleBattleNetMainVisible && !diagnosis.gameProcessVisible)
       {
-        diagnosis.status = "blocked-multiple-battlenet-main-processes-no-game";
+        diagnosis.status = diagnosis.battleNetSupportCode.empty()
+          ? "blocked-multiple-battlenet-main-processes-no-game"
+          : "blocked-multiple-battlenet-main-processes-support-error-no-game";
         addDiagnosisBlocker(
           diagnosis,
           "Multiple Battle.net main processes are visible: " + std::to_string(diagnosis.battleNetMainCount));
         addDiagnosisBlocker(diagnosis, "StarCraft game executable is not visible");
+        addSupportErrorBlocker(diagnosis);
         return diagnosis;
       }
 
       if (!diagnosis.gameProcessVisible)
       {
-        diagnosis.status = diagnosis.shortLivedSessionObserved
-          ? "blocked-short-lived-session-no-game-process"
-          : "blocked-no-game-process";
+        if (!diagnosis.battleNetSupportCode.empty())
+        {
+          diagnosis.status = diagnosis.shortLivedSessionObserved
+            ? "blocked-short-lived-session-support-error-no-game-process"
+            : "blocked-battlenet-support-error-no-game-process";
+        }
+        else
+        {
+          diagnosis.status = diagnosis.shortLivedSessionObserved
+            ? "blocked-short-lived-session-no-game-process"
+            : "blocked-no-game-process";
+        }
         addDiagnosisBlocker(diagnosis, "No stable StarCraft game executable process is visible");
         if (diagnosis.shortLivedSessionObserved)
         {
@@ -1360,6 +1566,7 @@ namespace BWAPI::Runtime
               + std::to_string(evidence.sessionSummary.latestTransitionDurationMilliseconds)
               + " ms");
         }
+        addSupportErrorBlocker(diagnosis);
         return diagnosis;
       }
 
@@ -1878,6 +2085,7 @@ namespace BWAPI::Runtime
     evidence.executable = identifyRuntimeFile(installation.executablePath);
     evidence.processes = collectObservedProcesses(installation);
     evidence.logs = collectRuntimeLogExcerpts(installation, 4, 20);
+    evidence.supportErrors = collectRuntimeSupportErrors(installation, 8, 10);
     evidence.sessionEvents = collectRuntimeSessionEvents(installation, 8, 50);
     evidence.sessionSummary = summarizeRuntimeSessionEvents(evidence.sessionEvents);
     evidence.diagnosis = diagnoseRuntimeEvidence(evidence);
@@ -1941,6 +2149,9 @@ namespace BWAPI::Runtime
         evidence.diagnosis.shortLivedSessionAgeMilliseconds);
     writeEvidenceField(output, "diagnosis.stale_handoff_suspected", evidence.diagnosis.staleHandoffSuspected);
     writeEvidenceField(output, "diagnosis.ready_for_attach", evidence.diagnosis.readyForAttach);
+    writeEvidenceField(output, "diagnosis.battle_net_support_code", evidence.diagnosis.battleNetSupportCode);
+    writeEvidenceField(output, "diagnosis.battle_net_support_url", evidence.diagnosis.battleNetSupportUrl);
+    writeEvidenceField(output, "diagnosis.battle_net_support_line", evidence.diagnosis.battleNetSupportLine);
     writeEvidenceField(output, "diagnosis.blocker_count", static_cast<int>(evidence.diagnosis.blockers.size()));
     for (std::size_t i = 0; i < evidence.diagnosis.blockers.size(); ++i)
       writeEvidenceField(output, "diagnosis.blocker." + std::to_string(i), evidence.diagnosis.blockers[i]);
@@ -1966,6 +2177,17 @@ namespace BWAPI::Runtime
       writeEvidenceField(output, prefix + "line_count", static_cast<int>(log.lines.size()));
       for (std::size_t line = 0; line < log.lines.size(); ++line)
         writeEvidenceField(output, prefix + "line." + std::to_string(line), log.lines[line]);
+    }
+
+    writeEvidenceField(output, "support.error_count", static_cast<int>(evidence.supportErrors.size()));
+    for (std::size_t i = 0; i < evidence.supportErrors.size(); ++i)
+    {
+      const RuntimeSupportError& supportError = evidence.supportErrors[i];
+      const std::string prefix = "support.error." + std::to_string(i) + ".";
+      writeEvidenceField(output, prefix + "path", supportError.path);
+      writeEvidenceField(output, prefix + "code", supportError.code);
+      writeEvidenceField(output, prefix + "url", supportError.url);
+      writeEvidenceField(output, prefix + "line", supportError.line);
     }
 
     writeEvidenceField(output, "session.event_count", static_cast<int>(evidence.sessionEvents.size()));

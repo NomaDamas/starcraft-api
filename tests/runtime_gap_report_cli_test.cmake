@@ -49,6 +49,10 @@ foreach(needle
     "implementation_gap.category.structure-layout.count="
     "implementation_gap.category.structure-field.count="
     "implementation_gap.category.executor-preflight.count="
+    "diagnosis.status=blocked-no-game-process"
+    "diagnosis.ready_for_attach=false"
+    "diagnosis.game_process_count=0"
+    "diagnosis.blocker_count=1"
     "implementation_gap.0.category=backend"
     "implementation_gap.1.category=api-surface"
     "implementation_gap.1.id=BWAPI.abstract-methods"
@@ -79,6 +83,45 @@ foreach(needle
   string(FIND "${evidence}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "gap report evidence missing '${needle}'\n${evidence}")
+  endif()
+endforeach()
+
+set(support_evidence_path "${STARCRAFT_API_CLI_TEST_DIR}/runtime-gap-report-support.evidence")
+set(support_log_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-gap-report-support-logs")
+file(REMOVE "${support_evidence_path}")
+file(MAKE_DIRECTORY "${support_log_dir}")
+file(WRITE
+  "${support_log_dir}/battle.net-support.log"
+  "D 2026-06-19 08:00:06.450000 [UrlManager] {Main} Resolved URL: key=/client/error/BLZBNTBNA00000005; region=KR; endpoint=https://kr.battle.net/support/ko/article/BLZBNTBNA00000005?utm_medium=internal\n")
+
+execute_process(
+  COMMAND
+    "${CMAKE_COMMAND}" -E env
+    "STARCRAFT_API_LOG_DIR=${support_log_dir}"
+    "STARCRAFT_API_PROCESS_SNAPSHOT=${process_snapshot}"
+    "${STARCRAFT_RUNTIME_GAP_REPORT}"
+    --product starcraft-remastered
+    --version test-build
+    --executable "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
+    --evidence-out "${support_evidence_path}"
+    --summary-only
+  RESULT_VARIABLE support_result
+  OUTPUT_VARIABLE support_output
+  ERROR_VARIABLE support_error
+)
+
+if(NOT support_result EQUAL 0)
+  message(FATAL_ERROR "gap report support evidence command failed: ${support_error}\n${support_output}")
+endif()
+
+foreach(needle
+    "diagnosis.status=blocked-battlenet-support-error-no-game-process"
+    "diagnosis.battle_net_support_code=BLZBNTBNA00000005"
+    "diagnosis.battle_net_support_url=https://kr.battle.net/support/ko/article/BLZBNTBNA00000005"
+    "diagnosis.blocker.1=Battle.net reported support error BLZBNTBNA00000005")
+  string(FIND "${support_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "gap report support output missing '${needle}'\n${support_output}")
   endif()
 endforeach()
 

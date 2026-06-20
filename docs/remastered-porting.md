@@ -104,9 +104,10 @@ Incomplete bootstrap manifests remain non-production, but the report preserves p
 - `session.launch_process_event_count` and `session.latest_launch_process_id` record Battle.net launch lines with transient StarCraft process ids.
 - `session.shortest_transition_duration_ms`, `session.longest_transition_duration_ms`, and `session.latest_transition_duration_ms` quantify how long observed StarCraft sessions stayed running before Battle.net reported stop events.
 - `session.transition.*` keeps the paired start/stop timestamps and source log lines for attach debugging.
-- `diagnosis.status` gives the machine-readable launch/attach blocker, including `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, and `blocked-battlenet-handoff-short-lived-session`.
+- `diagnosis.status` gives the machine-readable launch/attach blocker, including `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, `blocked-battlenet-handoff-short-lived-session`, `blocked-battlenet-handoff-support-error`, and `blocked-battlenet-handoff-short-lived-session-support-error`.
 - `diagnosis.short_lived_session_age_ms` records how far the latest observed handoff event is from the latest short complete StarCraft transition; this keeps a run that starts and stops in a few seconds from being mislabeled as a generic stale handoff.
 - `diagnosis.game_process_count`, `diagnosis.battle_net_main_count`, `diagnosis.battle_net_handoff_count`, `diagnosis.multiple_battle_net_main_visible`, and `diagnosis.multiple_battle_net_handoffs_visible` distinguish the real StarCraft executable from one or more Battle.net main/handoff processes.
+- `support.error.*` records recent Battle.net support error lines when logs include `/client/error/BLZ...`, `battle.net/support`, or `support.blizzard.com`; `diagnosis.battle_net_support_code`, `diagnosis.battle_net_support_url`, and `diagnosis.battle_net_support_line` mirror the latest parsed support error.
 - `diagnosis.ready_for_attach` is only true when a stable StarCraft game executable process is visible, selected, and safe for the next authorized adapter step.
 - `diagnosis.blocker.*` records the concrete reasons the current run cannot submit commands or claim production parity.
 
@@ -116,7 +117,7 @@ These fields are diagnostic evidence, not readiness evidence. If sessions stop a
 
 On macOS, launch retries prefer the platform app bootstrap path before direct executable fallback: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable. The selected path is emitted as `runtime.warning=runtime.launch_target=*` in evidence.
 
-For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to emit only readiness and implementation category totals. Use `starcraft-runtime-gap-report --category <name>` to print only one implementation gap category while preserving the global category counts.
+For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to emit only readiness and implementation category totals. Use `starcraft-runtime-gap-report --category <name>` to print only one implementation gap category while preserving the global category counts. When `--evidence-out` is enabled, the gap report also mirrors launch diagnosis rows to stdout, including `diagnosis.status`, `diagnosis.ready_for_attach`, `diagnosis.battle_net_support_*`, and `diagnosis.blocker.*`.
 
 ## Runtime Executor Preflight
 

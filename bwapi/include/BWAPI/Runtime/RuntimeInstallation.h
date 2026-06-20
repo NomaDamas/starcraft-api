@@ -57,6 +57,14 @@ namespace BWAPI::Runtime
     std::string reason;
   };
 
+  struct RuntimeSupportError
+  {
+    std::string path;
+    std::string code;
+    std::string url;
+    std::string line;
+  };
+
   struct RuntimeSessionEvent
   {
     std::string path;
@@ -115,6 +123,9 @@ namespace BWAPI::Runtime
     int shortLivedSessionAgeMilliseconds = -1;
     bool staleHandoffSuspected = false;
     bool readyForAttach = false;
+    std::string battleNetSupportCode;
+    std::string battleNetSupportUrl;
+    std::string battleNetSupportLine;
     std::string status;
     std::vector<std::string> blockers;
   };
@@ -126,6 +137,7 @@ namespace BWAPI::Runtime
     RuntimeFileIdentity executable;
     std::vector<RuntimeObservedProcess> processes;
     std::vector<RuntimeLogExcerpt> logs;
+    std::vector<RuntimeSupportError> supportErrors;
     std::vector<RuntimeSessionEvent> sessionEvents;
     RuntimeSessionSummary sessionSummary;
     RuntimeLaunchDiagnosis diagnosis;

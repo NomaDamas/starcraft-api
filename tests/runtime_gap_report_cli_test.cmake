@@ -36,6 +36,33 @@ if(NOT result EQUAL 0)
   message(FATAL_ERROR "gap report evidence command failed: ${error}\n${output}")
 endif()
 
+foreach(needle
+    "implementation_gap.count="
+    "implementation_gap.category_count="
+    "implementation_gap.category.backend.count=1"
+    "implementation_gap.category.api-surface.count=1"
+    "implementation_gap.category.command-surface.count=1"
+    "implementation_gap.category.unit-command.count="
+    "implementation_gap.category.game-action.count="
+    "implementation_gap.category.data-address.count="
+    "implementation_gap.category.structure-layout.count="
+    "implementation_gap.category.structure-field.count="
+    "implementation_gap.category.executor-preflight.count="
+    "implementation_gap.0.category=backend"
+    "implementation_gap.1.category=api-surface"
+    "implementation_gap.1.id=BWAPI.abstract-methods"
+    "implementation_gap.3.category=unit-command"
+    "implementation_gap.3.id=Attack_Move"
+    "category=data-address"
+    "id=BW::BWDATA::Game"
+    "category=executor-preflight"
+    "id=runtime-process-identified")
+  string(FIND "${output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "gap report output missing '${needle}'\n${output}")
+  endif()
+endforeach()
+
 if(NOT EXISTS "${evidence_path}")
   message(FATAL_ERROR "gap report did not write evidence file")
 endif()

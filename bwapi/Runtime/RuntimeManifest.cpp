@@ -254,6 +254,14 @@ namespace BWAPI::Runtime
           addError(result, sourceName, 0, std::string("manifest is missing required ") + label + ": " + required);
       }
     }
+
+    bool allowsPartialCommandSurface(const ManifestAccumulator& accumulator)
+    {
+      return accumulator.hasImplementedCommandSurfaceEntries
+        && accumulator.implementedCommandSurfaceEntries == 0
+        && accumulator.unitCommands.empty()
+        && accumulator.gameActions.empty();
+    }
   }
 
   RuntimeManifestLoadResult loadRuntimeManifest(std::istream& input, const std::string& sourceName)
@@ -453,8 +461,12 @@ namespace BWAPI::Runtime
       addError(result, sourceName, 0, "manifest command surface entry count is missing");
 
     const RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
-    validateCommandEntries(result, sourceName, accumulator.unitCommands, commandSurface.unitCommands, "unit command");
-    validateCommandEntries(result, sourceName, accumulator.gameActions, commandSurface.gameActions, "game action");
+    const bool partialCommandSurface = allowsPartialCommandSurface(accumulator);
+    if (!partialCommandSurface)
+    {
+      validateCommandEntries(result, sourceName, accumulator.unitCommands, commandSurface.unitCommands, "unit command");
+      validateCommandEntries(result, sourceName, accumulator.gameActions, commandSurface.gameActions, "game action");
+    }
     const int declaredCommandEntries = static_cast<int>(accumulator.unitCommands.size() + accumulator.gameActions.size());
     if (declaredCommandEntries != accumulator.implementedCommandSurfaceEntries)
       addError(result, sourceName, 0, "manifest command surface entry count does not match declared command/action names");

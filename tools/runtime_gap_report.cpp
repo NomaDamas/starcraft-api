@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeImplementationGap.h>
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeReadiness.h>
@@ -9,6 +10,8 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <string>
+#include <vector>
 
 using namespace BWAPI::Runtime;
 
@@ -244,6 +247,10 @@ int main(int argc, char** argv)
   RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, contract);
   RuntimeReadinessReport report = evaluateProductionReadiness(probe, contract, preflight);
   std::vector<RuntimeReadinessCheck> gaps = blockingReadinessGaps(report);
+  std::vector<RuntimeImplementationGap> implementationGaps =
+    collectRuntimeImplementationGaps(probe, contract, preflight);
+  std::vector<RuntimeImplementationGapCategoryCount> implementationGapCategories =
+    summarizeRuntimeImplementationGapsByCategory(implementationGaps);
 
   std::cout << "platform=" << toString(environment.platform) << '\n';
   std::cout << "product=" << toString(environment.product) << '\n';
@@ -259,12 +266,26 @@ int main(int argc, char** argv)
   std::cout << "backend.name=" << backend->name() << '\n';
   std::cout << "readiness.production_ready=" << (report.productionReady ? "true" : "false") << '\n';
   std::cout << "readiness.blocking_gap_count=" << gaps.size() << '\n';
+  std::cout << "implementation_gap.count=" << implementationGaps.size() << '\n';
+  std::cout << "implementation_gap.category_count=" << implementationGapCategories.size() << '\n';
 
   for (const RuntimeReadinessCheck& check : report.checks)
     printCheck(check);
 
   for (const RuntimeReadinessCheck& gap : gaps)
     std::cout << "readiness.blocking_gap=" << gap.id << '\n';
+
+  for (const RuntimeImplementationGapCategoryCount& category : implementationGapCategories)
+    std::cout << "implementation_gap.category." << category.category << ".count=" << category.count << '\n';
+
+  for (std::size_t i = 0; i < implementationGaps.size(); ++i)
+  {
+    const RuntimeImplementationGap& gap = implementationGaps[i];
+    std::cout << "implementation_gap." << i << ".category=" << gap.category << '\n';
+    std::cout << "implementation_gap." << i << ".id=" << gap.id << '\n';
+    if (!gap.detail.empty())
+      std::cout << "implementation_gap." << i << ".detail=" << gap.detail << '\n';
+  }
 
   if (requireProduction && !report.productionReady)
     return 2;

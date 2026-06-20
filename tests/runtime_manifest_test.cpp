@@ -64,14 +64,16 @@ int main()
     "api-surface-methods 0\n"
     "command-surface-entries 0\n");
   RuntimeManifestLoadResult bootstrapResult = loadRuntimeManifest(bootstrap, "bootstrap");
-  assert(!bootstrapResult.loaded);
+  assert(bootstrapResult.loaded);
+  assert(bootstrapResult.errors.empty());
   assert(bootstrapResult.manifest.contract.product == Product::StarCraftRemastered);
   assert(bootstrapResult.manifest.contract.version == "test-build");
   assert(bootstrapResult.manifest.implementedApiSurfaceMethods == 0);
   assert(bootstrapResult.manifest.implementedCommandSurfaceEntries == 0);
   assert(!hasErrorContaining(bootstrapResult, "manifest API surface method count is missing"));
   assert(!hasErrorContaining(bootstrapResult, "manifest command surface entry count is missing"));
-  assert(hasErrorContaining(bootstrapResult, "manifest is missing required unit command"));
+  assert(!hasErrorContaining(bootstrapResult, "manifest is missing required unit command"));
+  assert(!validateRuntimeContract(bootstrapResult.manifest.contract).valid);
 
   std::istringstream malformed("product unknown-product\n");
   RuntimeManifestLoadResult malformedResult = loadRuntimeManifest(malformed, "inline");

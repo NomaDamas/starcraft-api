@@ -42,6 +42,17 @@ target_link_libraries(runtime_contract_test
 
 add_test(NAME runtime_contract_test COMMAND runtime_contract_test)
 
+add_executable(runtime_implementation_gap_test
+  runtime_implementation_gap_test.cpp
+)
+
+target_link_libraries(runtime_implementation_gap_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_implementation_gap_test COMMAND runtime_implementation_gap_test)
+
 add_executable(runtime_manifest_test
   runtime_manifest_test.cpp
 )

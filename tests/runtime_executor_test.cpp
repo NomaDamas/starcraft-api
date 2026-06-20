@@ -133,7 +133,7 @@ int main()
   RuntimeExecutorSubmitResult rejectedWithBootstrapManifest =
     submitRuntimeCommands(bootstrapManifestEnvironment, { gameAction });
   assert(!rejectedWithBootstrapManifest.submitted);
-  assert(rejectedWithBootstrapManifest.reason.find("runtime manifest failed to load") != std::string::npos);
+  assert(rejectedWithBootstrapManifest.reason.find("runtime manifest contract is invalid") != std::string::npos);
 
   RuntimeCommandRequest invalidCommand;
   invalidCommand.kind = RuntimeCommandKind::GameAction;

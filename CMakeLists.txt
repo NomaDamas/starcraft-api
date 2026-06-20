@@ -73,6 +73,7 @@ add_library(starcraft_runtime STATIC
   "${BWAPI_ROOT}/Runtime/RuntimeContract.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeEnvironment.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeExecutor.cpp"
+  "${BWAPI_ROOT}/Runtime/RuntimeImplementationGap.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeManifest.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeInstallation.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeProcess.cpp"

@@ -1654,9 +1654,72 @@ namespace BWAPI::Runtime
       bool allowImmediateSuccessExit = false;
     };
 
+    bool envValueIsFalse(std::string value)
+    {
+      std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](unsigned char ch)
+        {
+          return static_cast<char>(std::tolower(ch));
+        });
+      return value == "0" || value == "false" || value == "off" || value == "no";
+    }
+
+    bool remasteredWindowedLaunchEnabled()
+    {
+      const std::string value = getenvString("STARCRAFT_API_WINDOWED");
+      return value.empty() || !envValueIsFalse(value);
+    }
+
+    std::string getenvOrDefault(const char* name, const char* fallback)
+    {
+      const std::string value = getenvString(name);
+      return value.empty() ? fallback : value;
+    }
+
+    std::vector<std::string> makeExecutableLaunchArguments(const RuntimeInstallation& installation)
+    {
+      std::vector<std::string> executableArguments = { installation.executablePath };
+      if (installation.product != Product::StarCraftRemastered)
+        return executableArguments;
+
+      executableArguments.push_back("-launch");
+      executableArguments.push_back("-uid");
+      executableArguments.push_back("s1");
+      if (remasteredWindowedLaunchEnabled())
+      {
+        executableArguments.push_back("-displayMode");
+        executableArguments.push_back("0");
+        executableArguments.push_back("-windowwidth");
+        executableArguments.push_back(getenvOrDefault("STARCRAFT_API_WINDOW_WIDTH", "1024"));
+        executableArguments.push_back("-windowheight");
+        executableArguments.push_back(getenvOrDefault("STARCRAFT_API_WINDOW_HEIGHT", "768"));
+        executableArguments.push_back("-windowx");
+        executableArguments.push_back(getenvOrDefault("STARCRAFT_API_WINDOW_X", "100"));
+        executableArguments.push_back("-windowy");
+        executableArguments.push_back(getenvOrDefault("STARCRAFT_API_WINDOW_Y", "100"));
+      }
+      return executableArguments;
+    }
+
+    RuntimeLaunchTarget makeExecutableLaunchTarget(const RuntimeInstallation& installation)
+    {
+      return {
+        "executable",
+        installation.executablePath,
+        makeExecutableLaunchArguments(installation),
+        false
+      };
+    }
+
     std::vector<RuntimeLaunchTarget> makeRuntimeLaunchTargets(const RuntimeInstallation& installation)
     {
       std::vector<RuntimeLaunchTarget> launchTargets;
+
+      if (installation.product == Product::StarCraftRemastered && remasteredWindowedLaunchEnabled())
+        launchTargets.push_back(makeExecutableLaunchTarget(installation));
 
       if (!installation.launcherPath.empty() && installation.product == Product::StarCraftRemastered)
       {
@@ -1682,20 +1745,8 @@ namespace BWAPI::Runtime
         });
       }
 
-      std::vector<std::string> executableArguments = { installation.executablePath };
-      if (installation.product == Product::StarCraftRemastered)
-      {
-        executableArguments.push_back("-launch");
-        executableArguments.push_back("-uid");
-        executableArguments.push_back("s1");
-      }
-
-      launchTargets.push_back({
-        "executable",
-        installation.executablePath,
-        executableArguments,
-        false
-      });
+      if (installation.product != Product::StarCraftRemastered || !remasteredWindowedLaunchEnabled())
+        launchTargets.push_back(makeExecutableLaunchTarget(installation));
       return launchTargets;
     }
 

@@ -52,6 +52,8 @@ StarCraft/StarCraft Launcher.app/Contents/MacOS/StarCraft Launcher
 
 `--require-running` only succeeds when the actual game executable is visible and stable for the runtime process check. A transient launcher, Battle.net handoff, or short-lived splash process is reported as `runtime.running=false` and is not exported as `STARCRAFT_API_PROCESS_ID`.
 
+By default, StarCraft: Remastered launches use a partial-screen direct executable path before Battle.net fallback: `-launch -uid s1 -displayMode 0 -windowwidth 1024 -windowheight 768 -windowx 100 -windowy 100`. Set `STARCRAFT_API_WINDOWED=0` to use the older launcher-first fallback order. Set `STARCRAFT_API_WINDOW_WIDTH`, `STARCRAFT_API_WINDOW_HEIGHT`, `STARCRAFT_API_WINDOW_X`, and `STARCRAFT_API_WINDOW_Y` to change the window geometry for local tests.
+
 `--evidence-out` writes a launch/attach diagnostic report that captures the installation identity, executable size/hash, observed StarCraft/Battle.net process snapshot, launch result, recent Battle.net/StarCraft log tails, and parsed StarCraft session start/stop events. This report is for debugging and auditability only; it is not accepted as BWAPI parity evidence unless later in-game bindings, command execution, state extraction, event dispatch, overlay rendering, and synchronization tests pass. Set `STARCRAFT_API_LOG_DIR` to force a specific log directory during local tests.
 
 ## Runtime Manifest Format
@@ -115,7 +117,7 @@ These fields are diagnostic evidence, not readiness evidence. If sessions stop a
 
 `starcraft-runtime-launch --replace-stale-handoff` is the explicit recovery path for a stuck Battle.net `--game=s1` handoff. The default remains conservative and does not spawn a duplicate Battle.net instance while a handoff is visible. The recovery flag terminates a visible handoff before retrying and also terminates per-target handoffs before trying the next launch target, so retries do not intentionally leave multiple Battle.net StarCraft handoffs running.
 
-On macOS, launch retries prefer the platform app bootstrap path before direct executable fallback: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable with `-launch -uid s1`. Each target is followed by a stable game-process check. Attempted paths are emitted as `runtime.warning=runtime.launch_target=*`; targets that did not produce a stable game process are emitted as `runtime.warning=runtime.launch_target_no_game=*`.
+On StarCraft: Remastered, launch retries prefer the partial-screen direct executable path before launcher fallback. The default executable arguments are `-launch -uid s1 -displayMode 0 -windowwidth 1024 -windowheight 768 -windowx 100 -windowy 100`; if this does not produce a stable game process, macOS falls back to `open StarCraft Launcher.app` and then the launcher binary. Each target is followed by a stable game-process check. Attempted paths are emitted as `runtime.warning=runtime.launch_target=*`; targets that did not produce a stable game process are emitted as `runtime.warning=runtime.launch_target_no_game=*`.
 
 POSIX launch children are detached from the short-lived CLI process before `exec`, so a stable StarCraft process remains attachable after `starcraft-runtime-launch` exits.
 

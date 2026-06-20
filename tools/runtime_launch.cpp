@@ -30,6 +30,8 @@ namespace
       << "  --require-running        return non-zero unless a matching process is visible\n"
       << "  --wait-ms <milliseconds> wait after launch while scanning for the process (default: 10000)\n"
       << "  --stable-ms <milliseconds> require the same StarCraft process to survive this long (default: 5000)\n"
+      << "  env STARCRAFT_API_WINDOWED=0 disables the default partial-screen executable launch\n"
+      << "  env STARCRAFT_API_WINDOW_WIDTH/HEIGHT/X/Y changes the default 1024x768+100+100 window\n"
       << "  --manifest-out <path>    write a local bootstrap manifest\n"
       << "  --evidence-out <path>    write a launch/attach diagnostic evidence report\n"
       << "  --bridge <path>          write a filesystem bridge ready file\n"

@@ -35,6 +35,15 @@ namespace
 #endif
   }
 
+  void clearWindowedLaunchEnv()
+  {
+    unsetEnvValue("STARCRAFT_API_WINDOWED");
+    unsetEnvValue("STARCRAFT_API_WINDOW_WIDTH");
+    unsetEnvValue("STARCRAFT_API_WINDOW_HEIGHT");
+    unsetEnvValue("STARCRAFT_API_WINDOW_X");
+    unsetEnvValue("STARCRAFT_API_WINDOW_Y");
+  }
+
   void writeFile(const std::filesystem::path& path, const std::string& content)
   {
     std::filesystem::create_directories(path.parent_path());
@@ -108,6 +117,7 @@ int main()
       + "endpoint=https://kr.battle.net/support/ko/article/BLZBNTBNA00000005?utm_medium=internal\n"
       + "launch handoff failed in test\n");
 
+  clearWindowedLaunchEnv();
   setEnvValue("STARCRAFT_API_INSTALL_DIR", installRoot.string());
   setEnvValue("STARCRAFT_API_LOG_DIR", logRoot.string());
 
@@ -201,6 +211,54 @@ int main()
   assert(transientResult.requiredStableMilliseconds == 100);
   assert(transientResult.observedStableMilliseconds == 0);
 
+  const std::filesystem::path windowedRoot = tempRoot / "windowed";
+  const std::filesystem::path windowedLauncher = windowedRoot / "launcher";
+  const std::filesystem::path windowedExecutable = windowedRoot / "StarCraft";
+  const std::filesystem::path windowedSnapshot = windowedRoot / "processes.snapshot";
+  writeFile(
+    windowedLauncher,
+    "#!/bin/sh\n"
+    "exit 70\n");
+  writeFile(
+    windowedExecutable,
+    "#!/bin/sh\n"
+    "if [ \"$#\" -ne 13 ]; then exit 63; fi\n"
+    "if [ \"$1\" != \"-launch\" ] || [ \"$2\" != \"-uid\" ] || [ \"$3\" != \"s1\" ]; then exit 64; fi\n"
+    "if [ \"$4\" != \"-displayMode\" ] || [ \"$5\" != \"0\" ]; then exit 65; fi\n"
+    "if [ \"$6\" != \"-windowwidth\" ] || [ \"$7\" != \"1280\" ]; then exit 66; fi\n"
+    "if [ \"$8\" != \"-windowheight\" ] || [ \"$9\" != \"720\" ]; then exit 67; fi\n"
+    "if [ \"${10}\" != \"-windowx\" ] || [ \"${11}\" != \"40\" ]; then exit 68; fi\n"
+    "if [ \"${12}\" != \"-windowy\" ] || [ \"${13}\" != \"50\" ]; then exit 69; fi\n"
+    "printf '%s 1 %s -launch -uid s1 -displayMode 0 -windowwidth 1280 -windowheight 720 -windowx 40 -windowy 50\\n' \"$$\" \"$STARCRAFT_API_TEST_EXECUTABLE\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
+    "sleep 2\n");
+  makeExecutable(windowedLauncher);
+  makeExecutable(windowedExecutable);
+  writeFile(windowedSnapshot, "");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", windowedSnapshot.string());
+  setEnvValue("STARCRAFT_API_TEST_EXECUTABLE", windowedExecutable.string());
+  setEnvValue("STARCRAFT_API_WINDOWED", "1");
+  setEnvValue("STARCRAFT_API_WINDOW_WIDTH", "1280");
+  setEnvValue("STARCRAFT_API_WINDOW_HEIGHT", "720");
+  setEnvValue("STARCRAFT_API_WINDOW_X", "40");
+  setEnvValue("STARCRAFT_API_WINDOW_Y", "50");
+
+  RuntimeInstallation windowedInstallation;
+  windowedInstallation.found = true;
+  windowedInstallation.product = Product::StarCraftRemastered;
+  windowedInstallation.platform = Platform::Linux;
+  windowedInstallation.installRoot = windowedRoot.string();
+  windowedInstallation.executablePath = windowedExecutable.string();
+  windowedInstallation.launcherPath = windowedLauncher.string();
+
+  const RuntimeLaunchResult windowedResult = launchOrAttachRuntime(windowedInstallation, true, 0, 0);
+  assert(windowedResult.launched);
+  assert(windowedResult.running);
+  assert(windowedResult.processId > 0);
+  assert(hasWarning(windowedResult, "runtime.launch_target=executable"));
+  assert(!hasWarning(windowedResult, "runtime.launch_target=launcher"));
+  assert(!hasWarning(windowedResult, "runtime.launch_target_no_game=launcher"));
+  clearWindowedLaunchEnv();
+
   const std::filesystem::path fallbackRoot = tempRoot / "fallback";
   const std::filesystem::path fallbackLauncher = fallbackRoot / "launcher";
   const std::filesystem::path fallbackExecutable = fallbackRoot / "StarCraft";
@@ -220,6 +278,7 @@ int main()
   writeFile(fallbackSnapshot, "");
   setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", fallbackSnapshot.string());
   setEnvValue("STARCRAFT_API_TEST_EXECUTABLE", fallbackExecutable.string());
+  setEnvValue("STARCRAFT_API_WINDOWED", "0");
 
   RuntimeInstallation fallbackInstallation;
   fallbackInstallation.found = true;
@@ -260,6 +319,7 @@ int main()
   setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", handoffSnapshot.string());
   setEnvValue("STARCRAFT_API_TEST_EXECUTABLE", handoffExecutable.string());
   setEnvValue("STARCRAFT_API_TEST_INSTALL_ROOT", handoffRoot.string());
+  setEnvValue("STARCRAFT_API_WINDOWED", "0");
 
   RuntimeInstallation handoffInstallation;
   handoffInstallation.found = true;
@@ -285,6 +345,7 @@ int main()
       + "/\n");
   unsetEnvValue("STARCRAFT_API_TEST_EXECUTABLE");
   unsetEnvValue("STARCRAFT_API_TEST_INSTALL_ROOT");
+  clearWindowedLaunchEnv();
 #endif
 
   const std::string manifest = makeRuntimeBootstrapManifest(installation);

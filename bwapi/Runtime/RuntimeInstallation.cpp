@@ -4,10 +4,12 @@
 #include <BWAPI/Runtime/RuntimeProcess.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +23,7 @@
 #if defined(_WIN32)
 #include <windows.h>
 #else
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -702,6 +705,23 @@ namespace BWAPI::Runtime
         candidates.push_back(path);
     }
 
+    std::filesystem::path appBundleForExecutablePath(const std::string& executablePath)
+    {
+      std::filesystem::path cursor(executablePath);
+      while (!cursor.empty())
+      {
+        if (cursor.extension() == ".app")
+          return cursor;
+
+        const std::filesystem::path parent = cursor.parent_path();
+        if (parent == cursor)
+          break;
+        cursor = parent;
+      }
+
+      return {};
+    }
+
     struct CandidateLogFile
     {
       std::filesystem::path path;
@@ -975,6 +995,23 @@ namespace BWAPI::Runtime
       summary.latestTransitionDurationMilliseconds = durationMilliseconds;
     }
 
+    int timestampDeltaMilliseconds(const std::string& earlierTimestamp, const std::string& laterTimestamp)
+    {
+      std::string ignoredTimestamp;
+      std::int64_t earlierMilliseconds = 0;
+      std::int64_t laterMilliseconds = 0;
+      if (!parseLogTimestampMilliseconds(earlierTimestamp, ignoredTimestamp, earlierMilliseconds)
+          || !parseLogTimestampMilliseconds(laterTimestamp, ignoredTimestamp, laterMilliseconds))
+        return -1;
+
+      std::int64_t delta = laterMilliseconds - earlierMilliseconds;
+      if (delta < 0)
+        delta = 0;
+
+      const int maxInt = (std::numeric_limits<int>::max)();
+      return delta > maxInt ? maxInt : static_cast<int>(delta);
+    }
+
     RuntimeSessionSummary summarizeRuntimeSessionEvents(
       const std::vector<RuntimeSessionEvent>& events)
     {
@@ -1079,6 +1116,8 @@ namespace BWAPI::Runtime
                 + std::to_string(transition.durationMilliseconds)
                 + " ms";
               updateSessionDurationRange(summary, transition.durationMilliseconds);
+              summary.latestTransitionStartTimestamp = transition.startTimestamp;
+              summary.latestTransitionEndTimestamp = transition.endTimestamp;
             }
             else
             {
@@ -1195,6 +1234,16 @@ namespace BWAPI::Runtime
         });
     }
 
+    int latestTransitionAgeMilliseconds(const RuntimeSessionSummary& summary)
+    {
+      if (summary.latestTransitionEndTimestamp.empty() || summary.latestObservedTimestamp.empty())
+        return -1;
+
+      return timestampDeltaMilliseconds(
+        summary.latestTransitionEndTimestamp,
+        summary.latestObservedTimestamp);
+    }
+
     RuntimeLaunchDiagnosis diagnoseRuntimeEvidence(const RuntimeEvidence& evidence)
     {
       constexpr int ShortLivedSessionThresholdMilliseconds = 15000;
@@ -1210,11 +1259,16 @@ namespace BWAPI::Runtime
       diagnosis.battleNetSupportVisible = diagnosis.battleNetSupportCount > 0;
       diagnosis.multipleBattleNetMainVisible = diagnosis.battleNetMainCount > 1;
       diagnosis.multipleBattleNetHandoffsVisible = diagnosis.battleNetHandoffCount > 1;
-      diagnosis.shortLivedSessionObserved =
-        evidence.sessionSummary.latestState == "stopped"
-        && latestObservedEventCompletesTransition(evidence.sessionSummary)
-        && evidence.sessionSummary.latestTransitionDurationMilliseconds >= 0
+      const bool latestCompleteTransitionIsShortLived =
+        evidence.sessionSummary.latestTransitionDurationMilliseconds >= 0
         && evidence.sessionSummary.latestTransitionDurationMilliseconds <= ShortLivedSessionThresholdMilliseconds;
+      const int latestTransitionAge = latestTransitionAgeMilliseconds(evidence.sessionSummary);
+      diagnosis.shortLivedSessionObserved =
+        latestCompleteTransitionIsShortLived
+        && (latestObservedEventCompletesTransition(evidence.sessionSummary)
+            || (latestTransitionAge >= 0 && latestTransitionAge <= ShortLivedSessionThresholdMilliseconds));
+      if (diagnosis.shortLivedSessionObserved)
+        diagnosis.shortLivedSessionAgeMilliseconds = latestTransitionAge;
       diagnosis.staleHandoffSuspected =
         diagnosis.battleNetHandoffVisible
         && !diagnosis.gameProcessVisible
@@ -1317,16 +1371,36 @@ namespace BWAPI::Runtime
     }
 
 #if !defined(_WIN32)
+    std::string joinArgumentsForMessage(const std::vector<std::string>& arguments)
+    {
+      std::ostringstream message;
+      for (std::size_t i = 0; i < arguments.size(); ++i)
+      {
+        if (i > 0)
+          message << ' ';
+        message << arguments[i];
+      }
+      return message.str();
+    }
+
     bool forkExecProcess(
-      const std::string& target,
+      const std::string& executable,
+      const std::vector<std::string>& arguments,
       const std::string& workingDirectory,
+      bool allowImmediateSuccessExit,
       pid_t& processId,
       std::string& reason)
     {
+      if (executable.empty() || arguments.empty())
+      {
+        reason = "launch target is empty";
+        return false;
+      }
+
       processId = fork();
       if (processId < 0)
       {
-        reason = "fork failed for " + target;
+        reason = "fork failed for " + executable;
         return false;
       }
 
@@ -1335,11 +1409,12 @@ namespace BWAPI::Runtime
         if (!workingDirectory.empty())
           chdir(workingDirectory.c_str());
 
-        char* const argv[] = {
-          const_cast<char*>(target.c_str()),
-          nullptr
-        };
-        execv(target.c_str(), argv);
+        std::vector<char*> argv;
+        argv.reserve(arguments.size() + 1);
+        for (const std::string& argument : arguments)
+          argv.push_back(const_cast<char*>(argument.c_str()));
+        argv.push_back(nullptr);
+        execv(executable.c_str(), argv.data());
         _exit(127);
       }
 
@@ -1348,8 +1423,11 @@ namespace BWAPI::Runtime
       const pid_t exited = waitpid(processId, &status, WNOHANG);
       if (exited == processId)
       {
+        if (allowImmediateSuccessExit && WIFEXITED(status) && WEXITSTATUS(status) == 0)
+          return true;
+
         std::ostringstream message;
-        message << "process exited immediately for " << target << " with status " << status;
+        message << "process exited immediately for " << joinArgumentsForMessage(arguments) << " with status " << status;
         reason = message.str();
         return false;
       }
@@ -1358,37 +1436,91 @@ namespace BWAPI::Runtime
     }
 #endif
 
+    struct RuntimeLaunchTarget
+    {
+      std::string kind;
+      std::string executable;
+      std::vector<std::string> arguments;
+      bool allowImmediateSuccessExit = false;
+    };
+
+    std::vector<RuntimeLaunchTarget> makeRuntimeLaunchTargets(const RuntimeInstallation& installation)
+    {
+      std::vector<RuntimeLaunchTarget> launchTargets;
+
+      if (!installation.launcherPath.empty() && installation.product == Product::StarCraftRemastered)
+      {
+        if (installation.platform == Platform::MacOS && fileExists("/usr/bin/open"))
+        {
+          const std::filesystem::path launcherApp = appBundleForExecutablePath(installation.launcherPath);
+          if (!launcherApp.empty())
+          {
+            launchTargets.push_back({
+              "launcher-app",
+              "/usr/bin/open",
+              { "/usr/bin/open", launcherApp.string() },
+              true
+            });
+          }
+        }
+
+        launchTargets.push_back({
+          "launcher",
+          installation.launcherPath,
+          { installation.launcherPath },
+          true
+        });
+      }
+
+      launchTargets.push_back({
+        "executable",
+        installation.executablePath,
+        { installation.executablePath },
+        false
+      });
+      return launchTargets;
+    }
+
+    std::string quoteCommandArgument(const std::string& argument)
+    {
+      std::string quoted = "\"";
+      for (char ch : argument)
+      {
+        if (ch == '"')
+          quoted += "\\\"";
+        else
+          quoted += ch;
+      }
+      quoted += '"';
+      return quoted;
+    }
+
+    std::string makeCommandLine(const std::vector<std::string>& arguments)
+    {
+      std::ostringstream command;
+      for (std::size_t i = 0; i < arguments.size(); ++i)
+      {
+        if (i > 0)
+          command << ' ';
+        command << quoteCommandArgument(arguments[i]);
+      }
+      return command.str();
+    }
+
     RuntimeLaunchResult launchRuntimeProcess(const RuntimeInstallation& installation)
     {
       RuntimeLaunchResult result;
+      const std::vector<RuntimeLaunchTarget> launchTargets = makeRuntimeLaunchTargets(installation);
 
 #if defined(_WIN32)
-      std::string command = "\"" + installation.executablePath + "\"";
       STARTUPINFOA startupInfo;
-      PROCESS_INFORMATION processInfo;
       ZeroMemory(&startupInfo, sizeof(startupInfo));
-      ZeroMemory(&processInfo, sizeof(processInfo));
       startupInfo.cb = sizeof(startupInfo);
 
-      if (!CreateProcessA(
-            nullptr,
-            command.data(),
-            nullptr,
-            nullptr,
-            FALSE,
-            0,
-            nullptr,
-            installation.installRoot.empty() ? nullptr : installation.installRoot.c_str(),
-            &startupInfo,
-            &processInfo))
+      for (const RuntimeLaunchTarget& target : launchTargets)
       {
-        if (installation.launcherPath.empty())
-        {
-          result.reason = "CreateProcess failed with Windows error " + std::to_string(GetLastError());
-          return result;
-        }
-
-        command = "\"" + installation.launcherPath + "\"";
+        std::string command = makeCommandLine(target.arguments);
+        PROCESS_INFORMATION processInfo;
         ZeroMemory(&processInfo, sizeof(processInfo));
         if (!CreateProcessA(
               nullptr,
@@ -1402,35 +1534,49 @@ namespace BWAPI::Runtime
               &startupInfo,
               &processInfo))
         {
-          result.reason = "CreateProcess launcher fallback failed with Windows error " + std::to_string(GetLastError());
-          return result;
+          result.warnings.push_back(
+            "runtime.launch_target_failed=" + target.kind + ": CreateProcess failed with Windows error "
+            + std::to_string(GetLastError()));
+          continue;
         }
+
+        result.launched = true;
+        result.processId = static_cast<int>(processInfo.dwProcessId);
+        result.warnings.push_back("runtime.launch_target=" + target.kind);
+        CloseHandle(processInfo.hThread);
+        CloseHandle(processInfo.hProcess);
+        return result;
       }
 
-      result.launched = true;
-      result.processId = static_cast<int>(processInfo.dwProcessId);
-      CloseHandle(processInfo.hThread);
-      CloseHandle(processInfo.hProcess);
+      result.reason = result.warnings.empty()
+        ? "CreateProcess failed for all launch targets"
+        : result.warnings.back();
 #else
-      pid_t pid = 0;
-      std::string reason;
-      if (!forkExecProcess(installation.executablePath, installation.installRoot, pid, reason))
+      for (const RuntimeLaunchTarget& target : launchTargets)
       {
-        if (installation.launcherPath.empty())
+        pid_t pid = 0;
+        std::string reason;
+        if (!forkExecProcess(
+              target.executable,
+              target.arguments,
+              installation.installRoot,
+              target.allowImmediateSuccessExit,
+              pid,
+              reason))
         {
-          result.reason = reason;
-          return result;
+          result.warnings.push_back("runtime.launch_target_failed=" + target.kind + ": " + reason);
+          continue;
         }
 
-        if (!forkExecProcess(installation.launcherPath, installation.installRoot, pid, reason))
-        {
-          result.reason = "launcher fallback failed: " + reason;
-          return result;
-        }
+        result.launched = true;
+        result.processId = static_cast<int>(pid);
+        result.warnings.push_back("runtime.launch_target=" + target.kind);
+        return result;
       }
 
-      result.launched = true;
-      result.processId = static_cast<int>(pid);
+      result.reason = result.warnings.empty()
+        ? "fork/exec failed for all launch targets"
+        : result.warnings.back();
 #endif
 
       return result;
@@ -1443,6 +1589,91 @@ namespace BWAPI::Runtime
 #else
       return findPosixBattleNetHandoffProcesses(installation);
 #endif
+    }
+
+    bool terminateRuntimeProcessId(int processId, std::string& reason)
+    {
+      if (processId <= 0)
+      {
+        reason = "process id must be positive";
+        return false;
+      }
+
+#if defined(_WIN32)
+      HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(processId));
+      if (process == nullptr)
+      {
+        reason = "OpenProcess(PROCESS_TERMINATE) failed with Windows error " + std::to_string(GetLastError());
+        return false;
+      }
+
+      const BOOL terminated = TerminateProcess(process, 1);
+      CloseHandle(process);
+      if (!terminated)
+      {
+        reason = "TerminateProcess failed with Windows error " + std::to_string(GetLastError());
+        return false;
+      }
+      return true;
+#else
+      const pid_t pid = static_cast<pid_t>(processId);
+      if (kill(pid, SIGTERM) != 0)
+      {
+        reason = "kill(SIGTERM) failed for process "
+          + std::to_string(processId)
+          + ": "
+          + std::strerror(errno);
+        return false;
+      }
+
+      for (int i = 0; i < 20; ++i)
+      {
+        if (!runtimeProcessExists(processId))
+          return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+
+      if (kill(pid, SIGKILL) != 0)
+      {
+        reason = "kill(SIGKILL) failed for process "
+          + std::to_string(processId)
+          + ": "
+          + std::strerror(errno);
+        return false;
+      }
+
+      for (int i = 0; i < 20; ++i)
+      {
+        if (!runtimeProcessExists(processId))
+          return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+
+      reason = "process is still visible after SIGTERM and SIGKILL: " + std::to_string(processId);
+      return false;
+#endif
+    }
+
+    bool terminateRuntimeProcessIds(const std::vector<int>& processIds, RuntimeLaunchResult& result)
+    {
+      for (int processId : processIds)
+      {
+        std::string reason;
+        if (!terminateRuntimeProcessId(processId, reason))
+        {
+          result.reason = "unable to terminate stale Battle.net handoff process: " + reason;
+          return false;
+        }
+        result.warnings.push_back("battle.net.stale_handoff_terminated=" + std::to_string(processId));
+      }
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      return true;
+    }
+
+    void appendLaunchWarnings(RuntimeLaunchResult& result, const RuntimeLaunchResult& launched)
+    {
+      result.warnings.insert(result.warnings.end(), launched.warnings.begin(), launched.warnings.end());
     }
 
     void writeAllCommandSurface(std::ostringstream& output)
@@ -1533,7 +1764,8 @@ namespace BWAPI::Runtime
     const RuntimeInstallation& installation,
     bool launchIfMissing,
     int waitMilliseconds,
-    int stableMilliseconds)
+    int stableMilliseconds,
+    bool replaceStaleHandoff)
   {
     RuntimeLaunchResult result;
     result.requiredStableMilliseconds = stableMilliseconds;
@@ -1562,15 +1794,35 @@ namespace BWAPI::Runtime
     const std::vector<int> handoffProcessIds = findBattleNetHandoffProcesses(installation);
     if (!handoffProcessIds.empty())
     {
-      waitingOnExistingHandoff = true;
       result.warnings.push_back("battle.net.process_count=" + std::to_string(handoffProcessIds.size()));
       result.warnings.push_back("battle.net.process_id=" + std::to_string(handoffProcessIds.front()));
       for (std::size_t i = 0; i < handoffProcessIds.size(); ++i)
         result.warnings.push_back("battle.net.process_id." + std::to_string(i) + "=" + std::to_string(handoffProcessIds[i]));
+
+      if (replaceStaleHandoff)
+      {
+        if (!terminateRuntimeProcessIds(handoffProcessIds, result))
+          return result;
+
+        RuntimeLaunchResult launched = launchRuntimeProcess(installation);
+        appendLaunchWarnings(result, launched);
+        result.launched = launched.launched;
+        result.processId = launched.processId;
+        if (!launched.launched)
+        {
+          result.reason = launched.reason;
+          return result;
+        }
+      }
+      else
+      {
+        waitingOnExistingHandoff = true;
+      }
     }
     else
     {
       RuntimeLaunchResult launched = launchRuntimeProcess(installation);
+      appendLaunchWarnings(result, launched);
       result.launched = launched.launched;
       result.processId = launched.processId;
       if (!launched.launched)
@@ -1682,6 +1934,11 @@ namespace BWAPI::Runtime
     writeEvidenceField(output, "diagnosis.battle_net_handoff_count", evidence.diagnosis.battleNetHandoffCount);
     writeEvidenceField(output, "diagnosis.battle_net_support_count", evidence.diagnosis.battleNetSupportCount);
     writeEvidenceField(output, "diagnosis.short_lived_session_observed", evidence.diagnosis.shortLivedSessionObserved);
+    if (evidence.diagnosis.shortLivedSessionAgeMilliseconds >= 0)
+      writeEvidenceField(
+        output,
+        "diagnosis.short_lived_session_age_ms",
+        evidence.diagnosis.shortLivedSessionAgeMilliseconds);
     writeEvidenceField(output, "diagnosis.stale_handoff_suspected", evidence.diagnosis.staleHandoffSuspected);
     writeEvidenceField(output, "diagnosis.ready_for_attach", evidence.diagnosis.readyForAttach);
     writeEvidenceField(output, "diagnosis.blocker_count", static_cast<int>(evidence.diagnosis.blockers.size()));
@@ -1747,6 +2004,14 @@ namespace BWAPI::Runtime
         output,
         "session.latest_transition_duration_ms",
         evidence.sessionSummary.latestTransitionDurationMilliseconds);
+    writeEvidenceField(
+      output,
+      "session.latest_transition_start_timestamp",
+      evidence.sessionSummary.latestTransitionStartTimestamp);
+    writeEvidenceField(
+      output,
+      "session.latest_transition_end_timestamp",
+      evidence.sessionSummary.latestTransitionEndTimestamp);
     writeEvidenceField(output, "session.latest_state", evidence.sessionSummary.latestState);
     writeEvidenceField(
       output,

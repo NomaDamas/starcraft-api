@@ -100,15 +100,21 @@ Incomplete bootstrap manifests remain non-production, but the report preserves p
 
 - `session.latest_state` records whether the latest collected StarCraft session event is running, stopped, pre-existing, or unknown.
 - `session.latest_observed_timestamp` records the newest parsed Battle.net timestamp used for the session summary.
+- `session.latest_transition_start_timestamp` and `session.latest_transition_end_timestamp` preserve the latest complete paired start/stop window even if newer Battle.net handoff lines follow it.
 - `session.launch_process_event_count` and `session.latest_launch_process_id` record Battle.net launch lines with transient StarCraft process ids.
 - `session.shortest_transition_duration_ms`, `session.longest_transition_duration_ms`, and `session.latest_transition_duration_ms` quantify how long observed StarCraft sessions stayed running before Battle.net reported stop events.
 - `session.transition.*` keeps the paired start/stop timestamps and source log lines for attach debugging.
 - `diagnosis.status` gives the machine-readable launch/attach blocker, including `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, and `blocked-battlenet-handoff-short-lived-session`.
+- `diagnosis.short_lived_session_age_ms` records how far the latest observed handoff event is from the latest short complete StarCraft transition; this keeps a run that starts and stops in a few seconds from being mislabeled as a generic stale handoff.
 - `diagnosis.game_process_count`, `diagnosis.battle_net_main_count`, `diagnosis.battle_net_handoff_count`, `diagnosis.multiple_battle_net_main_visible`, and `diagnosis.multiple_battle_net_handoffs_visible` distinguish the real StarCraft executable from one or more Battle.net main/handoff processes.
 - `diagnosis.ready_for_attach` is only true when a stable StarCraft game executable process is visible, selected, and safe for the next authorized adapter step.
 - `diagnosis.blocker.*` records the concrete reasons the current run cannot submit commands or claim production parity.
 
 These fields are diagnostic evidence, not readiness evidence. If sessions stop after only a few seconds and no stable StarCraft process id is visible, the production gate must continue to fail with `runtime-process-identified` and executor preflight gaps.
+
+`starcraft-runtime-launch --replace-stale-handoff` is the explicit recovery path for a stuck Battle.net `--game=s1` handoff. The default remains conservative and does not spawn a duplicate Battle.net instance while a handoff is visible; the recovery flag first terminates the handoff and then performs one launch retry.
+
+On macOS, launch retries prefer the platform app bootstrap path before direct executable fallback: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable. The selected path is emitted as `runtime.warning=runtime.launch_target=*` in evidence.
 
 For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to emit only readiness and implementation category totals. Use `starcraft-runtime-gap-report --category <name>` to print only one implementation gap category while preserving the global category counts.
 

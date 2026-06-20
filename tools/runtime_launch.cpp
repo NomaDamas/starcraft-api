@@ -26,6 +26,7 @@ namespace
     std::cout
       << "usage: starcraft-runtime-launch [options]\n"
       << "  --launch                 launch StarCraft if no matching process is running\n"
+      << "  --replace-stale-handoff  terminate existing Battle.net s1 handoff before one launch retry\n"
       << "  --require-running        return non-zero unless a matching process is visible\n"
       << "  --wait-ms <milliseconds> wait after launch while scanning for the process (default: 10000)\n"
       << "  --stable-ms <milliseconds> require the same StarCraft process to survive this long (default: 5000)\n"
@@ -46,6 +47,7 @@ namespace
 int main(int argc, char** argv)
 {
   bool launch = false;
+  bool replaceStaleHandoff = false;
   bool requireRunning = false;
   bool printEnv = false;
   int waitMilliseconds = 10000;
@@ -59,6 +61,8 @@ int main(int argc, char** argv)
     const std::string arg = argv[i];
     if (arg == "--launch")
       launch = true;
+    else if (arg == "--replace-stale-handoff")
+      replaceStaleHandoff = true;
     else if (arg == "--require-running")
       requireRunning = true;
     else if (arg == "--print-env")
@@ -163,7 +167,8 @@ int main(int argc, char** argv)
     return 2;
   }
 
-  RuntimeLaunchResult launchResult = launchOrAttachRuntime(installation, launch, waitMilliseconds, stableMilliseconds);
+  RuntimeLaunchResult launchResult =
+    launchOrAttachRuntime(installation, launch, waitMilliseconds, stableMilliseconds, replaceStaleHandoff);
   std::cout << "runtime.launched=" << (launchResult.launched ? "true" : "false") << '\n';
   std::cout << "runtime.running=" << (launchResult.running ? "true" : "false") << '\n';
   std::cout << "runtime.required_stable_ms=" << launchResult.requiredStableMilliseconds << '\n';

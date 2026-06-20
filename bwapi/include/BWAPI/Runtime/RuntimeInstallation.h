@@ -91,6 +91,8 @@ namespace BWAPI::Runtime
     int shortestDurationMilliseconds = -1;
     int longestDurationMilliseconds = -1;
     int latestTransitionDurationMilliseconds = -1;
+    std::string latestTransitionStartTimestamp;
+    std::string latestTransitionEndTimestamp;
     std::string latestObservedTimestamp;
     std::string latestState;
     std::string latestReason;
@@ -110,6 +112,7 @@ namespace BWAPI::Runtime
     int battleNetHandoffCount = 0;
     int battleNetSupportCount = 0;
     bool shortLivedSessionObserved = false;
+    int shortLivedSessionAgeMilliseconds = -1;
     bool staleHandoffSuspected = false;
     bool readyForAttach = false;
     std::string status;
@@ -135,7 +138,8 @@ namespace BWAPI::Runtime
     const RuntimeInstallation& installation,
     bool launchIfMissing,
     int waitMilliseconds,
-    int stableMilliseconds = 5000);
+    int stableMilliseconds = 5000,
+    bool replaceStaleHandoff = false);
   RuntimeEvidence collectRuntimeEvidence(
     const RuntimeInstallation& installation,
     const RuntimeLaunchResult& launchResult);

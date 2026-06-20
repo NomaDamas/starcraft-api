@@ -126,6 +126,17 @@ int main()
 
   writeFile(
     processSnapshot,
+    "987654321 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n");
+  const RuntimeLaunchResult replaceMissingHandoff =
+    launchOrAttachRuntime(installation, true, 0, 0, true);
+  assert(!replaceMissingHandoff.launched);
+  assert(!replaceMissingHandoff.running);
+  assert(containsText(replaceMissingHandoff.reason, "unable to terminate stale Battle.net handoff process"));
+
+  writeFile(
+    processSnapshot,
     "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
       + installRoot.string()
       + "/\n"
@@ -217,6 +228,8 @@ int main()
   assert(evidence.sessionSummary.latestState == "stopped");
   assert(evidence.sessionSummary.latestObservedTimestamp == "2026-06-19 08:00:06.350000");
   assert(evidence.sessionSummary.latestTransitionDurationMilliseconds == 6250);
+  assert(evidence.sessionSummary.latestTransitionStartTimestamp == "2026-06-19 08:00:00.100000");
+  assert(evidence.sessionSummary.latestTransitionEndTimestamp == "2026-06-19 08:00:06.350000");
   assert(evidence.sessionSummary.transitions.size() == 1);
   assert(evidence.sessionSummary.transitions.front().complete);
   assert(evidence.sessionSummary.transitions.front().durationMilliseconds == 6250);
@@ -224,6 +237,7 @@ int main()
   assert(!evidence.diagnosis.gameProcessVisible);
   assert(evidence.diagnosis.gameProcessCount == 0);
   assert(evidence.diagnosis.shortLivedSessionObserved);
+  assert(evidence.diagnosis.shortLivedSessionAgeMilliseconds == 0);
   assert(!evidence.diagnosis.blockers.empty());
 
 #if !defined(_WIN32)
@@ -245,6 +259,7 @@ int main()
   assert(report.find("diagnosis.status=") != std::string::npos);
   assert(report.find("diagnosis.ready_for_attach=false") != std::string::npos);
   assert(report.find("diagnosis.short_lived_session_observed=true") != std::string::npos);
+  assert(report.find("diagnosis.short_lived_session_age_ms=0") != std::string::npos);
   assert(report.find("diagnosis.blocker_count=") != std::string::npos);
   assert(report.find("executable.fnv1a64=") != std::string::npos);
   assert(report.find("launch handoff failed in test") != std::string::npos);
@@ -253,6 +268,8 @@ int main()
   assert(report.find("session.complete_transition_count=1") != std::string::npos);
   assert(report.find("session.latest_observed_timestamp=2026-06-19 08:00:06.350000") != std::string::npos);
   assert(report.find("session.latest_transition_duration_ms=6250") != std::string::npos);
+  assert(report.find("session.latest_transition_start_timestamp=2026-06-19 08:00:00.100000") != std::string::npos);
+  assert(report.find("session.latest_transition_end_timestamp=2026-06-19 08:00:06.350000") != std::string::npos);
   assert(report.find("session.transition.0.duration_ms=6250") != std::string::npos);
   assert(report.find("session.event.0.category=starcraft-launch-process") != std::string::npos);
   assert(report.find("session.event.1.category=starcraft-session-started") != std::string::npos);
@@ -263,6 +280,16 @@ int main()
   assert(std::filesystem::is_regular_file(evidencePath));
 
 #if !defined(_WIN32)
+  writeFile(
+    logRoot / "battle.net-same-run-handoff.log",
+    "I 2026-06-19 08:00:08.250000 [GameController] {Main} Selecting game by uid. uid=s1 prioritizeUpdate=1\n");
+  RuntimeEvidence handoffAfterShortSessionEvidence = collectRuntimeEvidence(installation, launchResult);
+  assert(handoffAfterShortSessionEvidence.sessionSummary.latestObservedTimestamp == "2026-06-19 08:00:08.250000");
+  assert(handoffAfterShortSessionEvidence.sessionSummary.latestState == "handoff");
+  assert(handoffAfterShortSessionEvidence.diagnosis.shortLivedSessionObserved);
+  assert(handoffAfterShortSessionEvidence.diagnosis.shortLivedSessionAgeMilliseconds == 1900);
+  assert(handoffAfterShortSessionEvidence.diagnosis.status == "blocked-battlenet-handoff-short-lived-session");
+
   std::string noisyOldLog;
   for (int i = 0; i < 60; ++i)
   {

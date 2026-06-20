@@ -28,9 +28,13 @@ build/starcraft-runtime-launch \
 
 The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `STARCRAFT_API_STARCRAFT_DIR`, common macOS Desktop/Application paths, and common Windows install roots.
 
+On macOS StarCraft: Remastered, launch retries prefer the normal app bootstrap path first: `open StarCraft Launcher.app`, then the launcher binary, then the StarCraft game executable. The evidence report records the selected path as `runtime.warning=runtime.launch_target=*`.
+
 If Battle.net is already handling StarCraft startup, the launcher does not spawn another Battle.net instance. It only exports `STARCRAFT_API_PROCESS_ID` when the actual StarCraft game executable is visible and stable.
 
-Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, parsed StarCraft launch PID/start/stop events, session transition duration summaries, and `diagnosis.*` fields. The diagnosis classifies blockers such as `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, `blocked-battlenet-handoff-short-lived-session`, `blocked-multiple-battlenet-handoffs-without-game`, and `blocked-multiple-battlenet-main-processes-no-game`; `diagnosis.ready_for_attach=true` is required before runtime attach work can proceed. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
+If a Battle.net `--game=s1` handoff is stale and no StarCraft game process appears, rerun with `--replace-stale-handoff` to terminate that handoff and perform exactly one launch retry. This option is explicit because it terminates a Battle.net process.
+
+Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, parsed StarCraft launch PID/start/stop events, session transition duration summaries, and `diagnosis.*` fields. The diagnosis classifies blockers such as `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, `blocked-battlenet-handoff-short-lived-session`, `blocked-multiple-battlenet-handoffs-without-game`, and `blocked-multiple-battlenet-main-processes-no-game`; `diagnosis.short_lived_session_age_ms` shows how recently a short StarCraft run ended relative to the newest observed handoff event. `diagnosis.ready_for_attach=true` is required before runtime attach work can proceed. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
 
 ## Validation
 

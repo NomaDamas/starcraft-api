@@ -152,7 +152,11 @@ int main()
   assert(resolvedEnvironment.executablePath == installation.executablePath);
   assert(resolvedEnvironment.processId == 4430);
 
-  unsetEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT");
+  writeFile(
+    processSnapshot,
+    "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n");
 #endif
 
   const std::string manifest = makeRuntimeBootstrapManifest(installation);
@@ -194,10 +198,27 @@ int main()
   assert(evidence.sessionSummary.transitions.size() == 1);
   assert(evidence.sessionSummary.transitions.front().complete);
   assert(evidence.sessionSummary.transitions.front().durationMilliseconds == 6250);
+  assert(!evidence.diagnosis.readyForAttach);
+  assert(!evidence.diagnosis.gameProcessVisible);
+  assert(evidence.diagnosis.shortLivedSessionObserved);
+  assert(!evidence.diagnosis.blockers.empty());
+
+#if !defined(_WIN32)
+  assert(evidence.diagnosis.battleNetHandoffVisible);
+  assert(evidence.diagnosis.staleHandoffSuspected);
+  assert(evidence.diagnosis.status == "blocked-battlenet-handoff-short-lived-session");
+  unsetEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT");
+#else
+  assert(evidence.diagnosis.status == "blocked-short-lived-session-no-game-process");
+#endif
 
   const std::string report = makeRuntimeEvidenceReport(evidence);
   assert(report.find("evidence.schema=starcraft-api.runtime-evidence.v1") != std::string::npos);
   assert(report.find("runtime.reason=unit test launch did not run") != std::string::npos);
+  assert(report.find("diagnosis.status=") != std::string::npos);
+  assert(report.find("diagnosis.ready_for_attach=false") != std::string::npos);
+  assert(report.find("diagnosis.short_lived_session_observed=true") != std::string::npos);
+  assert(report.find("diagnosis.blocker_count=") != std::string::npos);
   assert(report.find("executable.fnv1a64=") != std::string::npos);
   assert(report.find("launch handoff failed in test") != std::string::npos);
   assert(report.find("session.launch_process_event_count=1") != std::string::npos);

@@ -30,7 +30,7 @@ The launcher searches `STARCRAFT_API_EXECUTABLE`, `STARCRAFT_API_INSTALL_DIR`, `
 
 If Battle.net is already handling StarCraft startup, the launcher does not spawn another Battle.net instance. It only exports `STARCRAFT_API_PROCESS_ID` when the actual StarCraft game executable is visible and stable.
 
-Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, parsed StarCraft launch PID/start/stop events, and session transition duration summaries. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
+Use `--evidence-out` to record the local launch/attach evidence without claiming production parity. The evidence report includes installation identity, executable size/hash, observed StarCraft/Battle.net processes, launch result, recent Battle.net/StarCraft log tails, parsed StarCraft launch PID/start/stop events, session transition duration summaries, and `diagnosis.*` fields. The diagnosis classifies blockers such as `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, and `blocked-battlenet-handoff-short-lived-session`; `diagnosis.ready_for_attach=true` is required before runtime attach work can proceed. `STARCRAFT_API_LOG_DIR` can override the log directory for controlled test runs.
 
 ## Validation
 
@@ -50,7 +50,8 @@ build/starcraft-runtime-gap-report \
   --product starcraft-remastered \
   --version 1.23.10.13515 \
   --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
-  --bridge /tmp/starcraft-api-local-bridge
+  --bridge /tmp/starcraft-api-local-bridge \
+  --evidence-out /tmp/starcraft-api-local-gap.evidence
 ```
 
 Command submission is manifest-backed for StarCraft: Remastered. The CLI rejects command submission when the manifest is missing, incomplete, or does not declare the BWAPI command/action being submitted:

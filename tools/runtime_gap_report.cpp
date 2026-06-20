@@ -52,6 +52,7 @@ int main(int argc, char** argv)
 {
   bool requireProduction = false;
   std::string manifestPath;
+  std::string evidenceOut;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -66,6 +67,15 @@ int main(int argc, char** argv)
         return 64;
       }
       manifestPath = argv[++i];
+    }
+    else if (arg == "--evidence-out")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--evidence-out requires a path\n";
+        return 64;
+      }
+      evidenceOut = argv[++i];
     }
     else if (arg == "--product"
              || arg == "--version"
@@ -90,6 +100,7 @@ int main(int argc, char** argv)
         << "  --process-id <pid>       override runtime process id\n"
         << "  --executable <path>      override runtime executable path\n"
         << "  --bridge <path>          override runtime executor bridge directory\n"
+        << "  --evidence-out <path>    write launch/attach diagnostic evidence\n"
         << "  --require-production     return non-zero unless production readiness passes\n";
       return 0;
     }
@@ -108,6 +119,10 @@ int main(int argc, char** argv)
   {
     const std::string arg = argv[i];
     if (arg == "--manifest")
+    {
+      ++i;
+    }
+    else if (arg == "--evidence-out")
     {
       ++i;
     }
@@ -199,6 +214,25 @@ int main(int argc, char** argv)
   }
 
   environment = resolveRuntimeEnvironment(environment);
+
+  if (!evidenceOut.empty())
+  {
+    RuntimeInstallation installation = detectStarCraftInstallation(environment);
+    RuntimeLaunchResult launchResult;
+    launchResult.running = environment.processId > 0;
+    launchResult.processId = environment.processId;
+    launchResult.reason = launchResult.running
+      ? "gap report selected an existing runtime process id"
+      : "gap report did not launch runtime and no matching StarCraft game process is selected";
+
+    std::string error;
+    if (!writeRuntimeEvidenceReport(installation, launchResult, evidenceOut, error))
+    {
+      std::cerr << error << '\n';
+      return 1;
+    }
+    std::cout << "evidence.path=" << evidenceOut << '\n';
+  }
 
   if (manifest.loaded)
     contract = manifest.manifest.contract;

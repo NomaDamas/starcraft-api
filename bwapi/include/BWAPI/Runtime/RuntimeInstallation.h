@@ -95,6 +95,18 @@ namespace BWAPI::Runtime
     std::vector<RuntimeSessionTransition> transitions;
   };
 
+  struct RuntimeLaunchDiagnosis
+  {
+    bool gameProcessVisible = false;
+    bool battleNetHandoffVisible = false;
+    bool battleNetSupportVisible = false;
+    bool shortLivedSessionObserved = false;
+    bool staleHandoffSuspected = false;
+    bool readyForAttach = false;
+    std::string status;
+    std::vector<std::string> blockers;
+  };
+
   struct RuntimeEvidence
   {
     RuntimeInstallation installation;
@@ -104,6 +116,7 @@ namespace BWAPI::Runtime
     std::vector<RuntimeLogExcerpt> logs;
     std::vector<RuntimeSessionEvent> sessionEvents;
     RuntimeSessionSummary sessionSummary;
+    RuntimeLaunchDiagnosis diagnosis;
   };
 
   RuntimeInstallation detectStarCraftInstallation(const RuntimeEnvironment& environment);

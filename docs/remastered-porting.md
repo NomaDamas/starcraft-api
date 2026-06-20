@@ -82,7 +82,7 @@ STARCRAFT_API_PRODUCT=starcraft-remastered \
 
 A valid manifest only proves that versioned offsets, symbols, structure fields, capabilities, and API surface declarations are complete. It does not by itself prove that the macOS/Linux runtime executor can attach, read state, issue commands, render overlays, or satisfy Battle.net synchronization rules; `production.supported` remains false until the backend probe proves those runtime behaviors.
 
-For launch/attach gap analysis, pass the runtime identity from `starcraft-runtime-launch` directly into the gap report:
+For launch/attach gap analysis, pass the runtime identity from `starcraft-runtime-launch` directly into the gap report. Add `--evidence-out` when you want the readiness gaps and the launch/attach diagnosis from the same run:
 
 ```sh
 starcraft-runtime-gap-report \
@@ -90,7 +90,8 @@ starcraft-runtime-gap-report \
   --product starcraft-remastered \
   --version 1.23.10.13515 \
   --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
-  --bridge /tmp/starcraft-api-local-bridge
+  --bridge /tmp/starcraft-api-local-bridge \
+  --evidence-out /tmp/starcraft-api-local-gap.evidence
 ```
 
 Incomplete bootstrap manifests remain non-production, but the report preserves product/version identity so the remaining gaps are attributed to the StarCraft Remastered backend instead of collapsing to `unknown`.
@@ -102,6 +103,9 @@ Incomplete bootstrap manifests remain non-production, but the report preserves p
 - `session.launch_process_event_count` and `session.latest_launch_process_id` record Battle.net launch lines with transient StarCraft process ids.
 - `session.shortest_transition_duration_ms`, `session.longest_transition_duration_ms`, and `session.latest_transition_duration_ms` quantify how long observed StarCraft sessions stayed running before Battle.net reported stop events.
 - `session.transition.*` keeps the paired start/stop timestamps and source log lines for attach debugging.
+- `diagnosis.status` gives the machine-readable launch/attach blocker, including `blocked-no-game-process`, `blocked-battlenet-handoff-without-game`, and `blocked-battlenet-handoff-short-lived-session`.
+- `diagnosis.ready_for_attach` is only true when a stable StarCraft game executable process is visible, selected, and safe for the next authorized adapter step.
+- `diagnosis.blocker.*` records the concrete reasons the current run cannot submit commands or claim production parity.
 
 These fields are diagnostic evidence, not readiness evidence. If sessions stop after only a few seconds and no stable StarCraft process id is visible, the production gate must continue to fail with `runtime-process-identified` and executor preflight gaps.
 

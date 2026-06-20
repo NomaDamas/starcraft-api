@@ -16,6 +16,7 @@
 #include <sstream>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -1073,6 +1074,114 @@ namespace BWAPI::Runtime
       return summary;
     }
 
+    bool hasObservedCategory(
+      const std::vector<RuntimeObservedProcess>& processes,
+      const std::string& category)
+    {
+      return std::any_of(
+        processes.begin(),
+        processes.end(),
+        [&](const RuntimeObservedProcess& process)
+        {
+          return process.category == category;
+        });
+    }
+
+    void addDiagnosisBlocker(RuntimeLaunchDiagnosis& diagnosis, std::string blocker)
+    {
+      diagnosis.blockers.push_back(std::move(blocker));
+    }
+
+    RuntimeLaunchDiagnosis diagnoseRuntimeEvidence(const RuntimeEvidence& evidence)
+    {
+      constexpr int ShortLivedSessionThresholdMilliseconds = 15000;
+
+      RuntimeLaunchDiagnosis diagnosis;
+      diagnosis.gameProcessVisible = hasObservedCategory(evidence.processes, "starcraft-game");
+      diagnosis.battleNetHandoffVisible = hasObservedCategory(evidence.processes, "battle.net-handoff");
+      diagnosis.battleNetSupportVisible = hasObservedCategory(evidence.processes, "battle.net-support");
+      diagnosis.shortLivedSessionObserved =
+        evidence.sessionSummary.latestState == "stopped"
+        && evidence.sessionSummary.latestTransitionDurationMilliseconds >= 0
+        && evidence.sessionSummary.latestTransitionDurationMilliseconds <= ShortLivedSessionThresholdMilliseconds;
+      diagnosis.staleHandoffSuspected =
+        diagnosis.battleNetHandoffVisible
+        && !diagnosis.gameProcessVisible
+        && !evidence.launchResult.running;
+      diagnosis.readyForAttach =
+        evidence.installation.found
+        && evidence.executable.exists
+        && evidence.launchResult.running
+        && evidence.launchResult.processId > 0
+        && diagnosis.gameProcessVisible;
+
+      if (!evidence.installation.found)
+      {
+        diagnosis.status = "blocked-installation-not-found";
+        addDiagnosisBlocker(diagnosis, evidence.installation.reason.empty()
+          ? "StarCraft Remastered installation is not configured"
+          : evidence.installation.reason);
+        return diagnosis;
+      }
+
+      if (!evidence.executable.exists)
+      {
+        diagnosis.status = "blocked-executable-missing";
+        addDiagnosisBlocker(diagnosis, evidence.executable.reason.empty()
+          ? "StarCraft executable is missing"
+          : evidence.executable.reason);
+        return diagnosis;
+      }
+
+      if (diagnosis.readyForAttach)
+      {
+        diagnosis.status = "runtime-process-visible";
+        return diagnosis;
+      }
+
+      if (diagnosis.battleNetHandoffVisible && !diagnosis.gameProcessVisible)
+      {
+        diagnosis.status = diagnosis.shortLivedSessionObserved
+          ? "blocked-battlenet-handoff-short-lived-session"
+          : "blocked-battlenet-handoff-without-game";
+        addDiagnosisBlocker(
+          diagnosis,
+          "Battle.net StarCraft handoff is visible, but the StarCraft game executable is not visible");
+        if (diagnosis.shortLivedSessionObserved)
+        {
+          addDiagnosisBlocker(
+            diagnosis,
+            "Battle.net logs show the latest StarCraft session stopped after "
+              + std::to_string(evidence.sessionSummary.latestTransitionDurationMilliseconds)
+              + " ms");
+        }
+        return diagnosis;
+      }
+
+      if (!diagnosis.gameProcessVisible)
+      {
+        diagnosis.status = diagnosis.shortLivedSessionObserved
+          ? "blocked-short-lived-session-no-game-process"
+          : "blocked-no-game-process";
+        addDiagnosisBlocker(diagnosis, "No stable StarCraft game executable process is visible");
+        if (diagnosis.shortLivedSessionObserved)
+        {
+          addDiagnosisBlocker(
+            diagnosis,
+            "Battle.net logs show the latest StarCraft session stopped after "
+              + std::to_string(evidence.sessionSummary.latestTransitionDurationMilliseconds)
+              + " ms");
+        }
+        return diagnosis;
+      }
+
+      diagnosis.status = "blocked-game-process-not-selected";
+      addDiagnosisBlocker(
+        diagnosis,
+        "A StarCraft process is visible, but launch/attach did not select a stable runtime process id");
+      return diagnosis;
+    }
+
 #if !defined(_WIN32)
     bool forkExecProcess(
       const std::string& target,
@@ -1381,6 +1490,7 @@ namespace BWAPI::Runtime
     evidence.logs = collectRuntimeLogExcerpts(installation, 4, 20);
     evidence.sessionEvents = collectRuntimeSessionEvents(installation, 8, 50);
     evidence.sessionSummary = summarizeRuntimeSessionEvents(evidence.sessionEvents);
+    evidence.diagnosis = diagnoseRuntimeEvidence(evidence);
     return evidence;
   }
 
@@ -1413,6 +1523,17 @@ namespace BWAPI::Runtime
     writeEvidenceField(output, "runtime.reason", evidence.launchResult.reason);
     for (std::size_t i = 0; i < evidence.launchResult.warnings.size(); ++i)
       writeEvidenceField(output, "runtime.warning." + std::to_string(i), evidence.launchResult.warnings[i]);
+
+    writeEvidenceField(output, "diagnosis.status", evidence.diagnosis.status);
+    writeEvidenceField(output, "diagnosis.game_process_visible", evidence.diagnosis.gameProcessVisible);
+    writeEvidenceField(output, "diagnosis.battle_net_handoff_visible", evidence.diagnosis.battleNetHandoffVisible);
+    writeEvidenceField(output, "diagnosis.battle_net_support_visible", evidence.diagnosis.battleNetSupportVisible);
+    writeEvidenceField(output, "diagnosis.short_lived_session_observed", evidence.diagnosis.shortLivedSessionObserved);
+    writeEvidenceField(output, "diagnosis.stale_handoff_suspected", evidence.diagnosis.staleHandoffSuspected);
+    writeEvidenceField(output, "diagnosis.ready_for_attach", evidence.diagnosis.readyForAttach);
+    writeEvidenceField(output, "diagnosis.blocker_count", static_cast<int>(evidence.diagnosis.blockers.size()));
+    for (std::size_t i = 0; i < evidence.diagnosis.blockers.size(); ++i)
+      writeEvidenceField(output, "diagnosis.blocker." + std::to_string(i), evidence.diagnosis.blockers[i]);
 
     writeEvidenceField(output, "process.count", static_cast<int>(evidence.processes.size()));
     for (std::size_t i = 0; i < evidence.processes.size(); ++i)

@@ -144,6 +144,15 @@ if(TARGET starcraft-runtime-gap-report)
   add_test(NAME runtime_gap_report_cli_test COMMAND starcraft-runtime-gap-report)
   add_test(NAME runtime_gap_report_require_production_fails COMMAND starcraft-runtime-gap-report --require-production)
   set_tests_properties(runtime_gap_report_require_production_fails PROPERTIES WILL_FAIL TRUE)
+  add_test(
+    NAME runtime_gap_report_evidence_cli_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_RUNTIME_GAP_REPORT=$<TARGET_FILE:starcraft-runtime-gap-report>
+      -DSTARCRAFT_API_TEST_FIXTURE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures
+      -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_gap_report_cli_test.cmake
+  )
 endif()
 
 if(TARGET starcraft-runtime-submit-command)

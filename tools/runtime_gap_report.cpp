@@ -4,6 +4,7 @@
 #include <BWAPI/Runtime/RuntimeImplementationGap.h>
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
+#include <BWAPI/Runtime/RuntimeProcessMemory.h>
 #include <BWAPI/Runtime/RuntimeReadiness.h>
 
 #include <cstdlib>
@@ -319,6 +320,13 @@ int main(int argc, char** argv)
     std::cout << "process.id=" << environment.processId << '\n';
   if (!environment.executablePath.empty())
     std::cout << "executable.path=" << environment.executablePath << '\n';
+  if (environment.processId > 0)
+  {
+    const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment.processId);
+    std::cout << "memory.accessible=" << (memoryAccess.accessible ? "true" : "false") << '\n';
+    if (!memoryAccess.reason.empty())
+      std::cout << "memory.access.reason=" << memoryAccess.reason << '\n';
+  }
   if (!environment.executorBridgePath.empty())
     std::cout << "executor.bridge_path=" << environment.executorBridgePath << '\n';
   if (!preflight.executorName.empty())

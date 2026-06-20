@@ -15,6 +15,8 @@ file(WRITE "${bridge_dir}/ready"
   "protocol=starcraft-api-file-bridge-v1\n"
   "product=starcraft-remastered\n"
   "version=test-build\n"
+  "process_id=1\n"
+  "executable=${STARCRAFT_RUNTIME_SUBMIT_COMMAND}\n"
   "mode=validated-runtime-adapter\n"
   "proof.attach=passed\n"
   "proof.read_game_state=passed\n"
@@ -30,6 +32,8 @@ set(manifest "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest")
 execute_process(
   COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --manifest "${manifest}"
+    --process-id 1
+    --executable "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --bridge "${bridge_dir}"
     --game-action pauseGame
   RESULT_VARIABLE submit_result
@@ -55,11 +59,15 @@ file(WRITE "${bootstrap_bridge_dir}/ready"
   "protocol=starcraft-api-file-bridge-v1\n"
   "product=starcraft-remastered\n"
   "version=test-build\n"
+  "process_id=1\n"
+  "executable=${STARCRAFT_RUNTIME_SUBMIT_COMMAND}\n"
   "mode=launch-attach-bootstrap\n")
 
 execute_process(
   COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --manifest "${manifest}"
+    --process-id 1
+    --executable "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --bridge "${bootstrap_bridge_dir}"
     --game-action pauseGame
   RESULT_VARIABLE bootstrap_submit_result

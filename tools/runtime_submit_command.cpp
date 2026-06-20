@@ -25,7 +25,7 @@ namespace
   {
     std::cout
       << "usage: starcraft-runtime-submit-command [--product <product>] [--version <version>] "
-      << "[--manifest <path>] --bridge <dir> "
+      << "[--manifest <path>] [--process-id <pid>] [--executable <path>] --bridge <dir> "
       << "(--unit-command <name> --unit <id> | --game-action <name>) [--arg <int>...]\n";
   }
 }
@@ -62,6 +62,25 @@ int main(int argc, char** argv)
         return 64;
       }
       environment.version = argv[++i];
+      continue;
+    }
+    if (arg == "--process-id")
+    {
+      if (i + 1 >= argc || !parseInt(argv[++i], environment.processId) || environment.processId <= 0)
+      {
+        std::cerr << "--process-id requires a positive integer\n";
+        return 64;
+      }
+      continue;
+    }
+    if (arg == "--executable")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--executable requires a path\n";
+        return 64;
+      }
+      environment.executablePath = argv[++i];
       continue;
     }
     if (arg == "--manifest")

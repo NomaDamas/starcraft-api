@@ -27,33 +27,51 @@ namespace
     return path;
   }
 
-  void writeBootstrapReadyFile(const std::filesystem::path& bridgePath)
+  void writeRuntimeIdentity(std::ofstream& ready, int processId, const std::string& executable)
+  {
+    ready << "process_id=" << processId << '\n';
+    ready << "executable=" << executable << '\n';
+  }
+
+  void writeBootstrapReadyFile(
+    const std::filesystem::path& bridgePath,
+    int processId,
+    const std::string& executable)
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeBootstrapMode << '\n';
+    writeRuntimeIdentity(ready, processId, executable);
   }
 
-  void writeValidatedAdapterReadyFile(const std::filesystem::path& bridgePath)
+  void writeValidatedAdapterReadyFile(
+    const std::filesystem::path& bridgePath,
+    int processId,
+    const std::string& executable)
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, processId, executable);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
 
-  void writePartialValidatedAdapterReadyFile(const std::filesystem::path& bridgePath)
+  void writePartialValidatedAdapterReadyFile(
+    const std::filesystem::path& bridgePath,
+    int processId,
+    const std::string& executable)
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, processId, executable);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
     {
       if (std::string(proof.id) != "multiplayer-sync")
@@ -71,7 +89,6 @@ int main(int argc, char** argv)
   assert(manifest.loaded);
 
   std::filesystem::path bridgePath = makeBridgePath();
-  writeBootstrapReadyFile(bridgePath);
 
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   environment.product = Product::StarCraftRemastered;
@@ -80,6 +97,8 @@ int main(int argc, char** argv)
   environment.executablePath = selfExecutable;
   environment.manifestPath = fixturePath("remastered-complete.manifest");
   environment.executorBridgePath = bridgePath.string();
+
+  writeBootstrapReadyFile(bridgePath, environment.processId, environment.executablePath);
 
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);
   RuntimeProbeResult probe = backend->probe();
@@ -92,7 +111,7 @@ int main(int argc, char** argv)
   assert(!readiness.productionReady);
   assert(!blockingReadinessGaps(readiness).empty());
 
-  writePartialValidatedAdapterReadyFile(bridgePath);
+  writePartialValidatedAdapterReadyFile(bridgePath, environment.processId, environment.executablePath);
   backend = createRuntimeBackend(environment);
   probe = backend->probe();
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
@@ -106,7 +125,7 @@ int main(int argc, char** argv)
   assert(!readiness.productionReady);
   assert(!blockingReadinessGaps(readiness).empty());
 
-  writeValidatedAdapterReadyFile(bridgePath);
+  writeValidatedAdapterReadyFile(bridgePath, environment.processId, environment.executablePath);
   backend = createRuntimeBackend(environment);
   probe = backend->probe();
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);

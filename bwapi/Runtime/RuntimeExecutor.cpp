@@ -55,6 +55,40 @@ namespace BWAPI::Runtime
       return {};
     }
 
+    std::string normalizePath(const std::string& path)
+    {
+      if (path.empty())
+        return {};
+
+      std::error_code error;
+      std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
+      if (error)
+        normalized = std::filesystem::absolute(path, error);
+      if (error)
+        normalized = path;
+      return normalized.lexically_normal().string();
+    }
+
+    std::string validateBridgeRuntimeIdentity(
+      const RuntimeEnvironment& environment,
+      const std::filesystem::path& readyPath)
+    {
+      if (environment.processId > 0)
+      {
+        const std::string readyProcessId = readReadyValue(readyPath, "process_id");
+        if (readyProcessId != std::to_string(environment.processId))
+          return "runtime executor bridge ready file process_id does not match the selected runtime";
+      }
+      if (!environment.executablePath.empty())
+      {
+        const std::string readyExecutable = readReadyValue(readyPath, "executable");
+        if (readyExecutable.empty()
+            || normalizePath(readyExecutable) != normalizePath(environment.executablePath))
+          return "runtime executor bridge ready file executable does not match the selected runtime";
+      }
+      return {};
+    }
+
     bool validateProductionBridgeProof(
       const std::filesystem::path& readyPath,
       RuntimeExecutorPreflightResult& result)
@@ -143,6 +177,13 @@ namespace BWAPI::Runtime
           && !fileContainsLine(readyPath, std::string("version=") + environment.version))
       {
         result.errors.push_back("runtime executor bridge ready file version does not match the selected runtime");
+        return true;
+      }
+
+      const std::string identityError = validateBridgeRuntimeIdentity(environment, readyPath);
+      if (!identityError.empty())
+      {
+        result.errors.push_back(identityError);
         return true;
       }
 
@@ -410,6 +451,14 @@ namespace BWAPI::Runtime
       result.errors.push_back(result.reason);
       return result;
     }
+
+    const std::string identityError = validateBridgeRuntimeIdentity(environment, readyPath);
+    if (!identityError.empty())
+    {
+      rejectSubmit(result, identityError);
+      return result;
+    }
+
     if (!validateSubmissionBridgeProof(readyPath, result))
       return result;
 

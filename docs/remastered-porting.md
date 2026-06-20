@@ -125,6 +125,8 @@ For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to em
 
 ## Runtime Executor Preflight
 
+Use `starcraft-runtime-memory-probe --require-open` to separate process discovery from OS memory attach permissions. The probe resolves the same runtime environment as the launcher and prints `memory.opened`; it only attempts `readProcessMemory` when `--address` is explicitly supplied. This is diagnostic evidence for the attach layer, not BWAPI parity evidence.
+
 `RuntimeExecutor` separates three release-gate signals:
 
 - `executor.contract_valid`: the selected contract or manifest has no unresolved required BWAPI parity entries.

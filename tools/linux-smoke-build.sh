@@ -261,6 +261,30 @@ cxxflags=${CXXFLAGS:-}
 "$bin_dir/starcraft-runtime-submit-command" --help >/dev/null
 
 "$cxx" -std=c++17 $cxxflags \
+  -I "$repo_root/bwapi/include" \
+  "$repo_root/bwapi/Runtime/Legacy1161RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RemasteredRuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeBackendFactory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandQueue.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandSurface.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
+  "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/tools/runtime_memory_probe.cpp" \
+  -o "$bin_dir/starcraft-runtime-memory-probe"
+
+"$bin_dir/starcraft-runtime-memory-probe" --help >/dev/null
+"$bin_dir/starcraft-runtime-memory-probe" --self --require-open >/dev/null
+
+"$cxx" -std=c++17 $cxxflags \
   -DSTARCRAFT_API_SOURCE_DIR="\"$repo_root\"" \
   "$repo_root/tools/api_surface_audit.cpp" \
   -o "$bin_dir/bwapi-api-surface-audit"

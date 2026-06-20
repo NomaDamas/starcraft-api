@@ -52,6 +52,8 @@ For iterative gap closure, use `--summary-only` to print category totals without
 
 Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor-behavior-proof` categories when a bridge is present but has not proven every required in-game behavior. This keeps bootstrap artifacts from being mistaken for production adapter evidence.
 
+Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process is visible to the runtime process primitive. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
+
 When using a bootstrap manifest, pass the runtime identity explicitly so the report attributes gaps to StarCraft Remastered instead of an unknown runtime:
 
 ```sh

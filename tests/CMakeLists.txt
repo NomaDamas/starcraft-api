@@ -183,6 +183,11 @@ if(TARGET starcraft-runtime-launch)
   add_test(NAME runtime_launch_help COMMAND starcraft-runtime-launch --help)
 endif()
 
+if(TARGET starcraft-runtime-memory-probe)
+  add_test(NAME runtime_memory_probe_help COMMAND starcraft-runtime-memory-probe --help)
+  add_test(NAME runtime_memory_probe_self_open COMMAND starcraft-runtime-memory-probe --self --require-open)
+endif()
+
 if(TARGET bwapi-api-surface-audit)
   add_test(NAME bwapi_api_surface_audit COMMAND bwapi-api-surface-audit)
 endif()

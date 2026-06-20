@@ -131,6 +131,14 @@ if(STARCRAFT_API_BUILD_TOOLS)
       StarCraftAPI::runtime
   )
 
+  add_executable(starcraft-runtime-memory-probe
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_memory_probe.cpp"
+  )
+  target_link_libraries(starcraft-runtime-memory-probe
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+
   add_executable(bwapi-api-surface-audit
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/api_surface_audit.cpp"
   )

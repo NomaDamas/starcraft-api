@@ -27,12 +27,48 @@ namespace
     return path;
   }
 
-  void writeReadyFile(const std::filesystem::path& bridgePath)
+  void writeBootstrapReadyFile(const std::filesystem::path& bridgePath)
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeBootstrapMode << '\n';
+  }
+
+  void writeValidatedAdapterReadyFile(const std::filesystem::path& bridgePath)
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.read_game_state=passed\n";
+    ready << "proof.read_units=passed\n";
+    ready << "proof.issue_commands=passed\n";
+    ready << "proof.draw_overlays=passed\n";
+    ready << "proof.dispatch_events=passed\n";
+    ready << "proof.replay_analysis=passed\n";
+    ready << "proof.multiplayer_sync=passed\n";
+    ready << "proof.battle_net_policy=passed\n";
+  }
+
+  void writePartialValidatedAdapterReadyFile(const std::filesystem::path& bridgePath)
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.read_game_state=passed\n";
+    ready << "proof.read_units=passed\n";
+    ready << "proof.issue_commands=passed\n";
+    ready << "proof.draw_overlays=passed\n";
+    ready << "proof.dispatch_events=passed\n";
+    ready << "proof.replay_analysis=passed\n";
+    ready << "proof.battle_net_policy=passed\n";
   }
 }
 
@@ -42,7 +78,7 @@ int main()
   assert(manifest.loaded);
 
   std::filesystem::path bridgePath = makeBridgePath();
-  writeReadyFile(bridgePath);
+  writeBootstrapReadyFile(bridgePath);
 
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   environment.product = Product::StarCraftRemastered;
@@ -56,6 +92,32 @@ int main()
   RuntimeProbeResult probe = backend->probe();
   RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
   RuntimeReadinessReport readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
+
+  assert(!probe.supported);
+  assert(!preflight.executorAvailable);
+  assert(!preflight.errors.empty());
+  assert(!readiness.productionReady);
+  assert(!blockingReadinessGaps(readiness).empty());
+
+  writePartialValidatedAdapterReadyFile(bridgePath);
+  backend = createRuntimeBackend(environment);
+  probe = backend->probe();
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
+
+  assert(!probe.supported);
+  assert(!preflight.executorAvailable);
+  assert(preflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
+  assert(preflight.missingBehaviorProofs.size() == 1);
+  assert(!preflight.errors.empty());
+  assert(!readiness.productionReady);
+  assert(!blockingReadinessGaps(readiness).empty());
+
+  writeValidatedAdapterReadyFile(bridgePath);
+  backend = createRuntimeBackend(environment);
+  probe = backend->probe();
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
 
   assert(probe.supported);
   assert(preflight.executorAvailable);

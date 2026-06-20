@@ -37,12 +37,48 @@ namespace
     return path;
   }
 
-  void writeReadyFile(const std::filesystem::path& bridgePath)
+  void writeBootstrapReadyFile(const std::filesystem::path& bridgePath)
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeBootstrapMode << '\n';
+  }
+
+  void writeValidatedAdapterReadyFile(const std::filesystem::path& bridgePath)
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.read_game_state=passed\n";
+    ready << "proof.read_units=passed\n";
+    ready << "proof.issue_commands=passed\n";
+    ready << "proof.draw_overlays=passed\n";
+    ready << "proof.dispatch_events=passed\n";
+    ready << "proof.replay_analysis=passed\n";
+    ready << "proof.multiplayer_sync=passed\n";
+    ready << "proof.battle_net_policy=passed\n";
+  }
+
+  void writePartialValidatedAdapterReadyFile(const std::filesystem::path& bridgePath)
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.read_game_state=passed\n";
+    ready << "proof.read_units=passed\n";
+    ready << "proof.issue_commands=passed\n";
+    ready << "proof.draw_overlays=passed\n";
+    ready << "proof.dispatch_events=passed\n";
+    ready << "proof.replay_analysis=passed\n";
+    ready << "proof.battle_net_policy=passed\n";
   }
 }
 
@@ -77,16 +113,42 @@ int main()
   assert(!invalidContract.errors.empty());
 
   std::filesystem::path bridgePath = makeBridgePath();
-  writeReadyFile(bridgePath);
+  writeBootstrapReadyFile(bridgePath);
   RuntimeEnvironment bridgeEnvironment = remasteredEnvironment(fixturePath("remastered-complete.manifest"));
   bridgeEnvironment.executorBridgePath = bridgePath.string();
+  RuntimeExecutorPreflightResult bootstrapPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(bootstrapPreflight.contractValid);
+  assert(bootstrapPreflight.processIdentified);
+  assert(bootstrapPreflight.targetLocated);
+  assert(!bootstrapPreflight.executorAvailable);
+  assert(bootstrapPreflight.executorName == "filesystem-bridge-bootstrap");
+  assert(bootstrapPreflight.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode);
+  assert(!bootstrapPreflight.missingBehaviorProofs.empty());
+  assert(!bootstrapPreflight.errors.empty());
+
+  writePartialValidatedAdapterReadyFile(bridgePath);
+  RuntimeExecutorPreflightResult partialProofPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(partialProofPreflight.contractValid);
+  assert(partialProofPreflight.processIdentified);
+  assert(partialProofPreflight.targetLocated);
+  assert(!partialProofPreflight.executorAvailable);
+  assert(partialProofPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
+  assert(partialProofPreflight.missingBehaviorProofs.size() == 1);
+  assert(partialProofPreflight.missingBehaviorProofs.front() == "proof.multiplayer_sync=passed");
+  assert(!partialProofPreflight.errors.empty());
+
+  writeValidatedAdapterReadyFile(bridgePath);
   RuntimeExecutorPreflightResult bridgePreflight =
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(bridgePreflight.contractValid);
   assert(bridgePreflight.processIdentified);
   assert(bridgePreflight.targetLocated);
   assert(bridgePreflight.executorAvailable);
-  assert(bridgePreflight.executorName == "filesystem-bridge");
+  assert(bridgePreflight.executorName == "filesystem-bridge-validated-runtime-adapter");
+  assert(bridgePreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
+  assert(bridgePreflight.missingBehaviorProofs.empty());
   assert(bridgePreflight.errors.empty());
 
   RuntimeCommandRequest unitCommand;

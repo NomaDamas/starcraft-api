@@ -1840,7 +1840,7 @@ namespace BWAPI::Runtime
     ready << "product=" << toString(environment.product) << '\n';
     ready << "version=" << (environment.version.empty() ? "unknown" : environment.version) << '\n';
     ready << "executor=starcraft-api-local-runtime\n";
-    ready << "mode=launch-attach-bootstrap\n";
+    ready << "mode=" << RuntimeExecutorBridgeBootstrapMode << '\n';
     ready << "process_id=" << environment.processId << '\n';
     ready << "executable=" << environment.executablePath << '\n';
     return true;

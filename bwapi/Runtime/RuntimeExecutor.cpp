@@ -42,6 +42,70 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    std::string readReadyValue(const std::filesystem::path& path, const std::string& key)
+    {
+      std::ifstream input(path);
+      const std::string prefix = key + '=';
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line.rfind(prefix, 0) == 0)
+          return line.substr(prefix.size());
+      }
+      return {};
+    }
+
+    const std::vector<std::string>& requiredValidatedAdapterProofs()
+    {
+      static const std::vector<std::string> proofs = {
+        "proof.attach=passed",
+        "proof.read_game_state=passed",
+        "proof.read_units=passed",
+        "proof.issue_commands=passed",
+        "proof.draw_overlays=passed",
+        "proof.dispatch_events=passed",
+        "proof.replay_analysis=passed",
+        "proof.multiplayer_sync=passed",
+        "proof.battle_net_policy=passed"
+      };
+      return proofs;
+    }
+
+    bool validateProductionBridgeProof(
+      const std::filesystem::path& readyPath,
+      RuntimeExecutorPreflightResult& result)
+    {
+      result.executorBridgeMode = readReadyValue(readyPath, "mode");
+      result.missingBehaviorProofs.clear();
+      for (const std::string& proof : requiredValidatedAdapterProofs())
+      {
+        if (!fileContainsLine(readyPath, proof))
+          result.missingBehaviorProofs.push_back(proof);
+      }
+
+      if (result.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode)
+      {
+        result.executorName = "filesystem-bridge-bootstrap";
+        result.errors.push_back(
+          "runtime executor bridge is launch/attach bootstrap only; validated runtime adapter proof is required");
+        return false;
+      }
+
+      if (result.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode)
+      {
+        result.errors.push_back("runtime executor bridge ready file is missing validated runtime adapter mode");
+        return false;
+      }
+
+      bool valid = true;
+      for (const std::string& proof : result.missingBehaviorProofs)
+      {
+        result.errors.push_back("runtime executor bridge ready file is missing behavior proof: " + proof);
+        valid = false;
+      }
+      return valid;
+    }
+
     bool preflightExecutorBridge(const RuntimeEnvironment& environment, RuntimeExecutorPreflightResult& result)
     {
       if (environment.executorBridgePath.empty())
@@ -98,8 +162,11 @@ namespace BWAPI::Runtime
         return true;
       }
 
+      if (!validateProductionBridgeProof(readyPath, result))
+        return true;
+
       result.executorAvailable = true;
-      result.executorName = "filesystem-bridge";
+      result.executorName = "filesystem-bridge-validated-runtime-adapter";
       return true;
     }
 

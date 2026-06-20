@@ -44,6 +44,8 @@ Use `starcraft-runtime-gap-report --require-production` as the release gate. It 
 
 For iterative gap closure, use `--summary-only` to print category totals without per-gap detail, or `--category <name>` to focus on one category such as `executor-preflight`, `unit-command`, or `data-address`.
 
+Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor-behavior-proof` categories when a bridge is present but has not proven every required in-game behavior. This keeps bootstrap artifacts from being mistaken for production adapter evidence.
+
 When using a bootstrap manifest, pass the runtime identity explicitly so the report attributes gaps to StarCraft Remastered instead of an unknown runtime:
 
 ```sh
@@ -66,6 +68,8 @@ build/starcraft-runtime-submit-command \
   --bridge /path/to/authorized-runtime-bridge \
   --game-action pauseGame
 ```
+
+The bridge written by `starcraft-runtime-launch --bridge` is `mode=launch-attach-bootstrap`. It is only bootstrap/plumbing evidence and cannot satisfy production readiness. A production executor must publish `mode=validated-runtime-adapter` plus behavior proof lines for attach, game-state reads, unit reads, command issue, overlay drawing, event dispatch, replay analysis, multiplayer sync, and Battle.net policy validation.
 
 ## BWAPI Reference
 

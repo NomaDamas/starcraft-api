@@ -188,6 +188,32 @@ namespace BWAPI::Runtime
       RuntimeReadinessSeverity::Error,
       executorPreflight.executorAvailable ? "authorized runtime executor is available" : "authorized runtime executor is not available");
 
+    const bool bridgeModeValid = executorPreflight.executorBridgeMode.empty()
+      || executorPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode;
+    std::string bridgeModeDetail = "executor did not report filesystem bridge mode";
+    if (!executorPreflight.executorBridgeMode.empty())
+    {
+      bridgeModeDetail = bridgeModeValid
+        ? "filesystem bridge mode is validated-runtime-adapter"
+        : "filesystem bridge mode is " + executorPreflight.executorBridgeMode
+            + "; expected " + RuntimeExecutorBridgeValidatedAdapterMode;
+    }
+    addCheck(
+      report,
+      "executor-bridge-mode-valid",
+      bridgeModeValid,
+      RuntimeReadinessSeverity::Error,
+      bridgeModeDetail);
+
+    addCheck(
+      report,
+      "executor-behavior-proof-complete",
+      executorPreflight.missingBehaviorProofs.empty(),
+      RuntimeReadinessSeverity::Error,
+      executorPreflight.missingBehaviorProofs.empty()
+        ? "all required executor behavior proofs are present"
+        : join(executorPreflight.missingBehaviorProofs));
+
     addCheck(
       report,
       "executor-preflight-clean",

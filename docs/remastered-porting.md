@@ -123,7 +123,25 @@ For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to em
 
 The current macOS/Linux executor preflight can validate contracts, locate target paths, verify a supplied target process id, and verify a local filesystem bridge readiness file. This keeps release automation honest: a complete manifest, visible process, and bridge are necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.
 
-The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. This is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence. Production readiness still requires a validated in-process or otherwise authorized SC:R adapter that can read state, issue commands, draw overlays, dispatch events, and prove multiplayer synchronization behavior.
+The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. `starcraft-runtime-launch --bridge` writes `mode=launch-attach-bootstrap`, which is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence and is rejected by production preflight.
+
+`starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category.
+
+A production executor bridge must publish `mode=validated-runtime-adapter` and behavior proof lines:
+
+```text
+proof.attach=passed
+proof.read_game_state=passed
+proof.read_units=passed
+proof.issue_commands=passed
+proof.draw_overlays=passed
+proof.dispatch_events=passed
+proof.replay_analysis=passed
+proof.multiplayer_sync=passed
+proof.battle_net_policy=passed
+```
+
+These proof lines represent validated adapter evidence, not manifest declarations. Production readiness still requires a validated in-process or otherwise authorized SC:R adapter that can read state, issue commands, draw overlays, dispatch events, and prove multiplayer synchronization behavior.
 
 ## Process Memory Primitive
 

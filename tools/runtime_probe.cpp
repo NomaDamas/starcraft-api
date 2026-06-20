@@ -234,6 +234,11 @@ int main(int argc, char** argv)
   std::cout << "executor.available=" << (preflight.executorAvailable ? "true" : "false") << '\n';
   if (!preflight.executorName.empty())
     std::cout << "executor.name=" << preflight.executorName << '\n';
+  if (!preflight.executorBridgeMode.empty())
+    std::cout << "executor.bridge_mode=" << preflight.executorBridgeMode << '\n';
+  std::cout << "executor.behavior_proof.missing_count=" << preflight.missingBehaviorProofs.size() << '\n';
+  for (const std::string& proof : preflight.missingBehaviorProofs)
+    std::cout << "executor.behavior_proof.missing=" << proof << '\n';
   for (const std::string& error : preflight.errors)
     std::cout << "executor.error=" << error << '\n';
   for (const std::string& warning : preflight.warnings)

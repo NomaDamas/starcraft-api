@@ -84,6 +84,29 @@ int main()
   assert(!missingExecutor.productionReady);
   assert(hasBlockingGap(missingExecutor, "executor-available"));
 
+  RuntimeExecutorPreflightResult bootstrapBridge = preflight;
+  bootstrapBridge.executorAvailable = false;
+  bootstrapBridge.executorBridgeMode = RuntimeExecutorBridgeBootstrapMode;
+  bootstrapBridge.missingBehaviorProofs.push_back("proof.attach=passed");
+  bootstrapBridge.errors.push_back("runtime executor bridge is launch/attach bootstrap only");
+  RuntimeReadinessReport bootstrapGap = evaluateProductionReadiness(probe, contract, bootstrapBridge);
+  assert(!bootstrapGap.productionReady);
+  assert(hasBlockingGap(bootstrapGap, "executor-available"));
+  assert(hasBlockingGap(bootstrapGap, "executor-bridge-mode-valid"));
+  assert(hasBlockingGap(bootstrapGap, "executor-behavior-proof-complete"));
+  assert(hasBlockingGap(bootstrapGap, "executor-preflight-clean"));
+
+  RuntimeExecutorPreflightResult partialProofBridge = preflight;
+  partialProofBridge.executorAvailable = false;
+  partialProofBridge.executorBridgeMode = RuntimeExecutorBridgeValidatedAdapterMode;
+  partialProofBridge.missingBehaviorProofs.push_back("proof.multiplayer_sync=passed");
+  partialProofBridge.errors.push_back(
+    "runtime executor bridge ready file is missing behavior proof: proof.multiplayer_sync=passed");
+  RuntimeReadinessReport proofGap = evaluateProductionReadiness(probe, contract, partialProofBridge);
+  assert(!proofGap.productionReady);
+  assert(!hasBlockingGap(proofGap, "executor-bridge-mode-valid"));
+  assert(hasBlockingGap(proofGap, "executor-behavior-proof-complete"));
+
   RuntimeProbeResult missingCapability = probe;
   missingCapability.capabilities.pop_back();
   RuntimeReadinessReport capabilityGap = evaluateProductionReadiness(missingCapability, contract, preflight);

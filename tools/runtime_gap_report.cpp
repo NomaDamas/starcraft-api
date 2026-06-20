@@ -291,6 +291,9 @@ int main(int argc, char** argv)
     std::cout << "executor.bridge_path=" << environment.executorBridgePath << '\n';
   if (!preflight.executorName.empty())
     std::cout << "executor.name=" << preflight.executorName << '\n';
+  if (!preflight.executorBridgeMode.empty())
+    std::cout << "executor.bridge_mode=" << preflight.executorBridgeMode << '\n';
+  std::cout << "executor.behavior_proof.missing_count=" << preflight.missingBehaviorProofs.size() << '\n';
   std::cout << "backend.name=" << backend->name() << '\n';
   std::cout << "readiness.production_ready=" << (report.productionReady ? "true" : "false") << '\n';
   std::cout << "readiness.blocking_gap_count=" << gaps.size() << '\n';
@@ -304,6 +307,9 @@ int main(int argc, char** argv)
 
   if (!summaryOnly)
   {
+    for (const std::string& proof : preflight.missingBehaviorProofs)
+      std::cout << "executor.behavior_proof.missing=" << proof << '\n';
+
     for (const RuntimeReadinessCheck& check : report.checks)
       printCheck(check);
 

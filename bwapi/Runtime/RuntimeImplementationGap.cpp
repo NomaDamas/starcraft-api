@@ -112,6 +112,23 @@ namespace BWAPI::Runtime
       addGap(gaps, "executor-preflight", "runtime-target-located", "target executable or runtime image is not located");
     if (!preflight.executorAvailable)
       addGap(gaps, "executor-preflight", "executor-available", "authorized runtime executor is not available");
+    if (!preflight.executorBridgeMode.empty()
+        && preflight.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode)
+    {
+      addGap(
+        gaps,
+        "executor-bridge-mode",
+        preflight.executorBridgeMode,
+        "runtime executor bridge mode is not validated-runtime-adapter");
+    }
+    for (const std::string& proof : preflight.missingBehaviorProofs)
+    {
+      addGap(
+        gaps,
+        "executor-behavior-proof",
+        proof,
+        "required runtime adapter behavior proof is missing");
+    }
 
     const ContractValidationResult validation = validateRuntimeContract(contract);
     for (std::size_t i = 0; i < preflight.errors.size(); ++i)

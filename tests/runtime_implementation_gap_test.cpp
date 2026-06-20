@@ -95,5 +95,15 @@ int main()
   assert(summarizeRuntimeImplementationGapsByCategory(noGaps).empty());
   assert(countRuntimeImplementationGapsByCategory(noGaps, "backend") == 0);
 
+  RuntimeExecutorPreflightResult proofBlockedPreflight = cleanPreflight();
+  proofBlockedPreflight.executorAvailable = false;
+  proofBlockedPreflight.executorBridgeMode = RuntimeExecutorBridgeBootstrapMode;
+  proofBlockedPreflight.missingBehaviorProofs.push_back("proof.attach=passed");
+  std::vector<RuntimeImplementationGap> proofGaps =
+    collectRuntimeImplementationGaps(fullProbe(completeContract), completeContract, proofBlockedPreflight);
+  assert(countRuntimeImplementationGapsByCategory(proofGaps, "executor-preflight") == 1);
+  assert(countRuntimeImplementationGapsByCategory(proofGaps, "executor-bridge-mode") == 1);
+  assert(countRuntimeImplementationGapsByCategory(proofGaps, "executor-behavior-proof") == 1);
+
   return 0;
 }

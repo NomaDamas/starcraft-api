@@ -38,6 +38,7 @@ endif()
 
 foreach(needle
     "implementation_gap.count="
+    "executor.behavior_proof.missing_count="
     "implementation_gap.category_count="
     "implementation_gap.category.backend.count=1"
     "implementation_gap.category.api-surface.count=1"
@@ -131,10 +132,56 @@ endif()
 
 foreach(needle
     "implementation_gap.count="
+    "executor.behavior_proof.missing_count="
     "implementation_gap.category.backend.count=1")
   string(FIND "${summary_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "gap report summary output missing '${needle}'\n${summary_output}")
+  endif()
+endforeach()
+
+set(bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-gap-report-bridge")
+file(REMOVE_RECURSE "${bridge_dir}")
+file(MAKE_DIRECTORY "${bridge_dir}")
+file(WRITE "${bridge_dir}/ready"
+  "protocol=starcraft-api-file-bridge-v1\n"
+  "product=starcraft-remastered\n"
+  "version=test-build\n"
+  "mode=validated-runtime-adapter\n"
+  "proof.attach=passed\n"
+  "proof.read_game_state=passed\n"
+  "proof.read_units=passed\n"
+  "proof.issue_commands=passed\n"
+  "proof.draw_overlays=passed\n"
+  "proof.dispatch_events=passed\n"
+  "proof.replay_analysis=passed\n"
+  "proof.battle_net_policy=passed\n")
+
+execute_process(
+  COMMAND
+    "${STARCRAFT_RUNTIME_GAP_REPORT}"
+    --product starcraft-remastered
+    --version test-build
+    --executable "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
+    --bridge "${bridge_dir}"
+  RESULT_VARIABLE bridge_result
+  OUTPUT_VARIABLE bridge_output
+  ERROR_VARIABLE bridge_error
+)
+
+if(NOT bridge_result EQUAL 0)
+  message(FATAL_ERROR "gap report bridge proof command failed: ${bridge_error}\n${bridge_output}")
+endif()
+
+foreach(needle
+    "executor.bridge_mode=validated-runtime-adapter"
+    "executor.behavior_proof.missing_count=1"
+    "executor.behavior_proof.missing=proof.multiplayer_sync=passed"
+    "readiness.blocking_gap=executor-behavior-proof-complete"
+    "implementation_gap.category.executor-behavior-proof.count=1")
+  string(FIND "${bridge_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "gap report bridge proof output missing '${needle}'\n${bridge_output}")
   endif()
 endforeach()
 

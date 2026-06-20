@@ -26,6 +26,7 @@ The production gate is `canClaimProductionSupport(probe, contract)`. A backend c
 - The backend exposes every BWAPI parity capability required by the contract.
 - The backend reports at least 385 implemented BWAPI abstract API methods.
 - The backend reports every BWAPI command/action surface entry by name: 44 executable unit commands and 28 game actions.
+- Executor preflight proves actual process-memory access when the parity contract requires the shared-memory client capability.
 
 Use `starcraft-runtime-probe` to print the selected runtime, backend probe result, open result, contract validation errors, and final production-support decision. The tool reads `STARCRAFT_API_PRODUCT`, `STARCRAFT_API_VERSION`, `STARCRAFT_API_PROCESS_ID`, `STARCRAFT_API_EXECUTABLE`, and `STARCRAFT_API_MANIFEST` for non-interactive runtime selection. Use `starcraft-runtime-probe --require-production` in release gates; it exits non-zero until full parity support is validated.
 
@@ -127,16 +128,19 @@ For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to em
 
 Use `starcraft-runtime-memory-probe --require-open` to verify process identity visibility, and add `--require-access` when the check must prove actual process-memory access rights. The probe resolves the same runtime environment as the launcher and prints both `memory.opened` and `memory.accessible`; on macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied. It only attempts `readProcessMemory` when `--address` is explicitly supplied. This is diagnostic evidence for the attach layer, not BWAPI parity evidence.
 
+When the selected parity contract requires `SharedMemoryClient`, executor preflight also emits `executor.memory_accessible` and fails readiness with `runtime-memory-accessible` plus a `memory-access` implementation gap if the target process cannot be opened for real VM access. This keeps a visible StarCraft process from being mistaken for an attachable BWAPI-compatible runtime.
+
 `RuntimeExecutor` separates three release-gate signals:
 
 - `executor.contract_valid`: the selected contract or manifest has no unresolved required BWAPI parity entries.
 - `executor.process_identified`: `STARCRAFT_API_PROCESS_ID` identifies a visible target process.
+- `executor.memory_accessible`: the selected target process grants the memory access required by the shared-memory client capability.
 - `executor.target_located`: `STARCRAFT_API_EXECUTABLE` points to an existing target process executable or app bundle path.
 - `executor.available`: the authorized attach/read/write/command executor is implemented for the selected product and platform.
 
 The current macOS/Linux executor preflight can validate contracts, locate target paths, verify a supplied target process id, and verify a local filesystem bridge readiness file. This keeps release automation honest: a complete manifest, visible process, and bridge are necessary, but production support stays blocked until the runtime executor actually attaches to StarCraft Remastered and passes behavioral tests.
 
-The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. `starcraft-runtime-launch --bridge` writes `mode=launch-attach-bootstrap`, which is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence and is rejected by production preflight.
+The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. `starcraft-runtime-launch --bridge` writes `mode=launch-attach-bootstrap`, which is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence and is rejected by production preflight. `starcraft-runtime-adapter-proof` writes `proof.attach=passed` only after the selected process identity is visible and the required process-memory access succeeds.
 
 `starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category.
 

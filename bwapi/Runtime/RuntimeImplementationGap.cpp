@@ -29,6 +29,14 @@ namespace BWAPI::Runtime
     {
       return std::find(values.begin(), values.end(), value) != values.end();
     }
+
+    bool requiresCapability(const RuntimeContract& contract, Capability capability)
+    {
+      return std::find(
+        contract.requiredCapabilities.begin(),
+        contract.requiredCapabilities.end(),
+        capability) != contract.requiredCapabilities.end();
+    }
   }
 
   std::vector<RuntimeImplementationGap> collectRuntimeImplementationGaps(
@@ -108,6 +116,16 @@ namespace BWAPI::Runtime
 
     if (!preflight.processIdentified)
       addGap(gaps, "executor-preflight", "runtime-process-identified", "target runtime process is not identified");
+    if (requiresCapability(contract, Capability::SharedMemoryClient) && !preflight.memoryAccessible)
+    {
+      addGap(
+        gaps,
+        "memory-access",
+        "runtime-process-memory-accessible",
+        preflight.memoryAccessReason.empty()
+          ? "target runtime process memory access is unavailable"
+          : "target runtime process memory access is unavailable: " + preflight.memoryAccessReason);
+    }
     if (!preflight.targetLocated)
       addGap(gaps, "executor-preflight", "runtime-target-located", "target executable or runtime image is not located");
     if (!preflight.executorAvailable)

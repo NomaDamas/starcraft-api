@@ -23,6 +23,7 @@ if(NOT proof_result EQUAL 0)
 endif()
 foreach(needle
     "attach.opened=true"
+    "attach.memory_accessible=true"
     "proof.attach=passed")
   string(FIND "${proof_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)

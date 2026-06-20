@@ -123,6 +123,7 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(remasteredEnvironment(selfExecutable), complete.manifest.contract);
   assert(readyPrerequisites.contractValid);
   assert(readyPrerequisites.processIdentified);
+  assert(readyPrerequisites.memoryAccessible);
   assert(readyPrerequisites.targetLocated);
   assert(!readyPrerequisites.executorAvailable);
   assert(!readyPrerequisites.warnings.empty());
@@ -131,6 +132,7 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(remasteredEnvironment(fixturePath("missing-starcraft")), complete.manifest.contract);
   assert(missingTarget.contractValid);
   assert(!missingTarget.processIdentified);
+  assert(!missingTarget.memoryAccessible);
   assert(!missingTarget.targetLocated);
   assert(!missingTarget.executorAvailable);
   assert(!missingTarget.errors.empty());
@@ -140,6 +142,7 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(remasteredEnvironment(selfExecutable), unresolved);
   assert(!invalidContract.contractValid);
   assert(invalidContract.processIdentified);
+  assert(invalidContract.memoryAccessible);
   assert(invalidContract.targetLocated);
   assert(!invalidContract.executorAvailable);
   assert(!invalidContract.errors.empty());
@@ -152,6 +155,7 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(bootstrapPreflight.contractValid);
   assert(bootstrapPreflight.processIdentified);
+  assert(bootstrapPreflight.memoryAccessible);
   assert(bootstrapPreflight.targetLocated);
   assert(!bootstrapPreflight.executorAvailable);
   assert(bootstrapPreflight.executorName == "filesystem-bridge-bootstrap");
@@ -164,6 +168,7 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(partialProofPreflight.contractValid);
   assert(partialProofPreflight.processIdentified);
+  assert(partialProofPreflight.memoryAccessible);
   assert(partialProofPreflight.targetLocated);
   assert(!partialProofPreflight.executorAvailable);
   assert(partialProofPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
@@ -176,6 +181,7 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(mismatchedIdentityPreflight.contractValid);
   assert(mismatchedIdentityPreflight.processIdentified);
+  assert(mismatchedIdentityPreflight.memoryAccessible);
   assert(mismatchedIdentityPreflight.targetLocated);
   assert(!mismatchedIdentityPreflight.executorAvailable);
   assert(!mismatchedIdentityPreflight.errors.empty());
@@ -185,6 +191,7 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(bridgePreflight.contractValid);
   assert(bridgePreflight.processIdentified);
+  assert(bridgePreflight.memoryAccessible);
   assert(bridgePreflight.targetLocated);
   assert(bridgePreflight.executorAvailable);
   assert(bridgePreflight.executorName == "filesystem-bridge-validated-runtime-adapter");

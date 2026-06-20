@@ -41,6 +41,14 @@ namespace BWAPI::Runtime
       return std::find(values.begin(), values.end(), value) != values.end();
     }
 
+    bool requiresCapability(const RuntimeContract& contract, Capability capability)
+    {
+      return std::find(
+        contract.requiredCapabilities.begin(),
+        contract.requiredCapabilities.end(),
+        capability) != contract.requiredCapabilities.end();
+    }
+
     std::vector<std::string> missingCapabilities(
       const RuntimeProbeResult& probe,
       const RuntimeContract& contract)
@@ -173,6 +181,23 @@ namespace BWAPI::Runtime
       executorPreflight.processIdentified,
       RuntimeReadinessSeverity::Error,
       executorPreflight.processIdentified ? "target runtime process is identified" : "target runtime process is not identified");
+
+    const bool requiresMemoryAccess = requiresCapability(contract, Capability::SharedMemoryClient);
+    std::string memoryAccessDetail = "process memory access is not required by this runtime contract";
+    if (requiresMemoryAccess)
+    {
+      memoryAccessDetail = executorPreflight.memoryAccessible
+        ? "target runtime process memory access is available"
+        : "target runtime process memory access is unavailable";
+      if (!executorPreflight.memoryAccessReason.empty())
+        memoryAccessDetail += ": " + executorPreflight.memoryAccessReason;
+    }
+    addCheck(
+      report,
+      "runtime-memory-accessible",
+      !requiresMemoryAccess || executorPreflight.memoryAccessible,
+      RuntimeReadinessSeverity::Error,
+      memoryAccessDetail);
 
     addCheck(
       report,

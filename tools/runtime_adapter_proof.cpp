@@ -157,6 +157,13 @@ int main(int argc, char** argv)
   if (!attach.opened)
     return 2;
 
+  const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment.processId);
+  std::cout << "attach.memory_accessible=" << (memoryAccess.accessible ? "true" : "false") << '\n';
+  if (!memoryAccess.reason.empty())
+    std::cout << "attach.memory_access.reason=" << memoryAccess.reason << '\n';
+  if (!memoryAccess.accessible)
+    return 3;
+
   std::error_code error;
   std::filesystem::create_directories(environment.executorBridgePath, error);
   if (error)

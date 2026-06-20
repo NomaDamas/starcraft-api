@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
+#include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,16 @@ namespace BWAPI::Runtime
     bool supportedExecutorProduct(Product product)
     {
       return product == Product::StarCraftRemastered || product == Product::StarCraftBroodWar1161;
+    }
+
+    bool contractRequiresCapability(const RuntimeContract& contract, Capability capability)
+    {
+      for (Capability required : contract.requiredCapabilities)
+      {
+        if (required == capability)
+          return true;
+      }
+      return false;
     }
 
     std::filesystem::path readyFilePath(const RuntimeEnvironment& environment)
@@ -325,7 +336,22 @@ namespace BWAPI::Runtime
     RuntimeProcessOpenResult process = openRuntimeProcess(environment);
     result.processIdentified = process.opened;
     if (!process.opened)
+    {
       result.errors.push_back(process.reason);
+    }
+    else if (contractRequiresCapability(contract, Capability::SharedMemoryClient))
+    {
+      const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment.processId);
+      result.memoryAccessible = memoryAccess.accessible;
+      result.memoryAccessReason = memoryAccess.reason;
+      if (!memoryAccess.accessible)
+      {
+        result.errors.push_back(
+          memoryAccess.reason.empty()
+            ? "runtime process memory access is unavailable"
+            : "runtime process memory access is unavailable: " + memoryAccess.reason);
+      }
+    }
 
     if (!preflightExecutorBridge(environment, result))
       result.warnings.push_back("authorized runtime executor bridge is not configured");

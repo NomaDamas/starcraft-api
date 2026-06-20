@@ -50,6 +50,7 @@ namespace
     RuntimeExecutorPreflightResult preflight;
     preflight.contractValid = true;
     preflight.processIdentified = true;
+    preflight.memoryAccessible = true;
     preflight.targetLocated = true;
     preflight.executorAvailable = true;
     return preflight;
@@ -76,6 +77,7 @@ int main()
   assert(countRuntimeImplementationGapsByCategory(gaps, "unit-command") == makeBWAPICommandSurface().unitCommands.size());
   assert(countRuntimeImplementationGapsByCategory(gaps, "game-action") == makeBWAPICommandSurface().gameActions.size());
   assert(countRuntimeImplementationGapsByCategory(gaps, "capability") == incompleteContract.requiredCapabilities.size());
+  assert(countRuntimeImplementationGapsByCategory(gaps, "memory-access") == 1);
   assert(countRuntimeImplementationGapsByCategory(gaps, "data-address") > 0);
   assert(countRuntimeImplementationGapsByCategory(gaps, "structure-layout") == incompleteContract.structures.size());
   assert(countRuntimeImplementationGapsByCategory(gaps, "structure-field") > 0);
@@ -104,6 +106,13 @@ int main()
   assert(countRuntimeImplementationGapsByCategory(proofGaps, "executor-preflight") == 1);
   assert(countRuntimeImplementationGapsByCategory(proofGaps, "executor-bridge-mode") == 1);
   assert(countRuntimeImplementationGapsByCategory(proofGaps, "executor-behavior-proof") == 1);
+
+  RuntimeExecutorPreflightResult memoryBlockedPreflight = cleanPreflight();
+  memoryBlockedPreflight.memoryAccessible = false;
+  memoryBlockedPreflight.memoryAccessReason = "unit-test denial";
+  std::vector<RuntimeImplementationGap> memoryGaps =
+    collectRuntimeImplementationGaps(fullProbe(completeContract), completeContract, memoryBlockedPreflight);
+  assert(countRuntimeImplementationGapsByCategory(memoryGaps, "memory-access") == 1);
 
   return 0;
 }

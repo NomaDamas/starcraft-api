@@ -27,10 +27,12 @@ namespace BWAPI::Runtime
   {
     bool contractValid = false;
     bool processIdentified = false;
+    bool memoryAccessible = false;
     bool targetLocated = false;
     bool executorAvailable = false;
     std::string executorName;
     std::string executorBridgeMode;
+    std::string memoryAccessReason;
     std::vector<std::string> missingBehaviorProofs;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;

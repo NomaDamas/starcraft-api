@@ -238,6 +238,9 @@ int main(int argc, char** argv)
   RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, contract);
   std::cout << "executor.contract_valid=" << (preflight.contractValid ? "true" : "false") << '\n';
   std::cout << "executor.process_identified=" << (preflight.processIdentified ? "true" : "false") << '\n';
+  std::cout << "executor.memory_accessible=" << (preflight.memoryAccessible ? "true" : "false") << '\n';
+  if (!preflight.memoryAccessReason.empty())
+    std::cout << "executor.memory_access.reason=" << preflight.memoryAccessReason << '\n';
   std::cout << "executor.target_located=" << (preflight.targetLocated ? "true" : "false") << '\n';
   std::cout << "executor.available=" << (preflight.executorAvailable ? "true" : "false") << '\n';
   if (!preflight.executorName.empty())

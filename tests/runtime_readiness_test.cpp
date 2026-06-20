@@ -51,6 +51,7 @@ namespace
     RuntimeExecutorPreflightResult preflight;
     preflight.contractValid = true;
     preflight.processIdentified = true;
+    preflight.memoryAccessible = true;
     preflight.targetLocated = true;
     preflight.executorAvailable = true;
     return preflight;
@@ -83,6 +84,13 @@ int main()
   RuntimeReadinessReport missingExecutor = evaluateProductionReadiness(probe, contract, unavailableExecutor);
   assert(!missingExecutor.productionReady);
   assert(hasBlockingGap(missingExecutor, "executor-available"));
+
+  RuntimeExecutorPreflightResult memoryBlocked = preflight;
+  memoryBlocked.memoryAccessible = false;
+  memoryBlocked.memoryAccessReason = "unit-test denial";
+  RuntimeReadinessReport memoryGap = evaluateProductionReadiness(probe, contract, memoryBlocked);
+  assert(!memoryGap.productionReady);
+  assert(hasBlockingGap(memoryGap, "runtime-memory-accessible"));
 
   RuntimeExecutorPreflightResult bootstrapBridge = preflight;
   bootstrapBridge.executorAvailable = false;

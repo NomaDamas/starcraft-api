@@ -333,6 +333,9 @@ int main(int argc, char** argv)
     std::cout << "executor.name=" << preflight.executorName << '\n';
   if (!preflight.executorBridgeMode.empty())
     std::cout << "executor.bridge_mode=" << preflight.executorBridgeMode << '\n';
+  std::cout << "executor.memory_accessible=" << (preflight.memoryAccessible ? "true" : "false") << '\n';
+  if (!preflight.memoryAccessReason.empty())
+    std::cout << "executor.memory_access.reason=" << preflight.memoryAccessReason << '\n';
   std::cout << "executor.behavior_proof.missing_count=" << preflight.missingBehaviorProofs.size() << '\n';
   std::cout << "backend.name=" << backend->name() << '\n';
   if (hasLaunchEvidence)

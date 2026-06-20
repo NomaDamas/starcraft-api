@@ -48,13 +48,13 @@ tools/linux-smoke-build.sh
 
 Use `starcraft-runtime-gap-report --require-production` as the release gate. It remains non-zero until all BWAPI parity requirements are backed by validated runtime evidence. When `--evidence-out` is provided, the gap report also prints the launch diagnosis to stdout as `diagnosis.status`, `diagnosis.ready_for_attach`, `diagnosis.battle_net_support_*`, and `diagnosis.blocker.*` rows so automated audits can see Battle.net blockers without opening the evidence file.
 
-For iterative gap closure, use `--summary-only` to print category totals without per-gap detail, or `--category <name>` to focus on one category such as `executor-preflight`, `unit-command`, or `data-address`.
+For iterative gap closure, use `--summary-only` to print category totals without per-gap detail, or `--category <name>` to focus on one category such as `memory-access`, `executor-preflight`, `unit-command`, or `data-address`.
 
 Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor-behavior-proof` categories when a bridge is present but has not proven every required in-game behavior. This keeps bootstrap artifacts from being mistaken for production adapter evidence.
 
 Executor bridge ready files are also bound to the selected runtime identity. If `STARCRAFT_API_PROCESS_ID` or `--process-id` is set, the ready file must contain the same `process_id`. If `STARCRAFT_API_EXECUTABLE` or `--executable` is set, the ready file must contain the same normalized `executable` path. Stale ready files from another StarCraft process are rejected before preflight or command submission can pass.
 
-Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process identity is visible. Use `--require-access` to require actual process memory access rights. On macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
+Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process identity is visible. Use `--require-access` to require actual process memory access rights. On macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied. The production readiness report also emits `runtime-memory-accessible` and a `memory-access` implementation gap when the BWAPI parity contract requires a shared-memory client but the selected runtime process cannot be accessed. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
 
 When using a bootstrap manifest, pass the runtime identity explicitly so the report attributes gaps to StarCraft Remastered instead of an unknown runtime:
 
@@ -81,7 +81,7 @@ build/starcraft-runtime-submit-command \
   --game-action pauseGame
 ```
 
-The bridge written by `starcraft-runtime-launch --bridge` is `mode=launch-attach-bootstrap` and includes the selected `process_id` and `executable`. It is only bootstrap/plumbing evidence and cannot satisfy production readiness. A production executor must publish matching runtime identity, `mode=validated-runtime-adapter`, and behavior proof lines for attach, game-state reads, unit reads, command issue, overlay drawing, event dispatch, replay analysis, multiplayer sync, and Battle.net policy validation.
+The bridge written by `starcraft-runtime-launch --bridge` is `mode=launch-attach-bootstrap` and includes the selected `process_id` and `executable`. It is only bootstrap/plumbing evidence and cannot satisfy production readiness. `starcraft-runtime-adapter-proof` now writes `proof.attach=passed` only after both process identity and actual process-memory access are available. A production executor must publish matching runtime identity, `mode=validated-runtime-adapter`, and behavior proof lines for attach, game-state reads, unit reads, command issue, overlay drawing, event dispatch, replay analysis, multiplayer sync, and Battle.net policy validation.
 
 ## BWAPI Reference
 

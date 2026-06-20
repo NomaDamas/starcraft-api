@@ -48,6 +48,15 @@ namespace BWAPI::Runtime
       message << operation << " failed: " << std::strerror(errno);
       return message.str();
     }
+
+#if defined(__APPLE__)
+    std::string taskForPidFailureMessage(kern_return_t result)
+    {
+      return "task_for_pid failed: " + std::string(mach_error_string(result))
+        + "; macOS denied target task access, so use an authorized debugger-signed helper "
+        + "or approved in-process runtime adapter before claiming BWAPI parity";
+    }
+#endif
   }
 
   int currentProcessId()
@@ -89,7 +98,7 @@ namespace BWAPI::Runtime
     mach_port_t task = MACH_PORT_NULL;
     const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
     if (taskResult != KERN_SUCCESS)
-      return accessFailure("task_for_pid failed: " + std::string(mach_error_string(taskResult)));
+      return accessFailure(taskForPidFailureMessage(taskResult));
     if (task != MACH_PORT_NULL)
       mach_port_deallocate(mach_task_self(), task);
 
@@ -164,7 +173,7 @@ namespace BWAPI::Runtime
     {
       const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
       if (taskResult != KERN_SUCCESS)
-        return failure("task_for_pid failed: " + std::string(mach_error_string(taskResult)));
+        return failure(taskForPidFailureMessage(taskResult));
     }
 
     mach_vm_size_t bytesRead = 0;
@@ -260,7 +269,7 @@ namespace BWAPI::Runtime
     {
       const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
       if (taskResult != KERN_SUCCESS)
-        return writeFailure("task_for_pid failed: " + std::string(mach_error_string(taskResult)));
+        return writeFailure(taskForPidFailureMessage(taskResult));
     }
 
     const kern_return_t writeResult = mach_vm_write(

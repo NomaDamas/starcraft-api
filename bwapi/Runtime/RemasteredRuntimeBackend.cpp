@@ -44,6 +44,14 @@ namespace BWAPI::Runtime
       if (std::find(result.capabilities.begin(), result.capabilities.end(), capability) == result.capabilities.end())
         result.capabilities.push_back(capability);
     }
+
+    bool contractRequiresCapability(const RuntimeContract& contract, Capability capability)
+    {
+      return std::find(
+        contract.requiredCapabilities.begin(),
+        contract.requiredCapabilities.end(),
+        capability) != contract.requiredCapabilities.end();
+    }
   }
 
   RemasteredRuntimeBackend::RemasteredRuntimeBackend(RuntimeEnvironment environment)
@@ -87,6 +95,7 @@ namespace BWAPI::Runtime
     result.supported = true;
     result.supported = canClaimProductionSupport(result, contract)
       && preflight.executorAvailable
+      && (!contractRequiresCapability(contract, Capability::SharedMemoryClient) || preflight.memoryAccessible)
       && preflight.errors.empty();
     if (!result.supported)
       result.reason = unsupportedReason(environment_);

@@ -344,13 +344,6 @@ namespace BWAPI::Runtime
       const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment.processId);
       result.memoryAccessible = memoryAccess.accessible;
       result.memoryAccessReason = memoryAccess.reason;
-      if (!memoryAccess.accessible)
-      {
-        result.errors.push_back(
-          memoryAccess.reason.empty()
-            ? "runtime process memory access is unavailable"
-            : "runtime process memory access is unavailable: " + memoryAccess.reason);
-      }
     }
 
     if (!preflightExecutorBridge(environment, result))

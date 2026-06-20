@@ -3,7 +3,9 @@
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
+#include <BWAPI/Runtime/RuntimeProcess.h>
 
+#include <algorithm>
 #include <sstream>
 #include <utility>
 
@@ -35,6 +37,12 @@ namespace BWAPI::Runtime
       if (!environment.manifestPath.empty())
         message << " Runtime manifest: " << environment.manifestPath << '.';
       return message.str();
+    }
+
+    void addCapabilityIfMissing(RuntimeProbeResult& result, Capability capability)
+    {
+      if (std::find(result.capabilities.begin(), result.capabilities.end(), capability) == result.capabilities.end())
+        result.capabilities.push_back(capability);
     }
   }
 
@@ -70,6 +78,10 @@ namespace BWAPI::Runtime
         result.implementedCommandSurfaceEntries = manifest.manifest.implementedCommandSurfaceEntries;
       }
     }
+
+    const RuntimeProcessOpenResult process = openRuntimeProcess(environment_);
+    if (process.opened)
+      addCapabilityIfMissing(result, Capability::SharedMemoryClient);
 
     RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment_, contract);
     result.supported = true;

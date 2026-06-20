@@ -1,4 +1,6 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
+#include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <cassert>
 #include <memory>
@@ -19,6 +21,8 @@ int main()
   RuntimeEnvironment remastered = detected;
   remastered.product = Product::StarCraftRemastered;
   remastered.version = "unknown";
+  remastered.processId = 0;
+  remastered.executablePath.clear();
 
   std::unique_ptr<RuntimeBackend> remasteredBackend = createRuntimeBackend(remastered);
   RuntimeProbeResult remasteredProbe = remasteredBackend->probe();
@@ -35,6 +39,13 @@ int main()
   assert(remasteredBackend->state() == RuntimeSessionState::Failed);
   remasteredBackend->close();
   assert(remasteredBackend->state() == RuntimeSessionState::Closed);
+
+  RuntimeEnvironment attachableRemastered = remastered;
+  attachableRemastered.processId = currentProcessId();
+  std::unique_ptr<RuntimeBackend> attachableRemasteredBackend = createRuntimeBackend(attachableRemastered);
+  RuntimeProbeResult attachableRemasteredProbe = attachableRemasteredBackend->probe();
+  assert(!attachableRemasteredProbe.supported);
+  assert(hasCapability(attachableRemasteredProbe, Capability::SharedMemoryClient));
 
   RuntimeEnvironment legacy = detected;
   legacy.product = Product::StarCraftBroodWar1161;

@@ -54,7 +54,7 @@ Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_c
 
 Executor bridge ready files are also bound to the selected runtime identity. If `STARCRAFT_API_PROCESS_ID` or `--process-id` is set, the ready file must contain the same `process_id`. If `STARCRAFT_API_EXECUTABLE` or `--executable` is set, the ready file must contain the same normalized `executable` path. Stale ready files from another StarCraft process are rejected before preflight or command submission can pass.
 
-Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process is visible to the runtime process primitive. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
+Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process identity is visible. Use `--require-access` to require actual process memory access rights. On macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
 
 When using a bootstrap manifest, pass the runtime identity explicitly so the report attributes gaps to StarCraft Remastered instead of an unknown runtime:
 

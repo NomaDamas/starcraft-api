@@ -26,6 +26,7 @@ namespace
       << "  --address <address>      read from an explicit target address, decimal or 0x-prefixed\n"
       << "  --size <bytes>           read size when --address is provided (default: 16)\n"
       << "  --require-open           return non-zero unless process open succeeds\n"
+      << "  --require-access         return non-zero unless process memory access succeeds\n"
       << "  --require-read           return non-zero unless requested memory read succeeds\n"
       << "  --help                   show this help\n";
   }
@@ -79,6 +80,7 @@ namespace
 int main(int argc, char** argv)
 {
   bool requireOpen = false;
+  bool requireAccess = false;
   bool requireRead = false;
   bool readRequested = false;
   bool self = false;
@@ -93,6 +95,10 @@ int main(int argc, char** argv)
     if (arg == "--require-open")
     {
       requireOpen = true;
+    }
+    else if (arg == "--require-access")
+    {
+      requireAccess = true;
     }
     else if (arg == "--self")
     {
@@ -197,11 +203,19 @@ int main(int argc, char** argv)
   std::cout << "memory.opened=" << (open.opened ? "true" : "false") << '\n';
   if (!open.reason.empty())
     std::cout << "memory.open.reason=" << open.reason << '\n';
+  const RuntimeMemoryAccessResult access = openProcessMemoryAccess(environment.processId);
+  std::cout << "memory.accessible=" << (access.accessible ? "true" : "false") << '\n';
+  if (!access.reason.empty())
+    std::cout << "memory.access.reason=" << access.reason << '\n';
 
   if (!readRequested)
   {
     std::cout << "memory.read.requested=false\n";
-    return requireOpen && !open.opened ? 3 : 0;
+    if (requireOpen && !open.opened)
+      return 3;
+    if (requireAccess && !access.accessible)
+      return 4;
+    return 0;
   }
 
   RuntimeMemoryReadResult read = readProcessMemory(environment.processId, address, size);
@@ -213,7 +227,11 @@ int main(int argc, char** argv)
   if (read.success)
     std::cout << "memory.read.hex=" << hexBytes(read.bytes) << '\n';
 
-  if ((requireOpen && !open.opened) || (requireRead && !read.success))
+  if (requireOpen && !open.opened)
     return 3;
+  if (requireAccess && !access.accessible)
+    return 4;
+  if (requireRead && !read.success)
+    return 5;
   return 0;
 }

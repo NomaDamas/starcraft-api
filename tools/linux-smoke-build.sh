@@ -209,6 +209,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tools/runtime_probe.cpp" \
@@ -231,6 +232,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tools/runtime_gap_report.cpp" \
@@ -253,6 +255,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
   "$repo_root/tools/runtime_submit_command.cpp" \
@@ -282,7 +285,7 @@ cxxflags=${CXXFLAGS:-}
   -o "$bin_dir/starcraft-runtime-memory-probe"
 
 "$bin_dir/starcraft-runtime-memory-probe" --help >/dev/null
-"$bin_dir/starcraft-runtime-memory-probe" --self --require-open >/dev/null
+"$bin_dir/starcraft-runtime-memory-probe" --self --require-open --require-access >/dev/null
 
 "$cxx" -std=c++17 $cxxflags \
   -I "$repo_root/bwapi/include" \

@@ -22,7 +22,14 @@ namespace BWAPI::Runtime
     std::string reason;
   };
 
+  struct RuntimeMemoryAccessResult
+  {
+    bool accessible = false;
+    std::string reason;
+  };
+
   int currentProcessId();
+  RuntimeMemoryAccessResult openProcessMemoryAccess(int processId);
   RuntimeMemoryReadResult readProcessMemory(
     int processId,
     std::uintptr_t address,

@@ -12,6 +12,7 @@
 #include <mach/mach_vm.h>
 #include <unistd.h>
 #elif defined(__linux__)
+#include <fcntl.h>
 #include <sys/uio.h>
 #include <unistd.h>
 #endif
@@ -34,6 +35,13 @@ namespace BWAPI::Runtime
       return result;
     }
 
+    RuntimeMemoryAccessResult accessFailure(std::string reason)
+    {
+      RuntimeMemoryAccessResult result;
+      result.reason = std::move(reason);
+      return result;
+    }
+
     std::string errnoMessage(const char* operation)
     {
       std::ostringstream message;
@@ -50,6 +58,63 @@ namespace BWAPI::Runtime
     return static_cast<int>(getpid());
 #else
     return 0;
+#endif
+  }
+
+  RuntimeMemoryAccessResult openProcessMemoryAccess(int processId)
+  {
+    if (processId <= 0)
+      return accessFailure("process id must be positive");
+
+#if defined(_WIN32)
+    HANDLE process = OpenProcess(
+      PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+      FALSE,
+      static_cast<DWORD>(processId));
+    if (process == nullptr)
+      return accessFailure("OpenProcess VM access failed");
+    CloseHandle(process);
+
+    RuntimeMemoryAccessResult result;
+    result.accessible = true;
+    return result;
+#elif defined(__APPLE__)
+    if (processId == currentProcessId())
+    {
+      RuntimeMemoryAccessResult result;
+      result.accessible = true;
+      return result;
+    }
+
+    mach_port_t task = MACH_PORT_NULL;
+    const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
+    if (taskResult != KERN_SUCCESS)
+      return accessFailure("task_for_pid failed: " + std::string(mach_error_string(taskResult)));
+    if (task != MACH_PORT_NULL)
+      mach_port_deallocate(mach_task_self(), task);
+
+    RuntimeMemoryAccessResult result;
+    result.accessible = true;
+    return result;
+#elif defined(__linux__)
+    if (processId == currentProcessId())
+    {
+      RuntimeMemoryAccessResult result;
+      result.accessible = true;
+      return result;
+    }
+
+    const std::string memPath = "/proc/" + std::to_string(processId) + "/mem";
+    const int fd = open(memPath.c_str(), O_RDONLY);
+    if (fd < 0)
+      return accessFailure(errnoMessage("open /proc/<pid>/mem"));
+    close(fd);
+
+    RuntimeMemoryAccessResult result;
+    result.accessible = true;
+    return result;
+#else
+    return accessFailure("process memory access is unsupported on this platform");
 #endif
   }
 

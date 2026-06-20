@@ -3,7 +3,7 @@
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
-#include <BWAPI/Runtime/RuntimeProcess.h>
+#include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <algorithm>
 #include <sstream>
@@ -79,8 +79,8 @@ namespace BWAPI::Runtime
       }
     }
 
-    const RuntimeProcessOpenResult process = openRuntimeProcess(environment_);
-    if (process.opened)
+    const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment_.processId);
+    if (memoryAccess.accessible)
       addCapabilityIfMissing(result, Capability::SharedMemoryClient);
 
     RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment_, contract);

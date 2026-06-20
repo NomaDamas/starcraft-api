@@ -185,7 +185,7 @@ endif()
 
 if(TARGET starcraft-runtime-memory-probe)
   add_test(NAME runtime_memory_probe_help COMMAND starcraft-runtime-memory-probe --help)
-  add_test(NAME runtime_memory_probe_self_open COMMAND starcraft-runtime-memory-probe --self --require-open)
+  add_test(NAME runtime_memory_probe_self_open COMMAND starcraft-runtime-memory-probe --self --require-open --require-access)
 endif()
 
 if(TARGET starcraft-runtime-adapter-proof)

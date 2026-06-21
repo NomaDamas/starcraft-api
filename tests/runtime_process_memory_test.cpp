@@ -54,5 +54,18 @@ int main()
   assert(regionRead.success);
   assert(regionRead.bytesRead == 1);
 
+  RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(currentProcessId());
+  assert(regions.success);
+  assert(!regions.regions.empty());
+
+  bool foundReadable = false;
+  for (const RuntimeMemoryRegion& listedRegion : regions.regions)
+  {
+    assert(listedRegion.address != 0);
+    assert(listedRegion.size > 0);
+    foundReadable = foundReadable || listedRegion.readable;
+  }
+  assert(foundReadable);
+
   return 0;
 }

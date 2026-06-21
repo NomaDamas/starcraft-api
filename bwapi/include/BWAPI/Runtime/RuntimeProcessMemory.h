@@ -36,8 +36,25 @@ namespace BWAPI::Runtime
     std::string reason;
   };
 
+  struct RuntimeMemoryRegion
+  {
+    std::uintptr_t address = 0;
+    std::size_t size = 0;
+    bool readable = false;
+    bool writable = false;
+    bool executable = false;
+  };
+
+  struct RuntimeMemoryRegionListResult
+  {
+    bool success = false;
+    std::vector<RuntimeMemoryRegion> regions;
+    std::string reason;
+  };
+
   int currentProcessId();
   RuntimeMemoryAccessResult openProcessMemoryAccess(int processId);
+  RuntimeMemoryRegionListResult listProcessMemoryRegions(int processId);
   RuntimeMemoryRegionResult findFirstReadableProcessMemoryRegion(int processId);
   RuntimeMemoryReadResult readProcessMemory(
     int processId,

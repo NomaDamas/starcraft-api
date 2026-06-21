@@ -209,6 +209,14 @@ if(TARGET starcraft-runtime-adapter-proof)
   )
 endif()
 
+if(TARGET starcraft-runtime-input)
+  add_test(NAME runtime_input_help COMMAND starcraft-runtime-input --help)
+  add_test(
+    NAME runtime_input_dry_run
+    COMMAND starcraft-runtime-input --process-id 1 --keys "s enter c" --dry-run
+  )
+endif()
+
 if(TARGET bwapi-api-surface-audit)
   add_test(NAME bwapi_api_surface_audit COMMAND bwapi-api-surface-audit)
 endif()

@@ -147,6 +147,21 @@ if(STARCRAFT_API_BUILD_TOOLS)
       StarCraftAPI::runtime
   )
 
+  add_executable(starcraft-runtime-input
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_input.cpp"
+  )
+  target_link_libraries(starcraft-runtime-input
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+  if(APPLE)
+    find_library(APPLICATION_SERVICES_FRAMEWORK ApplicationServices REQUIRED)
+    target_link_libraries(starcraft-runtime-input
+      PRIVATE
+        "${APPLICATION_SERVICES_FRAMEWORK}"
+    )
+  endif()
+
   if(APPLE)
     add_custom_target(starcraft-runtime-sign-debug-tools
       COMMAND
@@ -165,11 +180,16 @@ if(STARCRAFT_API_BUILD_TOOLS)
         /usr/bin/codesign --force --sign - --entitlements
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
         $<TARGET_FILE:starcraft-runtime-gap-report>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-input>
       DEPENDS
         starcraft-runtime-memory-probe
         starcraft-runtime-adapter-proof
         starcraft-runtime-probe
         starcraft-runtime-gap-report
+        starcraft-runtime-input
       COMMENT "Ad-hoc signing runtime debug tools with macOS debugger entitlements"
       VERBATIM
     )

@@ -555,6 +555,12 @@ namespace BWAPI::Runtime
         "adapter read stable frame/game-state data from the target runtime"
       },
       {
+        "active-match-state",
+        Capability::ReadGameState,
+        "proof.active_match_state=passed",
+        "adapter proved the selected runtime is inside an active match/replay, not only menu/login state"
+      },
+      {
         "read-units",
         Capability::ReadUnitData,
         "proof.read_units=passed",

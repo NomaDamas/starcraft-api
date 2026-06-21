@@ -33,6 +33,8 @@ namespace
       << "  --executable <path>      override runtime executable path\n"
       << "  --self                   prove attach against this CLI process\n"
       << "  --prove-read-game-state  prove live state reads by finding a changing runtime counter\n"
+      << "  --prove-active-match-state\n"
+      << "                           prove the target is in an active match/replay, not menu/login\n"
       << "  --prove-read-units       prove live unit reads by finding a BWAPI-compatible CUnit array\n"
       << "  --self-unit-fixture      allocate a self-test CUnit array before --prove-read-units\n"
       << "  --prove-battle-net-policy\n"
@@ -917,6 +919,7 @@ int main(int argc, char** argv)
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   bool self = false;
   bool proveReadGameState = false;
+  bool proveActiveMatchState = false;
   bool proveReadUnits = false;
   bool selfUnitFixture = false;
   bool proveBattleNetPolicyFlag = false;
@@ -945,6 +948,11 @@ int main(int argc, char** argv)
     if (arg == "--prove-read-game-state")
     {
       proveReadGameState = true;
+      continue;
+    }
+    if (arg == "--prove-active-match-state")
+    {
+      proveActiveMatchState = true;
       continue;
     }
     if (arg == "--prove-read-units")
@@ -1155,7 +1163,14 @@ int main(int argc, char** argv)
       proofFailureCode = proofFailureCode == 0 ? 4 : proofFailureCode;
   }
 
-  if (proveReadUnits)
+  if (proveActiveMatchState && self)
+  {
+    std::cout << "active_match_state.in_game=false\n";
+    std::cout << "active_match_state.reason=self process and self fixtures cannot prove StarCraft active match state\n";
+    proofFailureCode = proofFailureCode == 0 ? 7 : proofFailureCode;
+  }
+
+  if ((proveReadUnits || proveActiveMatchState) && proofFailureCode == 0)
   {
     readUnitsProof = proveLiveUnitsRead(
       environment.processId,
@@ -1164,17 +1179,35 @@ int main(int argc, char** argv)
       unitScanReadableOnlyFlag,
       unitScanVectorsFlag,
       unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
-    std::cout << "read_units.unit_array=" << (readUnitsProof.passed ? "true" : "false") << '\n';
-    if (readUnitsProof.passed)
+    if (proveReadUnits)
     {
-      std::cout << "read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
-      std::cout << "read_units.record_size=" << readUnitsProof.recordSize << '\n';
-      std::cout << "read_units.layout=" << readUnitsProof.layoutName << '\n';
-      std::cout << "read_units.sampled_records=" << readUnitsProof.sampledRecords << '\n';
-      std::cout << "read_units.active_records=" << readUnitsProof.activeRecords << '\n';
+      std::cout << "read_units.unit_array=" << (readUnitsProof.passed ? "true" : "false") << '\n';
+      if (readUnitsProof.passed)
+      {
+        std::cout << "read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
+        std::cout << "read_units.record_size=" << readUnitsProof.recordSize << '\n';
+        std::cout << "read_units.layout=" << readUnitsProof.layoutName << '\n';
+        std::cout << "read_units.sampled_records=" << readUnitsProof.sampledRecords << '\n';
+        std::cout << "read_units.active_records=" << readUnitsProof.activeRecords << '\n';
+      }
+      if (!readUnitsProof.reason.empty())
+        std::cout << "read_units.reason=" << readUnitsProof.reason << '\n';
     }
-    if (!readUnitsProof.reason.empty())
-      std::cout << "read_units.reason=" << readUnitsProof.reason << '\n';
+
+    if (proveActiveMatchState)
+    {
+      std::cout << "active_match_state.in_game=" << (readUnitsProof.passed ? "true" : "false") << '\n';
+      std::cout << "active_match_state.evidence=active-unit-records\n";
+      if (readUnitsProof.passed)
+      {
+        std::cout << "active_match_state.active_records=" << readUnitsProof.activeRecords << '\n';
+        std::cout << "active_match_state.unit_array_address=0x"
+                  << std::hex << readUnitsProof.address << std::dec << '\n';
+      }
+      if (!readUnitsProof.reason.empty())
+        std::cout << "active_match_state.reason=" << readUnitsProof.reason << '\n';
+    }
+
     if (unitScanDiagnosticsFlag)
     {
       std::cout << "read_units.scan.readable_writable_regions="
@@ -1267,7 +1300,7 @@ int main(int argc, char** argv)
       }
     }
     if (!readUnitsProof.passed)
-      proofFailureCode = proofFailureCode == 0 ? 6 : proofFailureCode;
+      proofFailureCode = proofFailureCode == 0 ? (proveReadUnits ? 6 : 7) : proofFailureCode;
   }
 
   if (proveBattleNetPolicyFlag)
@@ -1317,6 +1350,13 @@ int main(int argc, char** argv)
     return 1;
   }
 
+  const RuntimeExecutorBehaviorProof* activeMatchStateBehaviorProof = findProof("active-match-state");
+  if (proveActiveMatchState && activeMatchStateBehaviorProof == nullptr)
+  {
+    std::cerr << "active-match-state proof definition is missing\n";
+    return 1;
+  }
+
   const RuntimeExecutorBehaviorProof* readUnitsBehaviorProof = findProof("read-units");
   if (proveReadUnits && readUnitsBehaviorProof == nullptr)
   {
@@ -1358,6 +1398,14 @@ int main(int argc, char** argv)
           << readGameStateProof.third << '\n';
     ready << readGameStateBehaviorProof->readyFileLine << '\n';
   }
+  if (proveActiveMatchState)
+  {
+    ready << "proof.active_match_state.evidence=active-unit-records\n";
+    ready << "proof.active_match_state.active_records=" << readUnitsProof.activeRecords << '\n';
+    ready << "proof.active_match_state.unit_array_address=0x"
+          << std::hex << readUnitsProof.address << std::dec << '\n';
+    ready << activeMatchStateBehaviorProof->readyFileLine << '\n';
+  }
   if (proveReadUnits)
   {
     ready << "proof.read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
@@ -1387,6 +1435,8 @@ int main(int argc, char** argv)
   std::cout << attachProof->readyFileLine << '\n';
   if (proveReadGameState)
     std::cout << readGameStateBehaviorProof->readyFileLine << '\n';
+  if (proveActiveMatchState)
+    std::cout << activeMatchStateBehaviorProof->readyFileLine << '\n';
   if (proveReadUnits)
     std::cout << readUnitsBehaviorProof->readyFileLine << '\n';
   if (proveBattleNetPolicyFlag)

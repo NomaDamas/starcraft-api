@@ -58,6 +58,10 @@ string(FIND "${ready}" "proof.read_units=passed" read_units_index)
 if(NOT read_units_index EQUAL -1)
   message(FATAL_ERROR "attach proof must not claim read-units behavior\n${ready}")
 endif()
+string(FIND "${ready}" "proof.active_match_state=passed" active_match_state_index)
+if(NOT active_match_state_index EQUAL -1)
+  message(FATAL_ERROR "attach proof must not claim active-match-state behavior\n${ready}")
+endif()
 
 file(REMOVE_RECURSE "${bridge_dir}")
 
@@ -133,7 +137,39 @@ foreach(needle
   endif()
 endforeach()
 
+string(FIND "${units_ready}" "proof.active_match_state=passed" fixture_active_match_index)
+if(NOT fixture_active_match_index EQUAL -1)
+  message(FATAL_ERROR "self fixture read-units proof must not claim active-match-state behavior\n${units_ready}")
+endif()
+
 file(REMOVE_RECURSE "${units_bridge_dir}")
+
+set(active_match_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-active-match-bridge")
+file(REMOVE_RECURSE "${active_match_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${active_match_bridge_dir}"
+    --prove-active-match-state
+    --self-unit-fixture
+  RESULT_VARIABLE active_match_result
+  OUTPUT_VARIABLE active_match_output
+  ERROR_VARIABLE active_match_error
+)
+if(active_match_result EQUAL 0)
+  message(FATAL_ERROR "expected active-match-state proof to reject self fixture\nstdout:\n${active_match_output}\nstderr:\n${active_match_error}")
+endif()
+foreach(needle
+    "active_match_state.in_game=false"
+    "self process and self fixtures cannot prove StarCraft active match state")
+  string(FIND "${active_match_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "active-match-state rejection output missing '${needle}'\n${active_match_output}")
+  endif()
+endforeach()
 
 set(policy_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-bridge")
 set(policy_root "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-root")

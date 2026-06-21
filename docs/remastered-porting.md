@@ -152,7 +152,7 @@ The local filesystem bridge can now create a readiness file for launch/attach bo
 
 `starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category, including when no validated executor bridge is configured.
 
-`starcraft-runtime-adapter-proof --prove-read-units --unit-best-dump-out <path>` dumps the strongest CUnit candidate snapshot when the live scanner cannot prove a full active array. This is failure-analysis evidence only; it does not emit `proof.read_units=passed` unless the active unit array threshold is met.
+`starcraft-runtime-adapter-proof --prove-active-match-state` requires live active-unit evidence from the selected StarCraft process and rejects self fixtures. This is the gate that prevents menu/login state from being mistaken for in-game BWAPI parity evidence. `starcraft-runtime-adapter-proof --prove-read-units --unit-best-dump-out <path>` dumps the strongest CUnit candidate snapshot when the live scanner cannot prove a full active array. This is failure-analysis evidence only; it does not emit `proof.read_units=passed` unless the active unit array threshold is met.
 
 Validated adapter ready files may also publish contract proof lines for evidence that was directly proven by that adapter run:
 
@@ -181,6 +181,7 @@ The required behavior proof lines are:
 ```text
 proof.attach=passed
 proof.read_game_state=passed
+proof.active_match_state=passed
 proof.read_units=passed
 proof.issue_commands=passed
 proof.draw_overlays=passed
@@ -190,7 +191,7 @@ proof.multiplayer_sync=passed
 proof.battle_net_policy=passed
 ```
 
-These proof lines represent validated adapter evidence, not manifest declarations. Production readiness still requires a validated in-process or otherwise authorized SC:R adapter that can read state, issue commands, draw overlays, dispatch events, and prove multiplayer synchronization behavior.
+These proof lines represent validated adapter evidence, not manifest declarations. Production readiness still requires a validated in-process or otherwise authorized SC:R adapter that can prove active match/replay state, read state, issue commands, draw overlays, dispatch events, and prove multiplayer synchronization behavior.
 
 ## Process Memory Primitive
 

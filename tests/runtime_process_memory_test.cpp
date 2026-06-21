@@ -45,5 +45,14 @@ int main()
   assert(!invalidWrite.success);
   assert(!invalidWrite.reason.empty());
 
+  RuntimeMemoryRegionResult region = findFirstReadableProcessMemoryRegion(currentProcessId());
+  assert(region.found);
+  assert(region.address != 0);
+  assert(region.size > 0);
+
+  RuntimeMemoryReadResult regionRead = readProcessMemory(currentProcessId(), region.address, 1);
+  assert(regionRead.success);
+  assert(regionRead.bytesRead == 1);
+
   return 0;
 }

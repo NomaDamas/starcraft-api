@@ -24,6 +24,7 @@ namespace
       << "  --executable <path>      override target executable path\n"
       << "  --self                   probe this CLI process instead of resolving StarCraft\n"
       << "  --address <address>      read from an explicit target address, decimal or 0x-prefixed\n"
+      << "  --read-first-readable    find and read the first readable target memory region\n"
       << "  --size <bytes>           read size when --address is provided (default: 16)\n"
       << "  --require-open           return non-zero unless process open succeeds\n"
       << "  --require-access         return non-zero unless process memory access succeeds\n"
@@ -83,6 +84,7 @@ int main(int argc, char** argv)
   bool requireAccess = false;
   bool requireRead = false;
   bool readRequested = false;
+  bool readFirstReadable = false;
   bool self = false;
   int processIdOverride = 0;
   std::uintptr_t address = 0;
@@ -133,6 +135,11 @@ int main(int argc, char** argv)
         std::cerr << "--address requires a positive integer address\n";
         return 64;
       }
+      readRequested = true;
+    }
+    else if (arg == "--read-first-readable")
+    {
+      readFirstReadable = true;
       readRequested = true;
     }
     else if (arg == "--size")
@@ -216,6 +223,28 @@ int main(int argc, char** argv)
     if (requireAccess && !access.accessible)
       return 4;
     return 0;
+  }
+
+  if (readFirstReadable)
+  {
+    RuntimeMemoryRegionResult region = findFirstReadableProcessMemoryRegion(environment.processId);
+    std::cout << "memory.read.region.found=" << (region.found ? "true" : "false") << '\n';
+    if (region.found)
+    {
+      address = region.address;
+      std::cout << "memory.read.region.address=0x" << std::hex << region.address << std::dec << '\n';
+      std::cout << "memory.read.region.size=" << region.size << '\n';
+    }
+    if (!region.reason.empty())
+      std::cout << "memory.read.region.reason=" << region.reason << '\n';
+    if (!region.found)
+    {
+      if (requireOpen && !open.opened)
+        return 3;
+      if (requireAccess && !access.accessible)
+        return 4;
+      return requireRead ? 5 : 0;
+    }
   }
 
   RuntimeMemoryReadResult read = readProcessMemory(environment.processId, address, size);

@@ -56,6 +56,8 @@ Executor bridge ready files are also bound to the selected runtime identity. If 
 
 Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process identity is visible. Use `--require-access` to require actual process memory access rights. On macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied. The production readiness report also emits `runtime-memory-accessible` and a `memory-access` implementation gap when the BWAPI parity contract requires a shared-memory client but the selected runtime process cannot be accessed. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
 
+On macOS local development builds, run `cmake --build build --target starcraft-runtime-sign-debug-tools` to ad-hoc sign the runtime diagnostic tools with debugger entitlements from `tools/macos-debugger.entitlements`. This enables authorized local attach tests on systems that allow debugger-signed tools. Then use `starcraft-runtime-memory-probe --read-first-readable --require-open --require-access --require-read` to prove real target-process VM reads without hard-coding an address.
+
 When using a bootstrap manifest, pass the runtime identity explicitly so the report attributes gaps to StarCraft Remastered instead of an unknown runtime:
 
 ```sh

@@ -147,6 +147,34 @@ if(STARCRAFT_API_BUILD_TOOLS)
       StarCraftAPI::runtime
   )
 
+  if(APPLE)
+    add_custom_target(starcraft-runtime-sign-debug-tools
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-memory-probe>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-adapter-proof>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-probe>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-gap-report>
+      DEPENDS
+        starcraft-runtime-memory-probe
+        starcraft-runtime-adapter-proof
+        starcraft-runtime-probe
+        starcraft-runtime-gap-report
+      COMMENT "Ad-hoc signing runtime debug tools with macOS debugger entitlements"
+      VERBATIM
+    )
+  endif()
+
   add_executable(bwapi-api-surface-audit
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/api_surface_audit.cpp"
   )

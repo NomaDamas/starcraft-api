@@ -28,8 +28,17 @@ namespace BWAPI::Runtime
     std::string reason;
   };
 
+  struct RuntimeMemoryRegionResult
+  {
+    bool found = false;
+    std::uintptr_t address = 0;
+    std::size_t size = 0;
+    std::string reason;
+  };
+
   int currentProcessId();
   RuntimeMemoryAccessResult openProcessMemoryAccess(int processId);
+  RuntimeMemoryRegionResult findFirstReadableProcessMemoryRegion(int processId);
   RuntimeMemoryReadResult readProcessMemory(
     int processId,
     std::uintptr_t address,

@@ -1,7 +1,9 @@
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -10,8 +12,11 @@
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <mach/vm_region.h>
 #include <unistd.h>
 #elif defined(__linux__)
+#include <algorithm>
+#include <fstream>
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -42,6 +47,13 @@ namespace BWAPI::Runtime
       return result;
     }
 
+    RuntimeMemoryRegionResult regionFailure(std::string reason)
+    {
+      RuntimeMemoryRegionResult result;
+      result.reason = std::move(reason);
+      return result;
+    }
+
     std::string errnoMessage(const char* operation)
     {
       std::ostringstream message;
@@ -55,6 +67,22 @@ namespace BWAPI::Runtime
       return "task_for_pid failed: " + std::string(mach_error_string(result))
         + "; macOS denied target task access, so use an authorized debugger-signed helper "
         + "or approved in-process runtime adapter before claiming BWAPI parity";
+    }
+#endif
+
+#if defined(_WIN32)
+    bool windowsPageReadable(DWORD protect)
+    {
+      if ((protect & PAGE_GUARD) != 0 || (protect & PAGE_NOACCESS) != 0)
+        return false;
+
+      const DWORD baseProtect = protect & 0xff;
+      return baseProtect == PAGE_READONLY
+        || baseProtect == PAGE_READWRITE
+        || baseProtect == PAGE_WRITECOPY
+        || baseProtect == PAGE_EXECUTE_READ
+        || baseProtect == PAGE_EXECUTE_READWRITE
+        || baseProtect == PAGE_EXECUTE_WRITECOPY;
     }
 #endif
   }
@@ -124,6 +152,135 @@ namespace BWAPI::Runtime
     return result;
 #else
     return accessFailure("process memory access is unsupported on this platform");
+#endif
+  }
+
+  RuntimeMemoryRegionResult findFirstReadableProcessMemoryRegion(int processId)
+  {
+    if (processId <= 0)
+      return regionFailure("process id must be positive");
+
+#if defined(_WIN32)
+    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, static_cast<DWORD>(processId));
+    if (process == nullptr)
+      return regionFailure("OpenProcess query failed");
+
+    unsigned char* address = nullptr;
+    MEMORY_BASIC_INFORMATION info;
+    while (VirtualQueryEx(process, address, &info, sizeof(info)) == sizeof(info))
+    {
+      if (info.State == MEM_COMMIT && windowsPageReadable(info.Protect) && info.RegionSize > 0)
+      {
+        CloseHandle(process);
+        RuntimeMemoryRegionResult result;
+        result.found = true;
+        result.address = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
+        result.size = static_cast<std::size_t>(info.RegionSize);
+        return result;
+      }
+
+      const auto base = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
+      const auto next = base + info.RegionSize;
+      if (next <= base)
+        break;
+      address = reinterpret_cast<unsigned char*>(next);
+    }
+
+    CloseHandle(process);
+    return regionFailure("no readable committed memory region found");
+#elif defined(__APPLE__)
+    mach_port_t task = MACH_PORT_NULL;
+    if (processId == currentProcessId())
+    {
+      task = mach_task_self();
+    }
+    else
+    {
+      const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
+      if (taskResult != KERN_SUCCESS)
+        return regionFailure(taskForPidFailureMessage(taskResult));
+    }
+
+    mach_vm_address_t address = 1;
+    while (true)
+    {
+      mach_vm_size_t regionSize = 0;
+      vm_region_basic_info_data_64_t info;
+      mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+      mach_port_t objectName = MACH_PORT_NULL;
+
+      const kern_return_t regionResult = mach_vm_region(
+        task,
+        &address,
+        &regionSize,
+        VM_REGION_BASIC_INFO_64,
+        reinterpret_cast<vm_region_info_t>(&info),
+        &count,
+        &objectName);
+
+      if (objectName != MACH_PORT_NULL)
+        mach_port_deallocate(mach_task_self(), objectName);
+
+      if (regionResult != KERN_SUCCESS)
+        break;
+
+      if ((info.protection & VM_PROT_READ) != 0 && regionSize > 0)
+      {
+        if (task != MACH_PORT_NULL && task != mach_task_self())
+          mach_port_deallocate(mach_task_self(), task);
+
+        RuntimeMemoryRegionResult result;
+        result.found = true;
+        result.address = static_cast<std::uintptr_t>(address);
+        result.size = static_cast<std::size_t>(regionSize);
+        return result;
+      }
+
+      const mach_vm_address_t next = address + regionSize;
+      if (next <= address)
+        break;
+      address = next;
+    }
+
+    if (task != MACH_PORT_NULL && task != mach_task_self())
+      mach_port_deallocate(mach_task_self(), task);
+    return regionFailure("no readable memory region found");
+#elif defined(__linux__)
+    const std::string mapsPath = "/proc/" + std::to_string(processId) + "/maps";
+    std::ifstream maps(mapsPath);
+    if (!maps)
+      return regionFailure(errnoMessage("open /proc/<pid>/maps"));
+
+    std::string line;
+    while (std::getline(maps, line))
+    {
+      const std::size_t dash = line.find('-');
+      const std::size_t space = line.find(' ');
+      if (dash == std::string::npos || space == std::string::npos || dash > space)
+        continue;
+      if (space + 1 >= line.size() || line[space + 1] != 'r')
+        continue;
+
+      const std::string startText = line.substr(0, dash);
+      const std::string endText = line.substr(dash + 1, space - dash - 1);
+      char* startEnd = nullptr;
+      char* endEnd = nullptr;
+      const unsigned long long start = std::strtoull(startText.c_str(), &startEnd, 16);
+      const unsigned long long end = std::strtoull(endText.c_str(), &endEnd, 16);
+      if (*startEnd != '\0' || *endEnd != '\0' || end <= start)
+        continue;
+
+      RuntimeMemoryRegionResult result;
+      result.found = true;
+      result.address = static_cast<std::uintptr_t>(start);
+      result.size = static_cast<std::size_t>(
+        std::min<unsigned long long>(end - start, static_cast<unsigned long long>(std::numeric_limits<std::size_t>::max())));
+      return result;
+    }
+
+    return regionFailure("no readable memory mapping found");
+#else
+    return regionFailure("memory region discovery is unsupported on this platform");
 #endif
   }
 

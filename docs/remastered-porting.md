@@ -130,6 +130,8 @@ Use `starcraft-runtime-memory-probe --require-open` to verify process identity v
 
 When the selected parity contract requires `SharedMemoryClient`, executor preflight also emits `executor.memory_accessible` and fails readiness with `runtime-memory-accessible` plus a `memory-access` implementation gap if the target process cannot be opened for real VM access. This keeps a visible StarCraft process from being mistaken for an attachable BWAPI-compatible runtime.
 
+For macOS local attach tests, `starcraft-runtime-sign-debug-tools` ad-hoc signs the runtime diagnostic tools with `tools/macos-debugger.entitlements`. After signing, `starcraft-runtime-memory-probe --read-first-readable --require-open --require-access --require-read` discovers a readable target VM region and reads bytes from the selected process. This proves the attach/read primitive without depending on a hard-coded StarCraft address.
+
 `RuntimeExecutor` separates three release-gate signals:
 
 - `executor.contract_valid`: the selected contract or manifest has no unresolved required BWAPI parity entries.

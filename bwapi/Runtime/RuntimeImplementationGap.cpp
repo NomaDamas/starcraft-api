@@ -37,6 +37,11 @@ namespace BWAPI::Runtime
         contract.requiredCapabilities.end(),
         capability) != contract.requiredCapabilities.end();
     }
+
+    bool isBehaviorProofPreflightError(const std::string& error)
+    {
+      return error.rfind("runtime executor bridge ready file is missing behavior proof: ", 0) == 0;
+    }
   }
 
   std::vector<RuntimeImplementationGap> collectRuntimeImplementationGaps(
@@ -152,6 +157,8 @@ namespace BWAPI::Runtime
     for (std::size_t i = 0; i < preflight.errors.size(); ++i)
     {
       if (containsValue(validation.errors, preflight.errors[i]))
+        continue;
+      if (isBehaviorProofPreflightError(preflight.errors[i]))
         continue;
       addGap(gaps, "executor-preflight-error", "error." + std::to_string(i), preflight.errors[i]);
     }

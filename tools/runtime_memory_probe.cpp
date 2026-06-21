@@ -22,11 +22,13 @@ using namespace BWAPI::Runtime;
 namespace
 {
   volatile char selfWritableFindFixture[] = "starcraft-api-memory-probe-self-fixture";
+  volatile std::uint32_t selfWritableU32FindFixture = 0x5ca1ab1e;
 
   void keepSelfWritableFindFixtureAlive()
   {
     const char first = selfWritableFindFixture[0];
     selfWritableFindFixture[0] = first;
+    selfWritableU32FindFixture ^= 0;
   }
 
   void printUsage()
@@ -43,11 +45,14 @@ namespace
       << "  --process-state          print OS process status/thread diagnostics\n"
       << "  --region-summary         print process memory region counters\n"
       << "  --find-ascii <text>      scan readable target memory for an ASCII string\n"
+      << "  --find-u32 <value>       scan readable target memory for a 32-bit little-endian value\n"
       << "  --find-u64 <value>       scan readable target memory for a 64-bit little-endian value\n"
-      << "  --find-max-scan-mb <mb>  maximum readable memory scanned by --find-ascii (default: 128)\n"
+      << "  --find-max-scan-mb <mb>  maximum readable memory scanned by --find-* (default: 128)\n"
       << "  --find-writable-only     scan only readable+writable memory regions\n"
       << "  --find-non-executable-only\n"
       << "                           scan only readable non-executable memory regions\n"
+      << "  --find-target-executable-only\n"
+      << "                           scan only regions mapped from --executable\n"
       << "  --size <bytes>           read size when --address is provided (default: 16)\n"
       << "  --dump-out <path>        write requested bytes to a binary file when read succeeds\n"
       << "  --require-open           return non-zero unless process open succeeds\n"
@@ -134,13 +139,16 @@ int main(int argc, char** argv)
   bool processStateRequested = false;
   bool regionSummaryRequested = false;
   bool findRequested = false;
+  bool findU32Requested = false;
   bool findU64Requested = false;
   bool findWritableOnly = false;
   bool findNonExecutableOnly = false;
+  bool findTargetExecutableOnly = false;
   bool requireFind = false;
   bool self = false;
   int processIdOverride = 0;
   std::uintptr_t address = 0;
+  std::uint32_t findU32 = 0;
   std::uint64_t findU64 = 0;
   std::size_t size = 16;
   std::size_t findMaxScanBytes = 128 * 1024 * 1024;
@@ -258,6 +266,18 @@ int main(int argc, char** argv)
       findRequested = true;
       findU64Requested = true;
     }
+    else if (arg == "--find-u32")
+    {
+      std::uintptr_t parsed = 0;
+      if (i + 1 >= argc || !parseAddress(argv[++i], parsed) || parsed > std::numeric_limits<std::uint32_t>::max())
+      {
+        std::cerr << "--find-u32 requires a positive 32-bit integer value\n";
+        return 64;
+      }
+      findU32 = static_cast<std::uint32_t>(parsed);
+      findRequested = true;
+      findU32Requested = true;
+    }
     else if (arg == "--find-writable-only")
     {
       findWritableOnly = true;
@@ -265,6 +285,10 @@ int main(int argc, char** argv)
     else if (arg == "--find-non-executable-only")
     {
       findNonExecutableOnly = true;
+    }
+    else if (arg == "--find-target-executable-only")
+    {
+      findTargetExecutableOnly = true;
     }
     else if (arg == "--find-max-scan-mb")
     {
@@ -444,6 +468,11 @@ int main(int argc, char** argv)
       needle.resize(sizeof(findU64));
       std::memcpy(needle.data(), &findU64, sizeof(findU64));
     }
+    else if (findU32Requested)
+    {
+      needle.resize(sizeof(findU32));
+      std::memcpy(needle.data(), &findU32, sizeof(findU32));
+    }
     else
     {
       needle.assign(findAscii.begin(), findAscii.end());
@@ -460,6 +489,7 @@ int main(int argc, char** argv)
     std::size_t candidateRegions = 0;
     std::size_t skippedWritableFilter = 0;
     std::size_t skippedExecutableFilter = 0;
+    std::size_t skippedTargetExecutableFilter = 0;
     std::size_t matchCount = 0;
 
     for (const RuntimeMemoryRegion& region : regions.regions)
@@ -474,6 +504,11 @@ int main(int argc, char** argv)
       if (findNonExecutableOnly && region.executable)
       {
         ++skippedExecutableFilter;
+        continue;
+      }
+      if (findTargetExecutableOnly && !sameMappedFile(region.mappedPath, environment.executablePath))
+      {
+        ++skippedTargetExecutableFilter;
         continue;
       }
 
@@ -509,6 +544,9 @@ int main(int argc, char** argv)
                     << (region.writable ? "true" : "false") << '\n';
           std::cout << "memory.find.match." << matchCount << ".region.executable="
                     << (region.executable ? "true" : "false") << '\n';
+          if (!region.mappedPath.empty())
+            std::cout << "memory.find.match." << matchCount << ".region.mapped_path="
+                      << region.mappedPath << '\n';
         }
         ++matchCount;
         begin = match + 1;
@@ -517,13 +555,19 @@ int main(int argc, char** argv)
 
     if (findU64Requested)
       std::cout << "memory.find.needle.u64=0x" << std::hex << findU64 << std::dec << '\n';
+    else if (findU32Requested)
+      std::cout << "memory.find.needle.u32=0x" << std::hex << findU32 << std::dec << '\n';
     else
       std::cout << "memory.find.needle=" << findAscii << '\n';
     std::cout << "memory.find.filter.writable_only=" << (findWritableOnly ? "true" : "false") << '\n';
     std::cout << "memory.find.filter.non_executable_only=" << (findNonExecutableOnly ? "true" : "false") << '\n';
+    std::cout << "memory.find.filter.target_executable_only="
+              << (findTargetExecutableOnly ? "true" : "false") << '\n';
     std::cout << "memory.find.candidate_regions=" << candidateRegions << '\n';
     std::cout << "memory.find.skipped_writable_filter=" << skippedWritableFilter << '\n';
     std::cout << "memory.find.skipped_executable_filter=" << skippedExecutableFilter << '\n';
+    std::cout << "memory.find.skipped_target_executable_filter="
+              << skippedTargetExecutableFilter << '\n';
     std::cout << "memory.find.scanned_regions=" << scannedRegions << '\n';
     std::cout << "memory.find.scanned_bytes=" << scannedBytes << '\n';
     std::cout << "memory.find.match.count=" << matchCount << '\n';

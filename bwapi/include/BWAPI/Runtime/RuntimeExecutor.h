@@ -12,6 +12,8 @@ namespace BWAPI::Runtime
   inline constexpr const char* RuntimeExecutorBridgeProtocol = "starcraft-api-file-bridge-v1";
   inline constexpr const char* RuntimeExecutorBridgeBootstrapMode = "launch-attach-bootstrap";
   inline constexpr const char* RuntimeExecutorBridgeValidatedAdapterMode = "validated-runtime-adapter";
+  inline constexpr const char* RuntimeExecutorBridgeActiveCommandReceiverLine = "command.receiver=active";
+  inline constexpr const char* RuntimeExecutorBridgeRuntimeCommandQueueSinkLine = "command.sink=runtime-command-queue-v1";
   inline constexpr const char* RuntimeExecutorBridgeReadyFile = "ready";
   inline constexpr const char* RuntimeExecutorBridgeCommandFile = "commands.log";
 
@@ -33,6 +35,7 @@ namespace BWAPI::Runtime
     std::string executorName;
     std::string executorBridgeMode;
     std::string memoryAccessReason;
+    std::vector<Capability> provenCapabilities;
     std::vector<std::string> missingBehaviorProofs;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;

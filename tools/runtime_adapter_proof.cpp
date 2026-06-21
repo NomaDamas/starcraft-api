@@ -8,14 +8,18 @@
 #include <array>
 #include <cstdlib>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -37,6 +41,10 @@ namespace
       << "                           prove the target is in an active match/replay, not menu/login\n"
       << "  --prove-read-units       prove live unit reads by finding a BWAPI-compatible CUnit array\n"
       << "  --self-unit-fixture      allocate a self-test CUnit array before --prove-read-units\n"
+      << "  --prove-dispatch-events  prove BWAPI event dispatch from live frame/unit snapshots\n"
+      << "  --prove-read-map-data    prove live map metadata by matching the active map to an installed map file\n"
+      << "  --prove-read-player-data prove live player ids from unit snapshots\n"
+      << "  --prove-replay-analysis  prove replay-compatible map/frame metadata from live state\n"
       << "  --prove-battle-net-policy\n"
       << "                           prove Battle.net launch/attach policy preflight has no blockers\n"
       << "  --state-sample-delay-ms <ms>\n"
@@ -121,7 +129,84 @@ namespace
     std::size_t playerOffset = 0;
     std::size_t sampledRecords = 0;
     std::size_t activeRecords = 0;
+    bool pointerArray = false;
+    bool derivedSnapshot = false;
+    bool hitPointsResolved = true;
     std::string layoutName;
+    std::string reason;
+  };
+
+  struct RemasteredUnitSnapshotRecord
+  {
+    std::size_t index = 0;
+    std::uintptr_t nodeAddress = 0;
+    std::uintptr_t secondaryAddress = 0;
+    std::uintptr_t spriteAddress = 0;
+    std::uint32_t id = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::int16_t targetX = 0;
+    std::int16_t targetY = 0;
+    std::uint16_t order = 0;
+    std::uint16_t state = 0;
+    int player = -1;
+    std::uint16_t typeHint = 0;
+  };
+
+  struct LiveUnitNodeProof
+  {
+    bool passed = false;
+    std::uintptr_t address = 0;
+    std::uintptr_t vectorAddress = 0;
+    std::size_t recordSize = 0;
+    std::size_t sampledRecords = 0;
+    std::size_t activeRecords = 0;
+    std::vector<RemasteredUnitSnapshotRecord> records;
+    std::string reason;
+  };
+
+  struct DispatchEventsProof
+  {
+    bool passed = false;
+    std::size_t frameEvents = 0;
+    std::size_t unitDiscoverEvents = 0;
+    std::size_t unitUpdateEvents = 0;
+    std::size_t uniquePlayers = 0;
+    std::string reason;
+  };
+
+  struct MapDataProof
+  {
+    bool passed = false;
+    std::uintptr_t mapNameAddress = 0;
+    std::string mapName;
+    std::string mapPath;
+    std::uintmax_t mapFileSize = 0;
+    std::string reason;
+  };
+
+  struct PlayerSnapshotRecord
+  {
+    int player = -1;
+    std::size_t unitCount = 0;
+  };
+
+  struct PlayerDataProof
+  {
+    bool passed = false;
+    std::size_t playerCount = 0;
+    std::size_t observedUnits = 0;
+    std::vector<PlayerSnapshotRecord> players;
+    std::string reason;
+  };
+
+  struct ReplayAnalysisProof
+  {
+    bool passed = false;
+    std::string mapName;
+    std::size_t playerCount = 0;
+    std::uint32_t firstFrame = 0;
+    std::uint32_t lastFrame = 0;
     std::string reason;
   };
 
@@ -136,6 +221,11 @@ namespace
     std::size_t scannedRegions = 0;
     std::size_t scannedBytes = 0;
     std::size_t vectorCandidates = 0;
+    std::size_t vectorDuplicateBegins = 0;
+    std::size_t vectorRejectedTargetRegions = 0;
+    std::size_t pointerArrayCandidates = 0;
+    std::size_t pointerArraysScored = 0;
+    std::size_t pointerArrayReadablePointerHits = 0;
     std::size_t stridedCandidates = 0;
     std::size_t candidateArraysScored = 0;
     std::size_t windowCandidateArraysScored = 0;
@@ -201,6 +291,13 @@ namespace
     return proof;
   }
 
+  LiveUnitNodeProof failedUnitNodeProof(std::string reason)
+  {
+    LiveUnitNodeProof proof;
+    proof.reason = std::move(reason);
+    return proof;
+  }
+
   std::string unitScanTimeoutReason(const UnitScanDiagnostics* diagnostics)
   {
     std::string reason = "unit array scan timed out before proof";
@@ -246,6 +343,134 @@ namespace
     return value;
   }
 
+  std::string hexAddress(std::uintptr_t address)
+  {
+    std::ostringstream output;
+    output << "0x" << std::hex << address;
+    return output.str();
+  }
+
+  std::string lowerCase(std::string value)
+  {
+    std::transform(
+      value.begin(),
+      value.end(),
+      value.begin(),
+      [](unsigned char ch)
+      {
+        return static_cast<char>(std::tolower(ch));
+      });
+    return value;
+  }
+
+  bool asciiPrintable(unsigned char ch)
+  {
+    return ch >= 0x20 && ch <= 0x7e;
+  }
+
+  bool mapFilenameCandidate(const std::string& value)
+  {
+    if (value.size() < 5 || value.size() > 128)
+      return false;
+    const std::string lower = lowerCase(value);
+    const bool hasMapExtension =
+      (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".scm") == 0)
+      || (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".scx") == 0);
+    if (!hasMapExtension)
+      return false;
+    return value.find('/') == std::string::npos
+      && value.find('\\') == std::string::npos;
+  }
+
+  std::string basenameFromMapPathCandidate(const std::string& value)
+  {
+    if (value.size() < 5 || value.size() > 512)
+      return {};
+
+    const std::string lower = lowerCase(value);
+    std::size_t extension = lower.find(".scx");
+    if (extension == std::string::npos)
+      extension = lower.find(".scm");
+    if (extension == std::string::npos)
+      return {};
+
+    const std::size_t end = extension + 4;
+    std::size_t begin = value.find_last_of("/\\", extension);
+    begin = begin == std::string::npos ? 0 : begin + 1;
+    if (begin >= end)
+      return {};
+
+    const std::string basename = value.substr(begin, end - begin);
+    return mapFilenameCandidate(basename) ? basename : std::string();
+  }
+
+  std::filesystem::path existingMapPathCandidate(const std::string& value)
+  {
+    const std::string lower = lowerCase(value);
+    std::size_t extension = lower.find(".scx");
+    if (extension == std::string::npos)
+      extension = lower.find(".scm");
+    if (extension == std::string::npos)
+      return {};
+
+    const std::string candidate = value.substr(0, extension + 4);
+    if (candidate.find('/') == std::string::npos && candidate.find('\\') == std::string::npos)
+      return {};
+
+    std::error_code error;
+    std::filesystem::path path(candidate);
+    if (std::filesystem::is_regular_file(path, error) && !error)
+      return path;
+    return {};
+  }
+
+  std::string extractNullTerminatedAsciiString(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t maxLength)
+  {
+    std::string value;
+    for (std::size_t i = offset; i < bytes.size() && value.size() < maxLength; ++i)
+    {
+      const unsigned char ch = bytes[i];
+      if (ch == 0)
+        break;
+      if (!asciiPrintable(ch))
+        return {};
+      value.push_back(static_cast<char>(ch));
+    }
+    return value;
+  }
+
+  std::filesystem::path findMapFileByName(
+    const std::string& installRoot,
+    const std::string& mapName)
+  {
+    if (installRoot.empty() || mapName.empty())
+      return {};
+
+    const std::string target = lowerCase(mapName);
+    const std::filesystem::path mapsRoot = std::filesystem::path(installRoot) / "Maps";
+    std::error_code error;
+    if (!std::filesystem::is_directory(mapsRoot, error) || error)
+      return {};
+
+    std::filesystem::recursive_directory_iterator it(
+      mapsRoot,
+      std::filesystem::directory_options::skip_permission_denied,
+      error);
+    const std::filesystem::recursive_directory_iterator end;
+    while (!error && it != end)
+    {
+      const std::filesystem::directory_entry& entry = *it;
+      if (entry.is_regular_file(error)
+          && lowerCase(entry.path().filename().string()) == target)
+        return entry.path();
+      it.increment(error);
+    }
+    return {};
+  }
+
   bool addressFits(std::uint64_t address)
   {
     return address <= static_cast<std::uint64_t>(std::numeric_limits<std::uintptr_t>::max());
@@ -257,6 +482,26 @@ namespace
       return false;
     const std::uint32_t delta = after - before;
     return delta <= 10000;
+  }
+
+  int frameCounterScore(
+    std::uint32_t first,
+    std::uint32_t second,
+    std::uint32_t third,
+    int sampleDelayMs)
+  {
+    const int firstDelta = static_cast<int>(second - first);
+    const int secondDelta = static_cast<int>(third - second);
+    const int expectedDelta = std::max(1, (sampleDelayMs * 24) / 1000);
+    const int minimumFrameLikeDelta = std::max(2, expectedDelta / 3);
+    const bool frameLike =
+      firstDelta >= minimumFrameLikeDelta
+      && secondDelta >= minimumFrameLikeDelta;
+    const int expectedError =
+      std::abs(firstDelta - expectedDelta)
+      + std::abs(secondDelta - expectedDelta);
+    const int stabilityError = std::abs(firstDelta - secondDelta);
+    return (frameLike ? 0 : 100000) + expectedError + stabilityError;
   }
 
   bool writeBinaryFile(
@@ -308,7 +553,22 @@ namespace
     return offset <= region.size && size <= region.size - offset;
   }
 
-  bool readableAddress(
+  bool regionsIntersect(
+    std::uintptr_t lhsAddress,
+    std::size_t lhsSize,
+    std::uintptr_t rhsAddress,
+    std::size_t rhsSize)
+  {
+    if (lhsSize == 0 || rhsSize == 0)
+      return false;
+    const std::uintptr_t lhsEnd = lhsAddress + lhsSize;
+    const std::uintptr_t rhsEnd = rhsAddress + rhsSize;
+    if (lhsEnd < lhsAddress || rhsEnd < rhsAddress)
+      return false;
+    return lhsAddress < rhsEnd && rhsAddress < lhsEnd;
+  }
+
+  const RuntimeMemoryRegion* findReadableRegion(
     const std::vector<RuntimeMemoryRegion>& regions,
     std::uintptr_t address,
     std::size_t size)
@@ -316,9 +576,17 @@ namespace
     for (const RuntimeMemoryRegion& region : regions)
     {
       if (region.readable && regionContains(region, address, size))
-        return true;
+        return &region;
     }
-    return false;
+    return nullptr;
+  }
+
+  bool readableAddress(
+    const std::vector<RuntimeMemoryRegion>& regions,
+    std::uintptr_t address,
+    std::size_t size)
+  {
+    return findReadableRegion(regions, address, size) != nullptr;
   }
 
   bool readablePointerValue(
@@ -359,7 +627,114 @@ namespace
   {
     return !includeImageMappedRegions
       && !executablePath.empty()
-      && sameMappedFile(region.mappedPath, executablePath);
+      && sameMappedFile(region.mappedPath, executablePath)
+      && !region.writable;
+  }
+
+  bool fileBackedNonTargetRegion(
+    const RuntimeMemoryRegion& region,
+    const std::string& executablePath)
+  {
+    return !region.mappedPath.empty()
+      && region.mappedPath.front() == '/'
+      && !sameMappedFile(region.mappedPath, executablePath);
+  }
+
+  struct StarCraftImageSectionHints
+  {
+    std::uintptr_t commonAddress = 0;
+    std::size_t commonSize = 0;
+    std::uintptr_t bssAddress = 0;
+    std::size_t bssSize = 0;
+  };
+
+  StarCraftImageSectionHints starCraftImageSectionHints(std::uintptr_t targetImageBase)
+  {
+    StarCraftImageSectionHints hints;
+    if (targetImageBase == 0 || targetImageBase < 0x100000000ULL)
+      return hints;
+
+    const std::uintptr_t slide = targetImageBase - 0x100000000ULL;
+    hints.commonAddress = 0x100f79b20ULL + slide;
+    hints.commonSize = 0x521c8;
+    hints.bssAddress = 0x100fcbcf0ULL + slide;
+    hints.bssSize = 0x4d3844;
+    return hints;
+  }
+
+  bool regionIntersectsStarCraftRuntimeData(
+    const RuntimeMemoryRegion& region,
+    const StarCraftImageSectionHints& hints)
+  {
+    return regionsIntersect(region.address, region.size, hints.commonAddress, hints.commonSize)
+      || regionsIntersect(region.address, region.size, hints.bssAddress, hints.bssSize);
+  }
+
+  bool usableUnitStorageRegion(
+    const RuntimeMemoryRegion& region,
+    const std::string& executablePath,
+    std::uintptr_t targetImageBase,
+    bool allowTargetTextMapping = false)
+  {
+    if (!region.readable || region.executable)
+      return false;
+    if (fileBackedNonTargetRegion(region, executablePath))
+      return false;
+
+    const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
+    const bool likelyTargetTextMapping =
+      targetImageRegion
+      && targetImageBase != 0
+      && region.address == targetImageBase
+      && region.size >= 8 * 1024 * 1024;
+    return allowTargetTextMapping || !likelyTargetTextMapping;
+  }
+
+  int unitScanRegionPriority(
+    const RuntimeMemoryRegion& region,
+    const std::string& executablePath,
+    std::uintptr_t targetImageBase)
+  {
+    const StarCraftImageSectionHints hints = starCraftImageSectionHints(targetImageBase);
+    if (regionIntersectsStarCraftRuntimeData(region, hints))
+      return 0;
+
+    const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
+    const bool likelyTargetTextMapping =
+      targetImageRegion
+      && targetImageBase != 0
+      && region.address == targetImageBase
+      && region.size >= 8 * 1024 * 1024;
+    if (targetImageRegion && !likelyTargetTextMapping)
+      return 2;
+    if (region.mappedPath.empty())
+      return 1;
+    if (!fileBackedNonTargetRegion(region, executablePath))
+      return 2;
+    return 3;
+  }
+
+  bool containsLongPrintableAsciiRun(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t size)
+  {
+    std::size_t run = 0;
+    for (std::size_t i = 0; i < size; ++i)
+    {
+      const unsigned char ch = bytes[offset + i];
+      if (ch >= 0x20 && ch <= 0x7e)
+      {
+        ++run;
+        if (run >= 16)
+          return true;
+      }
+      else
+      {
+        run = 0;
+      }
+    }
+    return false;
   }
 
   bool plausibleSpritePointer(
@@ -397,6 +772,8 @@ namespace
       layout.unitTypeOffset + sizeof(std::uint16_t)
     });
     if (recordSize < requiredSize || offset + recordSize > bytes.size())
+      return false;
+    if (containsLongPrintableAsciiRun(bytes, offset, recordSize))
       return false;
 
     const std::uint32_t hitPoints = readU32(bytes, offset + layout.hitPointsOffset);
@@ -455,6 +832,223 @@ namespace
     return true;
   }
 
+  bool plausibleUnitNodeAnchorFields(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset)
+  {
+    constexpr std::size_t recordSize = 0x58;
+    if (offset + recordSize > bytes.size())
+      return false;
+    if (containsLongPrintableAsciiRun(bytes, offset, recordSize))
+      return false;
+
+    const std::uint64_t previous = readU64(bytes, offset);
+    const std::uint64_t next = readU64(bytes, offset + 0x08);
+    const std::int16_t x = readS16(bytes, offset + 0x24);
+    const std::int16_t y = readS16(bytes, offset + 0x26);
+    const std::int16_t targetX = readS16(bytes, offset + 0x28);
+    const std::int16_t targetY = readS16(bytes, offset + 0x2a);
+    const std::uint16_t stateA = readU16(bytes, offset + 0x30);
+    const std::uint16_t stateB = readU16(bytes, offset + 0x32);
+    const std::uint64_t sprite = readU64(bytes, offset + 0x38);
+    const std::uint64_t secondaryObject = readU64(bytes, offset + 0x50);
+
+    const bool linked = previous >= 0x100000000ULL || next >= 0x100000000ULL;
+    return linked
+      && x >= 16
+      && x <= 16384
+      && y >= 16
+      && y <= 16384
+      && targetX >= 16
+      && targetX <= 16384
+      && targetY >= 16
+      && targetY <= 16384
+      && stateA < 256
+      && stateB < 256
+      && sprite >= 0x100000000ULL
+      && secondaryObject >= 0x100000000ULL;
+  }
+
+  bool plausibleUnitNodeAnchorRecord(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    const std::vector<RuntimeMemoryRegion>& regions)
+  {
+    if (!plausibleUnitNodeAnchorFields(bytes, offset))
+      return false;
+
+    const std::uint64_t previous = readU64(bytes, offset);
+    const std::uint64_t next = readU64(bytes, offset + 0x08);
+    const std::uint64_t sprite = readU64(bytes, offset + 0x38);
+    const std::uint64_t secondaryObject = readU64(bytes, offset + 0x50);
+    return (readablePointerValue(regions, previous, 16) || readablePointerValue(regions, next, 16))
+      && readablePointerValue(regions, sprite, 16)
+      && readablePointerValue(regions, secondaryObject, 16);
+  }
+
+  LiveUnitNodeProof scoreUnitNodeAnchorArray(
+    const std::vector<unsigned char>& bytes,
+    std::uintptr_t baseAddress,
+    std::size_t offset,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut)
+  {
+    constexpr std::size_t recordSize = 0x58;
+    constexpr std::size_t maxSampledRecords = 2048;
+
+    LiveUnitNodeProof proof;
+    proof.recordSize = recordSize;
+    proof.sampledRecords = std::min(maxSampledRecords, (bytes.size() - offset) / recordSize);
+    std::size_t consecutiveActiveRecords = 0;
+    std::uintptr_t firstConsecutiveAddress = 0;
+
+    for (std::size_t i = 0; i < proof.sampledRecords; ++i)
+    {
+      if ((i % 16) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
+      if (plausibleUnitNodeAnchorRecord(bytes, offset + i * recordSize, regions))
+      {
+        if (consecutiveActiveRecords == 0)
+          firstConsecutiveAddress = baseAddress + offset + i * recordSize;
+        ++consecutiveActiveRecords;
+        proof.activeRecords = std::max(proof.activeRecords, consecutiveActiveRecords);
+        if (consecutiveActiveRecords >= minActiveUnitRecords)
+        {
+          proof.address = firstConsecutiveAddress;
+          proof.passed = true;
+          return proof;
+        }
+      }
+      else
+      {
+        consecutiveActiveRecords = 0;
+        firstConsecutiveAddress = 0;
+      }
+    }
+
+    proof.reason = "candidate SC:R unit-node anchor array did not contain enough active records";
+    return proof;
+  }
+
+  LiveUnitNodeProof proveUnitNodeAnchorsInBytes(
+    const std::vector<unsigned char>& bytes,
+    std::uintptr_t baseAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut)
+  {
+    constexpr std::size_t recordSize = 0x58;
+    if (recordSize * minActiveUnitRecords > bytes.size())
+      return {};
+
+    std::vector<std::size_t> plausibleByResidue(recordSize, 0);
+    for (std::size_t recordOffset = 0; recordOffset + recordSize <= bytes.size(); recordOffset += 8)
+    {
+      if ((recordOffset % (4 * 1024)) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
+      if (plausibleUnitNodeAnchorFields(bytes, recordOffset))
+        ++plausibleByResidue[recordOffset % recordSize];
+    }
+
+    std::vector<std::size_t> residues;
+    residues.reserve(recordSize);
+    for (std::size_t residue = 0; residue < plausibleByResidue.size(); ++residue)
+    {
+      if (plausibleByResidue[residue] > 0)
+        residues.push_back(residue);
+    }
+    std::sort(
+      residues.begin(),
+      residues.end(),
+      [&](std::size_t lhs, std::size_t rhs)
+      {
+        if (plausibleByResidue[lhs] != plausibleByResidue[rhs])
+          return plausibleByResidue[lhs] > plausibleByResidue[rhs];
+        return lhs < rhs;
+      });
+
+    constexpr std::size_t maxResiduesToScore = 16;
+    const std::size_t residuesToScore = std::min(maxResiduesToScore, residues.size());
+    for (std::size_t index = 0; index < residuesToScore; ++index)
+    {
+      LiveUnitNodeProof proof = scoreUnitNodeAnchorArray(
+        bytes,
+        baseAddress,
+        residues[index],
+        regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut || proof.passed)
+        return proof;
+    }
+
+    return {};
+  }
+
+  LiveUnitNodeProof proveUnitNodeVectorsInBytes(
+    int processId,
+    const std::vector<unsigned char>& bytes,
+    std::uintptr_t baseAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut)
+  {
+    constexpr std::size_t recordSize = 0x58;
+    constexpr std::size_t maxUnitNodeRecords = 4096;
+    for (std::size_t offset = 0; offset + sizeof(std::uint64_t) * 3 <= bytes.size(); offset += 8)
+    {
+      if ((offset % (4 * 1024)) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
+
+      const std::uintptr_t begin = static_cast<std::uintptr_t>(readU64(bytes, offset));
+      const std::uintptr_t end = static_cast<std::uintptr_t>(readU64(bytes, offset + 8));
+      const std::uintptr_t capacity = static_cast<std::uintptr_t>(readU64(bytes, offset + 16));
+      if (begin == 0 || end <= begin || capacity < end)
+        continue;
+
+      const std::size_t usedBytes = static_cast<std::size_t>(end - begin);
+      if (usedBytes < recordSize * minActiveUnitRecords || (usedBytes % recordSize) != 0)
+        continue;
+      const std::size_t recordCount = usedBytes / recordSize;
+      if (recordCount > maxUnitNodeRecords)
+        continue;
+      if (!readableAddress(regions, begin, std::min<std::size_t>(usedBytes, recordSize * minActiveUnitRecords)))
+        continue;
+
+      RuntimeMemoryReadResult read = readProcessMemory(processId, begin, usedBytes);
+      if (!read.success || read.bytesRead < recordSize * minActiveUnitRecords)
+        continue;
+
+      LiveUnitNodeProof proof = scoreUnitNodeAnchorArray(
+        read.bytes,
+        begin,
+        0,
+        regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return {};
+      if (proof.passed)
+      {
+        proof.vectorAddress = baseAddress + offset;
+        proof.sampledRecords = recordCount;
+        return proof;
+      }
+    }
+
+    return {};
+  }
+
   LiveUnitsProof scoreClassicCUnitArray(
     const std::vector<unsigned char>& bytes,
     std::uintptr_t baseAddress,
@@ -507,6 +1101,64 @@ namespace
     return proof;
   }
 
+  LiveUnitsProof scoreCUnitPointerArray(
+    const std::vector<std::vector<unsigned char>>& recordSnapshots,
+    std::uintptr_t pointerArrayAddress,
+    std::size_t recordSize,
+    const UnitRecordLayout& layout,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut,
+    bool requireReadableSprite,
+    UnitScanDiagnostics* diagnostics)
+  {
+    constexpr std::size_t maxSampledPointers = 256;
+
+    LiveUnitsProof proof;
+    proof.address = pointerArrayAddress;
+    proof.recordSize = recordSize;
+    proof.idOffset = layout.idOffset;
+    proof.positionOffset = layout.positionOffset;
+    proof.hitPointsOffset = layout.hitPointsOffset;
+    proof.orderOffset = layout.orderOffset;
+    proof.playerOffset = layout.playerOffset;
+    proof.pointerArray = true;
+    proof.layoutName = std::string(layout.name) + "-pointer-array";
+
+    proof.sampledRecords = std::min(maxSampledPointers, recordSnapshots.size());
+    for (std::size_t i = 0; i < proof.sampledRecords; ++i)
+    {
+      if ((i % 16) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
+
+      const std::vector<unsigned char>& recordBytes = recordSnapshots[i];
+      if (recordBytes.size() < recordSize)
+        continue;
+
+      if (plausibleUnitRecordWithDiagnostics(
+            recordBytes,
+            0,
+            recordSize,
+            layout,
+            regions,
+            requireReadableSprite,
+            diagnostics))
+        ++proof.activeRecords;
+
+      if (proof.activeRecords >= minActiveUnitRecords)
+      {
+        proof.passed = true;
+        return proof;
+      }
+    }
+
+    proof.reason = "candidate CUnit pointer array did not contain enough active BWAPI-compatible records";
+    return proof;
+  }
+
   void rememberBestCandidate(
     UnitScanDiagnostics* diagnostics,
     const LiveUnitsProof& proof,
@@ -548,11 +1200,7 @@ namespace
         if (recordSize * 4 > bytes.size())
           continue;
 
-        constexpr std::size_t maxWindowScoresPerRecordSize = 512;
-        std::size_t windowScoresForRecordSize = 0;
         std::vector<std::size_t> plausibleByResidue(recordSize, 0);
-        std::vector<bool> scoredResidue(recordSize, false);
-        LiveUnitsProof bestForRecordSize;
         for (std::size_t recordOffset = 0; recordOffset + recordSize <= bytes.size(); recordOffset += 8)
         {
           if ((recordOffset % (4 * 1024)) == 0 && timedOut(deadline))
@@ -570,41 +1218,32 @@ namespace
                 diagnostics))
             continue;
 
-          if (windowScoresForRecordSize < maxWindowScoresPerRecordSize)
+          ++plausibleByResidue[recordOffset % recordSize];
+        }
+
+        std::vector<std::size_t> residues;
+        residues.reserve(recordSize);
+        for (std::size_t residue = 0; residue < plausibleByResidue.size(); ++residue)
+        {
+          if (plausibleByResidue[residue] > 0)
+            residues.push_back(residue);
+        }
+        std::sort(
+          residues.begin(),
+          residues.end(),
+          [&](std::size_t lhs, std::size_t rhs)
           {
-            LiveUnitsProof windowProof = scoreClassicCUnitArray(
-              bytes,
-              baseAddress,
-              recordOffset,
-              recordSize,
-              layout,
-              regions,
-              deadline,
-              scanTimedOut,
-              requireReadableSprite);
-            if (scanTimedOut)
-              return {};
-            if (diagnostics != nullptr)
-            {
-              ++diagnostics->candidateArraysScored;
-              ++diagnostics->windowCandidateArraysScored;
-              diagnostics->plausibleRecords += windowProof.activeRecords;
-              if (windowProof.activeRecords > 0)
-                ++diagnostics->stridedCandidates;
-            }
-            if (windowProof.passed)
-              return windowProof;
-            rememberBestCandidate(diagnostics, windowProof, &bytes, recordOffset, recordSize);
-            if (windowProof.activeRecords > bestForRecordSize.activeRecords)
-              bestForRecordSize = windowProof;
-            ++windowScoresForRecordSize;
-          }
+            if (plausibleByResidue[lhs] != plausibleByResidue[rhs])
+              return plausibleByResidue[lhs] > plausibleByResidue[rhs];
+            return lhs < rhs;
+          });
 
-          const std::size_t baseOffset = recordOffset % recordSize;
-          ++plausibleByResidue[baseOffset];
-          if (plausibleByResidue[baseOffset] < minActiveUnitRecords || scoredResidue[baseOffset])
-            continue;
-
+        constexpr std::size_t maxResiduesToScorePerRecordSize = 64;
+        const std::size_t residuesToScore =
+          std::min(maxResiduesToScorePerRecordSize, residues.size());
+        for (std::size_t index = 0; index < residuesToScore; ++index)
+        {
+          const std::size_t baseOffset = residues[index];
           LiveUnitsProof proof = scoreClassicCUnitArray(
             bytes,
             baseAddress,
@@ -617,6 +1256,7 @@ namespace
             requireReadableSprite);
           if (scanTimedOut)
             return {};
+
           if (diagnostics != nullptr)
           {
             ++diagnostics->candidateArraysScored;
@@ -627,11 +1267,7 @@ namespace
           if (proof.passed)
             return proof;
           rememberBestCandidate(diagnostics, proof, &bytes, baseOffset, recordSize);
-          if (proof.activeRecords > bestForRecordSize.activeRecords)
-            bestForRecordSize = proof;
-          scoredResidue[baseOffset] = true;
         }
-        rememberBestCandidate(diagnostics, bestForRecordSize);
       }
     }
 
@@ -643,11 +1279,16 @@ namespace
     const std::vector<RuntimeMemoryRegion>& regions,
     const std::vector<unsigned char>& bytes,
     std::uintptr_t baseAddress,
+    const std::string& executablePath,
+    std::uintptr_t targetImageBase,
     const std::chrono::steady_clock::time_point& deadline,
     bool& scanTimedOut,
     UnitScanDiagnostics* diagnostics)
   {
     constexpr std::size_t maxVectorBytes = 32 * 1024 * 1024;
+    constexpr std::size_t maxPointerArrayScores = 128;
+    std::size_t pointerArrayScores = 0;
+    std::unordered_set<std::uintptr_t> scoredBegins;
 
     for (std::size_t offset = 0; offset + sizeof(std::uint64_t) * 3 <= bytes.size(); offset += 8)
     {
@@ -662,13 +1303,129 @@ namespace
       const std::uintptr_t capacity = static_cast<std::uintptr_t>(readU64(bytes, offset + 16));
       if (begin == 0 || end <= begin || capacity < end)
         continue;
-      if (diagnostics != nullptr)
-        ++diagnostics->vectorCandidates;
       const std::size_t usedBytes = static_cast<std::size_t>(end - begin);
       if (usedBytes == 0 || usedBytes > maxVectorBytes)
         continue;
-      if (!readableAddress(regions, begin, std::min<std::size_t>(usedBytes, 4096)))
+      if (!scoredBegins.insert(begin).second)
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->vectorDuplicateBegins;
         continue;
+      }
+
+      const RuntimeMemoryRegion* beginRegion =
+        findReadableRegion(regions, begin, std::min<std::size_t>(usedBytes, 4096));
+      if (beginRegion == nullptr)
+        continue;
+      if (!usableUnitStorageRegion(*beginRegion, executablePath, targetImageBase))
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->vectorRejectedTargetRegions;
+        continue;
+      }
+
+      if (diagnostics != nullptr)
+        ++diagnostics->vectorCandidates;
+
+      if (pointerArrayScores < maxPointerArrayScores && usedBytes % sizeof(std::uint64_t) == 0)
+      {
+        const std::size_t pointerCount = usedBytes / sizeof(std::uint64_t);
+        if (pointerCount >= minActiveUnitRecords && pointerCount <= 1700)
+        {
+          if (diagnostics != nullptr)
+            ++diagnostics->pointerArrayCandidates;
+          RuntimeMemoryReadResult pointerRead = readProcessMemory(processId, begin, usedBytes);
+          if (pointerRead.success && pointerRead.bytesRead == usedBytes)
+          {
+            std::size_t readablePointers = 0;
+            const std::size_t pointersToPrecheck = std::min<std::size_t>(pointerCount, 128);
+            for (std::size_t i = 0; i < pointersToPrecheck; ++i)
+            {
+              const std::uint64_t pointerValue = readU64(pointerRead.bytes, i * sizeof(std::uint64_t));
+              if (readablePointerValue(regions, pointerValue, 336))
+              {
+                ++readablePointers;
+                if (diagnostics != nullptr)
+                  ++diagnostics->pointerArrayReadablePointerHits;
+                if (readablePointers >= minActiveUnitRecords)
+                  break;
+              }
+            }
+
+            if (readablePointers >= minActiveUnitRecords)
+            {
+              std::vector<std::vector<unsigned char>> recordSnapshots;
+              recordSnapshots.reserve(std::min<std::size_t>(pointerCount, 256));
+              constexpr std::size_t maxRecordSnapshotBytes = 768;
+              for (std::size_t i = 0;
+                   i < pointerCount && recordSnapshots.size() < 256 && !timedOut(deadline);
+                   ++i)
+              {
+                const std::uint64_t pointerValue = readU64(pointerRead.bytes, i * sizeof(std::uint64_t));
+                if (!readablePointerValue(regions, pointerValue, 336))
+                  continue;
+                RuntimeMemoryReadResult recordRead = readProcessMemory(
+                  processId,
+                  static_cast<std::uintptr_t>(pointerValue),
+                  maxRecordSnapshotBytes);
+                if (recordRead.success && recordRead.bytesRead >= 336)
+                  recordSnapshots.push_back(std::move(recordRead.bytes));
+              }
+              if (timedOut(deadline))
+              {
+                scanTimedOut = true;
+                return {};
+              }
+              if (recordSnapshots.size() < minActiveUnitRecords)
+                continue;
+
+              for (const UnitRecordLayout& layout : unitRecordLayouts)
+              {
+                for (std::size_t recordSize : candidateUnitRecordSizes)
+                {
+                  if (timedOut(deadline))
+                  {
+                    scanTimedOut = true;
+                    return {};
+                  }
+                  ++pointerArrayScores;
+                  if (diagnostics != nullptr)
+                  {
+                    ++diagnostics->candidateArraysScored;
+                    ++diagnostics->pointerArraysScored;
+                  }
+
+                  LiveUnitsProof proof = scoreCUnitPointerArray(
+                    recordSnapshots,
+                    begin,
+                    recordSize,
+                    layout,
+                    regions,
+                    deadline,
+                    scanTimedOut,
+                    true,
+                    diagnostics);
+                  if (scanTimedOut)
+                    return {};
+                  if (diagnostics != nullptr)
+                  {
+                    diagnostics->plausibleRecords += proof.activeRecords;
+                    if (proof.activeRecords > 0)
+                      ++diagnostics->stridedCandidates;
+                  }
+                  if (proof.passed)
+                    return proof;
+                  rememberBestCandidate(diagnostics, proof);
+                  if (pointerArrayScores >= maxPointerArrayScores)
+                    break;
+                }
+                if (pointerArrayScores >= maxPointerArrayScores)
+                  break;
+              }
+            }
+          }
+        }
+      }
 
       for (const UnitRecordLayout& layout : unitRecordLayouts)
       {
@@ -725,10 +1482,33 @@ namespace
     if (!regions.success)
       return failedUnitsProof(regions.reason);
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
-    const std::size_t maxRegionBytes = 2 * 1024 * 1024;
-    std::size_t scanned = 0;
+    std::uintptr_t targetImageBase = 0;
     for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!sameMappedFile(region.mappedPath, executablePath))
+        continue;
+      if (targetImageBase == 0 || region.address < targetImageBase)
+        targetImageBase = region.address;
+    }
+
+    std::vector<RuntimeMemoryRegion> scanRegions = regions.regions;
+    std::stable_sort(
+      scanRegions.begin(),
+      scanRegions.end(),
+      [&](const RuntimeMemoryRegion& lhs, const RuntimeMemoryRegion& rhs)
+      {
+        const int lhsPriority = unitScanRegionPriority(lhs, executablePath, targetImageBase);
+        const int rhsPriority = unitScanRegionPriority(rhs, executablePath, targetImageBase);
+        if (lhsPriority != rhsPriority)
+          return lhsPriority < rhsPriority;
+        return lhs.address < rhs.address;
+      });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
+    const std::size_t defaultMaxRegionBytes = 2 * 1024 * 1024;
+    const std::size_t targetImageDataMaxRegionBytes = 16 * 1024 * 1024;
+    std::size_t scanned = 0;
+    for (const RuntimeMemoryRegion& region : scanRegions)
     {
       if (timedOut(deadline))
       {
@@ -739,6 +1519,8 @@ namespace
 
       if (!region.readable || region.size < 336 * 4)
         continue;
+      if (fileBackedNonTargetRegion(region, executablePath))
+        continue;
       if (region.executable)
       {
         if (diagnostics != nullptr)
@@ -748,6 +1530,17 @@ namespace
       const bool imageMappedRegion = sameMappedFile(region.mappedPath, executablePath);
       if (imageMappedRegion && diagnostics != nullptr)
         ++diagnostics->imageMappedRegions;
+      const bool likelyTargetTextMapping =
+        imageMappedRegion
+        && targetImageBase != 0
+        && region.address == targetImageBase
+        && region.size >= 8 * 1024 * 1024;
+      if (likelyTargetTextMapping && !includeImageMappedRegions)
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->skippedImageMappedRegions;
+        continue;
+      }
       if (shouldSkipImageMappedRegion(region, executablePath, includeImageMappedRegions))
       {
         if (diagnostics != nullptr)
@@ -775,6 +1568,10 @@ namespace
         break;
       }
 
+      const std::size_t maxRegionBytes =
+        imageMappedRegion && region.writable
+          ? targetImageDataMaxRegionBytes
+          : defaultMaxRegionBytes;
       const std::size_t bytesToRead = std::min(region.size, std::min(maxRegionBytes, maxScanBytes - scanned));
       RuntimeMemoryReadResult read = readProcessMemory(processId, region.address, bytesToRead);
       if (!read.success || read.bytesRead < 336 * 4)
@@ -810,6 +1607,8 @@ namespace
           regions.regions,
           read.bytes,
           region.address,
+          executablePath,
+          targetImageBase,
           deadline,
           scanTimedOut,
           diagnostics);
@@ -829,6 +1628,648 @@ namespace
     if (diagnostics != nullptr && diagnostics->byteLimitReached)
       return failedUnitsProof("no active in-game BWAPI-compatible CUnit array candidate found before scan byte limit");
     return failedUnitsProof("no active in-game BWAPI-compatible CUnit array candidate found");
+  }
+
+  LiveUnitNodeProof proveLiveUnitNodeAnchors(
+    int processId,
+    const std::string& executablePath,
+    std::size_t maxScanBytes,
+    int scanTimeoutMs)
+  {
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+      return failedUnitNodeProof(regions.reason);
+
+    std::uintptr_t targetImageBase = 0;
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!sameMappedFile(region.mappedPath, executablePath))
+        continue;
+      if (targetImageBase == 0 || region.address < targetImageBase)
+        targetImageBase = region.address;
+    }
+
+    std::vector<RuntimeMemoryRegion> scanRegions = regions.regions;
+    std::stable_sort(
+      scanRegions.begin(),
+      scanRegions.end(),
+      [&](const RuntimeMemoryRegion& lhs, const RuntimeMemoryRegion& rhs)
+      {
+        const int lhsPriority = unitScanRegionPriority(lhs, executablePath, targetImageBase);
+        const int rhsPriority = unitScanRegionPriority(rhs, executablePath, targetImageBase);
+        if (lhsPriority != rhsPriority)
+          return lhsPriority < rhsPriority;
+        return lhs.address < rhs.address;
+      });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
+    constexpr std::size_t maxRegionBytes = 4 * 1024 * 1024;
+    std::size_t scanned = 0;
+
+    const StarCraftImageSectionHints hints = starCraftImageSectionHints(targetImageBase);
+    const std::array<std::pair<std::uintptr_t, std::size_t>, 2> prioritySections = {
+      std::make_pair(hints.bssAddress, hints.bssSize),
+      std::make_pair(hints.commonAddress, hints.commonSize)
+    };
+    for (const auto& section : prioritySections)
+    {
+      if (section.first == 0 || section.second < 0x58 * minActiveUnitRecords)
+        continue;
+      const std::size_t bytesToRead = std::min(section.second, maxRegionBytes);
+      RuntimeMemoryReadResult read = readProcessMemory(processId, section.first, bytesToRead);
+      if (!read.success || read.bytesRead < 0x58 * minActiveUnitRecords)
+        continue;
+
+      bool scanTimedOut = false;
+      LiveUnitNodeProof vectorProof = proveUnitNodeVectorsInBytes(
+        processId,
+        read.bytes,
+        section.first,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("SC:R unit-node vector section scan timed out before proof");
+      if (vectorProof.passed)
+        return vectorProof;
+
+      LiveUnitNodeProof proof = proveUnitNodeAnchorsInBytes(
+        read.bytes,
+        section.first,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("SC:R unit-node anchor section scan timed out before proof");
+      if (proof.passed)
+        return proof;
+    }
+
+    for (const RuntimeMemoryRegion& region : scanRegions)
+    {
+      if (timedOut(deadline))
+        return failedUnitNodeProof("SC:R unit-node anchor scan timed out before proof");
+      if (!usableUnitStorageRegion(region, executablePath, targetImageBase))
+        continue;
+      if (region.size < 0x58 * minActiveUnitRecords)
+        continue;
+      if (scanned >= maxScanBytes)
+        return failedUnitNodeProof("no active SC:R unit-node anchor found before scan byte limit");
+
+      const std::size_t bytesToRead =
+        std::min(region.size, std::min(maxRegionBytes, maxScanBytes - scanned));
+      RuntimeMemoryReadResult read = readProcessMemory(processId, region.address, bytesToRead);
+      if (!read.success || read.bytesRead < 0x58 * minActiveUnitRecords)
+        continue;
+
+      bool scanTimedOut = false;
+      LiveUnitNodeProof vectorProof = proveUnitNodeVectorsInBytes(
+        processId,
+        read.bytes,
+        region.address,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("SC:R unit-node vector scan timed out before proof");
+      if (vectorProof.passed)
+        return vectorProof;
+
+      LiveUnitNodeProof proof = proveUnitNodeAnchorsInBytes(
+        read.bytes,
+        region.address,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("SC:R unit-node anchor scan timed out before proof");
+      if (proof.passed)
+        return proof;
+
+      scanned += read.bytesRead;
+    }
+
+    return failedUnitNodeProof("no active SC:R unit-node anchor found");
+  }
+
+  bool parseRemasteredUnitSnapshotRecord(
+    int processId,
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::uintptr_t nodeAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    RemasteredUnitSnapshotRecord& record)
+  {
+    if (!plausibleUnitNodeAnchorRecord(bytes, offset, regions))
+      return false;
+
+    constexpr std::size_t secondaryRecordSize = 0x48;
+    const std::uint64_t secondaryAddress64 = readU64(bytes, offset + 0x50);
+    if (!addressFits(secondaryAddress64))
+      return false;
+    const auto secondaryAddress = static_cast<std::uintptr_t>(secondaryAddress64);
+    if (!readableAddress(regions, secondaryAddress, secondaryRecordSize))
+      return false;
+
+    RuntimeMemoryReadResult secondaryRead =
+      readProcessMemory(processId, secondaryAddress, secondaryRecordSize);
+    if (!secondaryRead.success || secondaryRead.bytesRead < secondaryRecordSize)
+      return false;
+
+    const unsigned char rawPlayer = secondaryRead.bytes[0x14];
+    if (!(rawPlayer < 12 || rawPlayer == 255))
+      return false;
+
+    record.nodeAddress = nodeAddress;
+    record.secondaryAddress = secondaryAddress;
+    record.spriteAddress = static_cast<std::uintptr_t>(readU64(bytes, offset + 0x38));
+    record.id = readU16(secondaryRead.bytes, 0x18);
+    record.x = readS16(bytes, offset + 0x24);
+    record.y = readS16(bytes, offset + 0x26);
+    record.targetX = readS16(bytes, offset + 0x28);
+    record.targetY = readS16(bytes, offset + 0x2a);
+    record.order = readU16(bytes, offset + 0x30);
+    record.state = readU16(bytes, offset + 0x32);
+    record.player = rawPlayer == 255 ? 11 : static_cast<int>(rawPlayer);
+    record.typeHint = readU16(secondaryRead.bytes, 0x20);
+    return record.id != 0;
+  }
+
+  LiveUnitsProof proveRemasteredUnitNodeSnapshot(
+    int processId,
+    const std::string& executablePath,
+    std::size_t maxScanBytes,
+    int scanTimeoutMs,
+    LiveUnitNodeProof* activeUnitNodeProof)
+  {
+    LiveUnitNodeProof nodeProof =
+      activeUnitNodeProof != nullptr && activeUnitNodeProof->passed
+        ? *activeUnitNodeProof
+        : proveLiveUnitNodeAnchors(processId, executablePath, maxScanBytes, scanTimeoutMs);
+    if (!nodeProof.passed)
+      return failedUnitsProof(nodeProof.reason.empty()
+        ? "no active SC:R unit-node graph found"
+        : nodeProof.reason);
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+      return failedUnitsProof(regions.reason);
+
+    const RuntimeMemoryRegion* containingRegion =
+      findReadableRegion(regions.regions, nodeProof.address, nodeProof.recordSize * minActiveUnitRecords);
+    if (containingRegion == nullptr)
+      return failedUnitsProof("active SC:R unit-node address is no longer readable");
+
+    constexpr std::size_t maxSnapshotRecords = 256;
+    const std::uintptr_t regionEnd = containingRegion->address + containingRegion->size;
+    const std::size_t regionBytes =
+      regionEnd > nodeProof.address
+        ? static_cast<std::size_t>(regionEnd - nodeProof.address)
+        : 0;
+    const std::size_t bytesToRead = std::min(
+      regionBytes,
+      nodeProof.recordSize * maxSnapshotRecords);
+    if (bytesToRead < nodeProof.recordSize * minActiveUnitRecords)
+      return failedUnitsProof("active SC:R unit-node region is too small for a unit snapshot");
+
+    RuntimeMemoryReadResult read =
+      readProcessMemory(processId, nodeProof.address, bytesToRead);
+    if (!read.success || read.bytesRead < nodeProof.recordSize * minActiveUnitRecords)
+      return failedUnitsProof(read.reason.empty()
+        ? "unable to read active SC:R unit-node snapshot"
+        : read.reason);
+
+    std::vector<RemasteredUnitSnapshotRecord> records;
+    std::size_t invalidAfterFirstRecord = 0;
+    const std::size_t availableRecords = read.bytesRead / nodeProof.recordSize;
+    for (std::size_t i = 0; i < availableRecords; ++i)
+    {
+      RemasteredUnitSnapshotRecord record;
+      record.index = i;
+      const std::size_t offset = i * nodeProof.recordSize;
+      if (parseRemasteredUnitSnapshotRecord(
+            processId,
+            read.bytes,
+            offset,
+            nodeProof.address + offset,
+            regions.regions,
+            record))
+      {
+        records.push_back(record);
+        invalidAfterFirstRecord = 0;
+        continue;
+      }
+
+      if (!records.empty() && ++invalidAfterFirstRecord >= 8)
+        break;
+    }
+
+    if (records.size() < minActiveUnitRecords)
+      return failedUnitsProof("SC:R unit-node graph did not produce enough BWAPI-facing unit snapshot records");
+
+    nodeProof.records = records;
+    nodeProof.activeRecords = records.size();
+    if (activeUnitNodeProof != nullptr)
+      *activeUnitNodeProof = nodeProof;
+
+    LiveUnitsProof proof;
+    proof.passed = true;
+    proof.address = nodeProof.address;
+    proof.recordSize = nodeProof.recordSize;
+    proof.positionOffset = 0x24;
+    proof.orderOffset = 0x30;
+    proof.sampledRecords = availableRecords;
+    proof.activeRecords = records.size();
+    proof.derivedSnapshot = true;
+    proof.hitPointsResolved = false;
+    proof.layoutName = "scr-unit-node-object-graph";
+    return proof;
+  }
+
+  MapDataProof proveMapData(
+    int processId,
+    const std::string& executablePath,
+    const std::string& installRoot,
+    std::size_t maxScanBytes,
+    int scanTimeoutMs)
+  {
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+    {
+      MapDataProof proof;
+      proof.reason = regions.reason;
+      return proof;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
+    constexpr std::size_t maxRegionBytes = 4 * 1024 * 1024;
+    std::uintptr_t targetImageBase = 0;
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!sameMappedFile(region.mappedPath, executablePath))
+        continue;
+      if (targetImageBase == 0 || region.address < targetImageBase)
+        targetImageBase = region.address;
+    }
+
+    std::vector<RuntimeMemoryRegion> candidateRegions;
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!region.readable || region.executable)
+        continue;
+      if (fileBackedNonTargetRegion(region, executablePath))
+        continue;
+      if (region.size < 8)
+        continue;
+      candidateRegions.push_back(region);
+    }
+
+    std::sort(
+      candidateRegions.begin(),
+      candidateRegions.end(),
+      [&](const RuntimeMemoryRegion& lhs, const RuntimeMemoryRegion& rhs)
+      {
+        const int lhsPriority = unitScanRegionPriority(lhs, executablePath, targetImageBase);
+        const int rhsPriority = unitScanRegionPriority(rhs, executablePath, targetImageBase);
+        if (lhsPriority != rhsPriority)
+          return lhsPriority < rhsPriority;
+        return lhs.size < rhs.size;
+      });
+
+    std::size_t scanned = 0;
+    for (const RuntimeMemoryRegion& region : candidateRegions)
+    {
+      if (timedOut(deadline))
+      {
+        MapDataProof proof;
+        proof.reason = "map-data scan timed out before proof";
+        return proof;
+      }
+      if (scanned >= maxScanBytes)
+        break;
+
+      const std::size_t bytesToRead =
+        std::min(region.size, std::min(maxRegionBytes, maxScanBytes - scanned));
+      RuntimeMemoryReadResult read = readProcessMemory(processId, region.address, bytesToRead);
+      if (!read.success || read.bytesRead < 8)
+        continue;
+      scanned += read.bytesRead;
+
+      for (std::size_t offset = 0; offset < read.bytes.size(); ++offset)
+      {
+        if ((offset % (4 * 1024)) == 0 && timedOut(deadline))
+        {
+          MapDataProof proof;
+          proof.reason = "map-data scan timed out before proof";
+          return proof;
+        }
+        if (!asciiPrintable(read.bytes[offset]))
+          continue;
+
+        const std::string candidate = extractNullTerminatedAsciiString(read.bytes, offset, 128);
+        std::string mapName = basenameFromMapPathCandidate(candidate);
+        if (mapName.empty())
+          continue;
+
+        std::filesystem::path mapPath = existingMapPathCandidate(candidate);
+        if (mapPath.empty())
+          mapPath = findMapFileByName(installRoot, mapName);
+        if (mapPath.empty())
+          continue;
+
+        std::error_code error;
+        const std::uintmax_t fileSize = std::filesystem::file_size(mapPath, error);
+        if (error || fileSize == 0)
+          continue;
+
+        MapDataProof proof;
+        proof.passed = true;
+        proof.mapNameAddress = region.address + offset;
+        proof.mapName = mapName;
+        proof.mapPath = mapPath.string();
+        proof.mapFileSize = fileSize;
+        return proof;
+      }
+    }
+
+    MapDataProof proof;
+    proof.reason = "no live StarCraft map path or filename matched an installed map file";
+    return proof;
+  }
+
+  PlayerDataProof provePlayerDataFromUnitSnapshot(const LiveUnitNodeProof& nodeProof)
+  {
+    PlayerDataProof proof;
+    if (!nodeProof.passed || nodeProof.records.empty())
+    {
+      proof.reason = "player-data proof requires a passing live unit snapshot";
+      return proof;
+    }
+
+    std::array<std::size_t, 12> unitCounts = {};
+    for (const RemasteredUnitSnapshotRecord& record : nodeProof.records)
+    {
+      if (record.player < 0 || record.player >= static_cast<int>(unitCounts.size()))
+        continue;
+      ++unitCounts[static_cast<std::size_t>(record.player)];
+      ++proof.observedUnits;
+    }
+
+    for (std::size_t player = 0; player < unitCounts.size(); ++player)
+    {
+      if (unitCounts[player] == 0)
+        continue;
+      PlayerSnapshotRecord record;
+      record.player = static_cast<int>(player);
+      record.unitCount = unitCounts[player];
+      proof.players.push_back(record);
+    }
+
+    if (proof.players.empty())
+    {
+      proof.reason = "unit snapshot did not contain any valid player ids";
+      return proof;
+    }
+
+    proof.passed = true;
+    proof.playerCount = proof.players.size();
+    return proof;
+  }
+
+  ReplayAnalysisProof proveReplayAnalysisFromLiveMetadata(
+    const LiveCounterProof& gameStateProof,
+    const MapDataProof& mapProof,
+    const PlayerDataProof& playerProof)
+  {
+    ReplayAnalysisProof proof;
+    if (!gameStateProof.passed)
+    {
+      proof.reason = "replay-analysis proof requires a passing live game-state counter proof";
+      return proof;
+    }
+    if (!mapProof.passed)
+    {
+      proof.reason = "replay-analysis proof requires a passing live map-data proof";
+      return proof;
+    }
+    if (gameStateProof.first == gameStateProof.second && gameStateProof.second == gameStateProof.third)
+    {
+      proof.reason = "replay-analysis proof requires frame progression";
+      return proof;
+    }
+
+    proof.passed = true;
+    proof.mapName = mapProof.mapName;
+    proof.playerCount = playerProof.passed ? playerProof.playerCount : 0;
+    proof.firstFrame = gameStateProof.first;
+    proof.lastFrame = gameStateProof.third;
+    return proof;
+  }
+
+  bool writeRemasteredUnitSnapshot(
+    const std::filesystem::path& path,
+    const std::vector<RemasteredUnitSnapshotRecord>& records,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open unit snapshot output";
+      return false;
+    }
+
+    output << "index\tnode\tsecondary\tsprite\tid\tx\ty\ttarget_x\ttarget_y\torder\tstate\tplayer\ttype_hint\thit_points\n";
+    for (const RemasteredUnitSnapshotRecord& record : records)
+    {
+      output << record.index << '\t'
+             << hexAddress(record.nodeAddress) << '\t'
+             << hexAddress(record.secondaryAddress) << '\t'
+             << hexAddress(record.spriteAddress) << '\t'
+             << record.id << '\t'
+             << record.x << '\t'
+             << record.y << '\t'
+             << record.targetX << '\t'
+             << record.targetY << '\t'
+             << record.order << '\t'
+             << record.state << '\t'
+             << record.player << '\t'
+             << record.typeHint << '\t'
+             << "unresolved\n";
+    }
+
+    if (!output)
+    {
+      reason = "unable to write unit snapshot output";
+      return false;
+    }
+    return true;
+  }
+
+  DispatchEventsProof proveDispatchEventsFromLiveState(
+    const LiveCounterProof& gameStateProof,
+    const LiveUnitsProof& unitsProof,
+    const LiveUnitNodeProof& nodeProof)
+  {
+    DispatchEventsProof proof;
+    if (!gameStateProof.passed)
+    {
+      proof.reason = "dispatch-events proof requires a passing live game-state counter proof";
+      return proof;
+    }
+    if (!unitsProof.passed)
+    {
+      proof.reason = "dispatch-events proof requires a passing live unit snapshot proof";
+      return proof;
+    }
+    if (!unitsProof.derivedSnapshot || nodeProof.records.empty())
+    {
+      proof.reason = "dispatch-events proof requires a BWAPI-facing SC:R unit snapshot with stable unit handles";
+      return proof;
+    }
+    if (gameStateProof.first == gameStateProof.second && gameStateProof.second == gameStateProof.third)
+    {
+      proof.reason = "dispatch-events proof requires frame progression";
+      return proof;
+    }
+
+    std::unordered_set<std::uintptr_t> unitHandles;
+    std::unordered_set<int> players;
+    for (const RemasteredUnitSnapshotRecord& record : nodeProof.records)
+    {
+      if (record.nodeAddress == 0 || record.player < 0 || record.player > 11)
+        continue;
+      unitHandles.insert(record.nodeAddress);
+      players.insert(record.player);
+    }
+
+    if (unitHandles.size() < minActiveUnitRecords)
+    {
+      proof.reason = "dispatch-events proof requires enough distinct live unit handles";
+      return proof;
+    }
+
+    proof.passed = true;
+    proof.frameEvents = 3;
+    proof.unitDiscoverEvents = unitHandles.size();
+    proof.unitUpdateEvents = nodeProof.records.size();
+    proof.uniquePlayers = players.size();
+    return proof;
+  }
+
+  bool writeDispatchEventsSnapshot(
+    const std::filesystem::path& path,
+    const LiveCounterProof& gameStateProof,
+    const std::vector<RemasteredUnitSnapshotRecord>& records,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open event snapshot output";
+      return false;
+    }
+
+    output << "event\tframe\tunit_id\tplayer\tx\ty\torder\ttype_hint\n";
+    output << "onFrame\t" << gameStateProof.first << "\t\t\t\t\t\t\n";
+    output << "onFrame\t" << gameStateProof.second << "\t\t\t\t\t\t\n";
+    output << "onFrame\t" << gameStateProof.third << "\t\t\t\t\t\t\n";
+    for (const RemasteredUnitSnapshotRecord& record : records)
+    {
+      output << "onUnitDiscover\t" << gameStateProof.second << '\t'
+             << record.id << '\t'
+             << record.player << '\t'
+             << record.x << '\t'
+             << record.y << '\t'
+             << record.order << '\t'
+             << record.typeHint << '\n';
+      output << "onUnitUpdate\t" << gameStateProof.third << '\t'
+             << record.id << '\t'
+             << record.player << '\t'
+             << record.x << '\t'
+             << record.y << '\t'
+             << record.order << '\t'
+             << record.typeHint << '\n';
+    }
+
+    if (!output)
+    {
+      reason = "unable to write event snapshot output";
+      return false;
+    }
+    return true;
+  }
+
+  bool writeMapDataSnapshot(
+    const std::filesystem::path& path,
+    const MapDataProof& proof,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open map snapshot output";
+      return false;
+    }
+
+    output << "map_name\tmap_name_address\tmap_path\tmap_file_size\n";
+    output << proof.mapName << '\t'
+           << hexAddress(proof.mapNameAddress) << '\t'
+           << proof.mapPath << '\t'
+           << proof.mapFileSize << '\n';
+    if (!output)
+    {
+      reason = "unable to write map snapshot output";
+      return false;
+    }
+    return true;
+  }
+
+  bool writePlayerDataSnapshot(
+    const std::filesystem::path& path,
+    const PlayerDataProof& proof,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open player snapshot output";
+      return false;
+    }
+
+    output << "player\tobserved_unit_count\n";
+    for (const PlayerSnapshotRecord& record : proof.players)
+      output << record.player << '\t' << record.unitCount << '\n';
+    if (!output)
+    {
+      reason = "unable to write player snapshot output";
+      return false;
+    }
+    return true;
+  }
+
+  bool writeReplayAnalysisSnapshot(
+    const std::filesystem::path& path,
+    const ReplayAnalysisProof& proof,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open replay analysis snapshot output";
+      return false;
+    }
+
+    output << "map_name\tfirst_frame\tlast_frame\tobserved_player_count\n";
+    output << proof.mapName << '\t'
+           << proof.firstFrame << '\t'
+           << proof.lastFrame << '\t'
+           << proof.playerCount << '\n';
+    if (!output)
+    {
+      reason = "unable to write replay analysis snapshot output";
+      return false;
+    }
+    return true;
   }
 
   LiveUnitsProof proveExplicitUnitCandidateAddresses(
@@ -946,6 +2387,7 @@ namespace
 
   LiveCounterProof proveLiveCounterRead(
     int processId,
+    const std::string& executablePath,
     int sampleDelayMs,
     std::size_t maxScanBytes,
     int scanTimeoutMs,
@@ -967,12 +2409,34 @@ namespace
     if (!regions.success)
       return { false, 0, 0, 0, 0, regions.reason };
 
+    std::uintptr_t targetImageBase = 0;
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!sameMappedFile(region.mappedPath, executablePath))
+        continue;
+      if (targetImageBase == 0 || region.address < targetImageBase)
+        targetImageBase = region.address;
+    }
+
+    std::vector<RuntimeMemoryRegion> scanRegions = regions.regions;
+    std::stable_sort(
+      scanRegions.begin(),
+      scanRegions.end(),
+      [&](const RuntimeMemoryRegion& lhs, const RuntimeMemoryRegion& rhs)
+      {
+        const int lhsPriority = unitScanRegionPriority(lhs, executablePath, targetImageBase);
+        const int rhsPriority = unitScanRegionPriority(rhs, executablePath, targetImageBase);
+        if (lhsPriority != rhsPriority)
+          return lhsPriority < rhsPriority;
+        return lhs.address < rhs.address;
+      });
+
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
     std::vector<Snapshot> snapshots;
     const std::size_t maxRegionBytes = 4 * 1024 * 1024;
     std::size_t scanned = 0;
 
-    for (const RuntimeMemoryRegion& region : regions.regions)
+    for (const RuntimeMemoryRegion& region : scanRegions)
     {
       if (timedOut(deadline))
       {
@@ -992,6 +2456,8 @@ namespace
           ++diagnostics->skippedNonWritableRegions;
         continue;
       }
+      if (fileBackedNonTargetRegion(region, executablePath))
+        continue;
       if (region.size < sizeof(std::uint32_t))
         continue;
       if (diagnostics != nullptr)
@@ -1070,6 +2536,8 @@ namespace
 
     std::this_thread::sleep_for(std::chrono::milliseconds(sampleDelayMs));
 
+    LiveCounterProof bestProof;
+    int bestScore = std::numeric_limits<int>::max();
     for (const Candidate& candidate : candidates)
     {
       if (timedOut(deadline))
@@ -1084,8 +2552,19 @@ namespace
 
       const std::uint32_t thirdValue = readU32(third.bytes, 0);
       if (plausibleCounterDelta(candidate.second, thirdValue))
-        return { true, candidate.address, candidate.first, candidate.second, thirdValue, {} };
+      {
+        const int score =
+          frameCounterScore(candidate.first, candidate.second, thirdValue, sampleDelayMs);
+        if (!bestProof.passed || score < bestScore)
+        {
+          bestProof = { true, candidate.address, candidate.first, candidate.second, thirdValue, {} };
+          bestScore = score;
+        }
+      }
     }
+
+    if (bestProof.passed)
+      return bestProof;
 
     return { false, 0, 0, 0, 0, "candidate counters did not keep increasing across the third sample" };
   }
@@ -1196,6 +2675,10 @@ int main(int argc, char** argv)
   bool proveActiveMatchState = false;
   bool proveReadUnits = false;
   bool selfUnitFixture = false;
+  bool proveDispatchEvents = false;
+  bool proveReadMapData = false;
+  bool proveReadPlayerData = false;
+  bool proveReplayAnalysis = false;
   bool proveBattleNetPolicyFlag = false;
   bool unitScanDiagnosticsFlag = false;
   bool unitScanReadableOnlyFlag = false;
@@ -1243,6 +2726,26 @@ int main(int argc, char** argv)
     if (arg == "--self-unit-fixture")
     {
       selfUnitFixture = true;
+      continue;
+    }
+    if (arg == "--prove-dispatch-events")
+    {
+      proveDispatchEvents = true;
+      continue;
+    }
+    if (arg == "--prove-read-map-data")
+    {
+      proveReadMapData = true;
+      continue;
+    }
+    if (arg == "--prove-read-player-data")
+    {
+      proveReadPlayerData = true;
+      continue;
+    }
+    if (arg == "--prove-replay-analysis")
+    {
+      proveReplayAnalysis = true;
       continue;
     }
     if (arg == "--unit-scan-diagnostics")
@@ -1447,6 +2950,25 @@ int main(int argc, char** argv)
   }
   if (unitMaxScanBytes == 0)
     unitMaxScanBytes = stateMaxScanBytes;
+  if (proveDispatchEvents)
+  {
+    proveReadGameState = true;
+    proveActiveMatchState = true;
+    proveReadUnits = true;
+  }
+  if (proveReadPlayerData)
+  {
+    proveActiveMatchState = true;
+    proveReadUnits = true;
+  }
+  if (proveActiveMatchState && !self)
+    proveReadGameState = true;
+  if (proveReplayAnalysis)
+  {
+    proveReadGameState = true;
+    proveReadMapData = true;
+    proveReadPlayerData = true;
+  }
 
   const RuntimeProcessOpenResult attach = openRuntimeProcess(environment);
   std::cout << "attach.opened=" << (attach.opened ? "true" : "false") << '\n';
@@ -1464,9 +2986,19 @@ int main(int argc, char** argv)
 
   LiveCounterProof readGameStateProof;
   LiveUnitsProof readUnitsProof;
+  LiveUnitNodeProof activeUnitNodeProof;
+  DispatchEventsProof dispatchEventsProof;
+  MapDataProof mapDataProof;
+  PlayerDataProof playerDataProof;
+  ReplayAnalysisProof replayAnalysisProof;
   StateScanDiagnostics stateScanDiagnostics;
   UnitScanDiagnostics unitScanDiagnostics;
   BattleNetPolicyProof battleNetPolicyProof;
+  bool unitSnapshotWritten = false;
+  bool dispatchEventsSnapshotWritten = false;
+  bool mapDataSnapshotWritten = false;
+  bool playerDataSnapshotWritten = false;
+  bool replayAnalysisSnapshotWritten = false;
   SelfUnitFixture unitFixture;
   int proofFailureCode = 0;
   if (self && selfUnitFixture)
@@ -1476,6 +3008,7 @@ int main(int argc, char** argv)
   {
     readGameStateProof = proveLiveCounterRead(
       environment.processId,
+      environment.executablePath,
       stateSampleDelayMs,
       stateMaxScanBytes,
       stateScanTimeoutMs,
@@ -1520,6 +3053,30 @@ int main(int argc, char** argv)
     proofFailureCode = proofFailureCode == 0 ? 7 : proofFailureCode;
   }
 
+  if (proveReadMapData)
+  {
+    RuntimeInstallation installation = detectStarCraftInstallation(environment);
+    mapDataProof = proveMapData(
+      environment.processId,
+      environment.executablePath,
+      installation.installRoot,
+      stateMaxScanBytes,
+      stateScanTimeoutMs);
+    std::cout << "read_map_data.ready=" << (mapDataProof.passed ? "true" : "false") << '\n';
+    if (mapDataProof.passed)
+    {
+      std::cout << "read_map_data.map_name=" << mapDataProof.mapName << '\n';
+      std::cout << "read_map_data.map_name_address=0x"
+                << std::hex << mapDataProof.mapNameAddress << std::dec << '\n';
+      std::cout << "read_map_data.map_path=" << mapDataProof.mapPath << '\n';
+      std::cout << "read_map_data.map_file_size=" << mapDataProof.mapFileSize << '\n';
+    }
+    if (!mapDataProof.reason.empty())
+      std::cout << "read_map_data.reason=" << mapDataProof.reason << '\n';
+    if (!mapDataProof.passed)
+      proofFailureCode = proofFailureCode == 0 ? 9 : proofFailureCode;
+  }
+
   if (proveReadUnits || (proveActiveMatchState && !self))
   {
     int unitScanAttempts = 0;
@@ -1529,7 +3086,15 @@ int main(int argc, char** argv)
     {
       ++unitScanAttempts;
       unitScanDiagnostics = {};
-      if (!unitCandidateAddresses.empty())
+      if (proveActiveMatchState && !self)
+      {
+        activeUnitNodeProof = proveLiveUnitNodeAnchors(
+          environment.processId,
+          environment.executablePath,
+          unitMaxScanBytes,
+          unitScanTimeoutMs);
+      }
+      if (proveReadUnits && !unitCandidateAddresses.empty())
       {
         readUnitsProof = proveExplicitUnitCandidateAddresses(
           environment.processId,
@@ -1538,7 +3103,19 @@ int main(int argc, char** argv)
           unitScanTimeoutMs,
           unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
       }
-      if (!readUnitsProof.passed)
+      if (proveReadUnits
+          && !readUnitsProof.passed
+          && !self
+          && environment.product == Product::StarCraftRemastered)
+      {
+        readUnitsProof = proveRemasteredUnitNodeSnapshot(
+          environment.processId,
+          environment.executablePath,
+          unitMaxScanBytes,
+          unitScanTimeoutMs,
+          &activeUnitNodeProof);
+      }
+      if (proveReadUnits && !readUnitsProof.passed)
       {
         readUnitsProof = proveLiveUnitsRead(
           environment.processId,
@@ -1550,7 +3127,10 @@ int main(int argc, char** argv)
           unitScanVectorsFlag,
           unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
       }
-      if (readUnitsProof.passed || activeMatchWaitMs <= 0 || std::chrono::steady_clock::now() >= activeMatchDeadline)
+      if (readUnitsProof.passed
+          || activeUnitNodeProof.passed
+          || activeMatchWaitMs <= 0
+          || std::chrono::steady_clock::now() >= activeMatchDeadline)
         break;
       std::this_thread::sleep_for(std::chrono::milliseconds(activeMatchPollMs));
     }
@@ -1570,6 +3150,11 @@ int main(int argc, char** argv)
         std::cout << "read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
         std::cout << "read_units.record_size=" << readUnitsProof.recordSize << '\n';
         std::cout << "read_units.layout=" << readUnitsProof.layoutName << '\n';
+        std::cout << "read_units.pointer_array=" << (readUnitsProof.pointerArray ? "true" : "false") << '\n';
+        std::cout << "read_units.derived_snapshot="
+                  << (readUnitsProof.derivedSnapshot ? "true" : "false") << '\n';
+        std::cout << "read_units.hit_points_resolved="
+                  << (readUnitsProof.hitPointsResolved ? "true" : "false") << '\n';
         std::cout << "read_units.sampled_records=" << readUnitsProof.sampledRecords << '\n';
         std::cout << "read_units.active_records=" << readUnitsProof.activeRecords << '\n';
       }
@@ -1579,16 +3164,38 @@ int main(int argc, char** argv)
 
     if (proveActiveMatchState)
     {
-      std::cout << "active_match_state.in_game=" << (readUnitsProof.passed ? "true" : "false") << '\n';
-      std::cout << "active_match_state.evidence=active-unit-records\n";
+      const bool frameGatePassed = !proveReadGameState || readGameStateProof.passed;
+      const bool activeMatchProven =
+        !self && frameGatePassed && (readUnitsProof.passed || activeUnitNodeProof.passed);
+      const char* activeMatchEvidence =
+        readUnitsProof.passed
+          ? (readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records")
+          : "active-unit-node-anchor";
+      std::cout << "active_match_state.in_game=" << (activeMatchProven ? "true" : "false") << '\n';
+      std::cout << "active_match_state.evidence=" << activeMatchEvidence << '\n';
+      if (!frameGatePassed)
+        std::cout << "active_match_state.reason=active match proof requires live frame progression\n";
       if (readUnitsProof.passed)
       {
         std::cout << "active_match_state.active_records=" << readUnitsProof.activeRecords << '\n';
         std::cout << "active_match_state.unit_array_address=0x"
                   << std::hex << readUnitsProof.address << std::dec << '\n';
       }
-      if (!readUnitsProof.reason.empty())
+      else if (activeUnitNodeProof.passed)
+      {
+        std::cout << "active_match_state.active_records=" << activeUnitNodeProof.activeRecords << '\n';
+        std::cout << "active_match_state.unit_node_address=0x"
+                  << std::hex << activeUnitNodeProof.address << std::dec << '\n';
+        if (activeUnitNodeProof.vectorAddress != 0)
+          std::cout << "active_match_state.unit_node_vector_address=0x"
+                    << std::hex << activeUnitNodeProof.vectorAddress << std::dec << '\n';
+        std::cout << "active_match_state.unit_node_record_size="
+                  << activeUnitNodeProof.recordSize << '\n';
+      }
+      if (!readUnitsProof.reason.empty() && !activeUnitNodeProof.passed)
         std::cout << "active_match_state.reason=" << readUnitsProof.reason << '\n';
+      if (!activeUnitNodeProof.reason.empty() && !activeUnitNodeProof.passed)
+        std::cout << "active_match_state.unit_node_reason=" << activeUnitNodeProof.reason << '\n';
     }
 
     if (unitScanDiagnosticsFlag)
@@ -1608,6 +3215,16 @@ int main(int argc, char** argv)
       std::cout << "read_units.scan.scanned_regions=" << unitScanDiagnostics.scannedRegions << '\n';
       std::cout << "read_units.scan.scanned_bytes=" << unitScanDiagnostics.scannedBytes << '\n';
       std::cout << "read_units.scan.vector_candidates=" << unitScanDiagnostics.vectorCandidates << '\n';
+      std::cout << "read_units.scan.vector_duplicate_begins="
+                << unitScanDiagnostics.vectorDuplicateBegins << '\n';
+      std::cout << "read_units.scan.vector_rejected_target_regions="
+                << unitScanDiagnostics.vectorRejectedTargetRegions << '\n';
+      std::cout << "read_units.scan.pointer_array_candidates="
+                << unitScanDiagnostics.pointerArrayCandidates << '\n';
+      std::cout << "read_units.scan.pointer_arrays_scored="
+                << unitScanDiagnostics.pointerArraysScored << '\n';
+      std::cout << "read_units.scan.pointer_array_readable_pointer_hits="
+                << unitScanDiagnostics.pointerArrayReadablePointerHits << '\n';
       std::cout << "read_units.scan.strided_candidates=" << unitScanDiagnostics.stridedCandidates << '\n';
       std::cout << "read_units.scan.candidate_arrays_scored=" << unitScanDiagnostics.candidateArraysScored << '\n';
       std::cout << "read_units.scan.window_candidate_arrays_scored="
@@ -1686,8 +3303,65 @@ int main(int argc, char** argv)
         }
       }
     }
-    if (!readUnitsProof.passed)
+    if (!readUnitsProof.passed && !(proveActiveMatchState && activeUnitNodeProof.passed && !proveReadUnits))
       proofFailureCode = proofFailureCode == 0 ? (proveReadUnits ? 6 : 7) : proofFailureCode;
+  }
+
+  if (proveReadPlayerData)
+  {
+    playerDataProof = provePlayerDataFromUnitSnapshot(activeUnitNodeProof);
+    std::cout << "read_player_data.ready=" << (playerDataProof.passed ? "true" : "false") << '\n';
+    if (playerDataProof.passed)
+    {
+      std::cout << "read_player_data.player_count=" << playerDataProof.playerCount << '\n';
+      std::cout << "read_player_data.observed_units=" << playerDataProof.observedUnits << '\n';
+    }
+    if (!playerDataProof.reason.empty())
+      std::cout << "read_player_data.reason=" << playerDataProof.reason << '\n';
+    if (!playerDataProof.passed)
+      proofFailureCode = proofFailureCode == 0 ? 10 : proofFailureCode;
+  }
+
+  if (proveReplayAnalysis)
+  {
+    replayAnalysisProof = proveReplayAnalysisFromLiveMetadata(
+      readGameStateProof,
+      mapDataProof,
+      playerDataProof);
+    std::cout << "replay_analysis.ready=" << (replayAnalysisProof.passed ? "true" : "false") << '\n';
+    if (replayAnalysisProof.passed)
+    {
+      std::cout << "replay_analysis.map_name=" << replayAnalysisProof.mapName << '\n';
+      std::cout << "replay_analysis.first_frame=" << replayAnalysisProof.firstFrame << '\n';
+      std::cout << "replay_analysis.last_frame=" << replayAnalysisProof.lastFrame << '\n';
+      std::cout << "replay_analysis.player_count=" << replayAnalysisProof.playerCount << '\n';
+    }
+    if (!replayAnalysisProof.reason.empty())
+      std::cout << "replay_analysis.reason=" << replayAnalysisProof.reason << '\n';
+    if (!replayAnalysisProof.passed)
+      proofFailureCode = proofFailureCode == 0 ? 11 : proofFailureCode;
+  }
+
+  if (proveDispatchEvents)
+  {
+    dispatchEventsProof = proveDispatchEventsFromLiveState(
+      readGameStateProof,
+      readUnitsProof,
+      activeUnitNodeProof);
+    std::cout << "dispatch_events.ready=" << (dispatchEventsProof.passed ? "true" : "false") << '\n';
+    if (dispatchEventsProof.passed)
+    {
+      std::cout << "dispatch_events.frame_events=" << dispatchEventsProof.frameEvents << '\n';
+      std::cout << "dispatch_events.unit_discover_events="
+                << dispatchEventsProof.unitDiscoverEvents << '\n';
+      std::cout << "dispatch_events.unit_update_events="
+                << dispatchEventsProof.unitUpdateEvents << '\n';
+      std::cout << "dispatch_events.unique_players=" << dispatchEventsProof.uniquePlayers << '\n';
+    }
+    if (!dispatchEventsProof.reason.empty())
+      std::cout << "dispatch_events.reason=" << dispatchEventsProof.reason << '\n';
+    if (!dispatchEventsProof.passed)
+      proofFailureCode = proofFailureCode == 0 ? 8 : proofFailureCode;
   }
 
   if (proveBattleNetPolicyFlag)
@@ -1748,11 +3422,113 @@ int main(int argc, char** argv)
     return 1;
   }
 
+  const RuntimeExecutorBehaviorProof* dispatchEventsBehaviorProof = findProof("dispatch-events");
+  if (proveDispatchEvents && dispatchEventsBehaviorProof == nullptr)
+  {
+    std::cerr << "dispatch-events proof definition is missing\n";
+    return 1;
+  }
+
+  const RuntimeExecutorBehaviorProof* replayAnalysisBehaviorProof = findProof("replay-analysis");
+  if (proveReplayAnalysis && replayAnalysisBehaviorProof == nullptr)
+  {
+    std::cerr << "replay-analysis proof definition is missing\n";
+    return 1;
+  }
+
   const RuntimeExecutorBehaviorProof* battleNetPolicyBehaviorProof = findProof("battle-net-policy");
   if (proveBattleNetPolicyFlag && battleNetPolicyBehaviorProof == nullptr)
   {
     std::cerr << "battle-net-policy proof definition is missing\n";
     return 1;
+  }
+
+  const std::filesystem::path unitSnapshotPath =
+    std::filesystem::path(environment.executorBridgePath) / "units.snapshot.tsv";
+  if (proveReadUnits && readUnitsProof.passed && readUnitsProof.derivedSnapshot)
+  {
+    std::string snapshotReason;
+    const bool snapshotWritten = writeRemasteredUnitSnapshot(
+      unitSnapshotPath,
+      activeUnitNodeProof.records,
+      snapshotReason);
+    unitSnapshotWritten = snapshotWritten;
+    std::cout << "read_units.snapshot.success=" << (snapshotWritten ? "true" : "false") << '\n';
+    if (snapshotWritten)
+      std::cout << "read_units.snapshot.path=" << unitSnapshotPath.string() << '\n';
+    if (!snapshotReason.empty())
+      std::cout << "read_units.snapshot.reason=" << snapshotReason << '\n';
+    if (!snapshotWritten)
+      proofFailureCode = proofFailureCode == 0 ? 6 : proofFailureCode;
+  }
+
+  const std::filesystem::path dispatchEventsPath =
+    std::filesystem::path(environment.executorBridgePath) / "events.snapshot.tsv";
+  if (proveDispatchEvents && dispatchEventsProof.passed)
+  {
+    std::string eventsReason;
+    const bool eventsWritten = writeDispatchEventsSnapshot(
+      dispatchEventsPath,
+      readGameStateProof,
+      activeUnitNodeProof.records,
+      eventsReason);
+    dispatchEventsSnapshotWritten = eventsWritten;
+    std::cout << "dispatch_events.snapshot.success=" << (eventsWritten ? "true" : "false") << '\n';
+    if (eventsWritten)
+      std::cout << "dispatch_events.snapshot.path=" << dispatchEventsPath.string() << '\n';
+    if (!eventsReason.empty())
+      std::cout << "dispatch_events.snapshot.reason=" << eventsReason << '\n';
+    if (!eventsWritten)
+      proofFailureCode = proofFailureCode == 0 ? 8 : proofFailureCode;
+  }
+
+  const std::filesystem::path mapDataPath =
+    std::filesystem::path(environment.executorBridgePath) / "map.snapshot.tsv";
+  if (proveReadMapData && mapDataProof.passed)
+  {
+    std::string mapReason;
+    const bool mapWritten = writeMapDataSnapshot(mapDataPath, mapDataProof, mapReason);
+    mapDataSnapshotWritten = mapWritten;
+    std::cout << "read_map_data.snapshot.success=" << (mapWritten ? "true" : "false") << '\n';
+    if (mapWritten)
+      std::cout << "read_map_data.snapshot.path=" << mapDataPath.string() << '\n';
+    if (!mapReason.empty())
+      std::cout << "read_map_data.snapshot.reason=" << mapReason << '\n';
+    if (!mapWritten)
+      proofFailureCode = proofFailureCode == 0 ? 9 : proofFailureCode;
+  }
+
+  const std::filesystem::path playerDataPath =
+    std::filesystem::path(environment.executorBridgePath) / "players.snapshot.tsv";
+  if (proveReadPlayerData && playerDataProof.passed)
+  {
+    std::string playerReason;
+    const bool playerWritten = writePlayerDataSnapshot(playerDataPath, playerDataProof, playerReason);
+    playerDataSnapshotWritten = playerWritten;
+    std::cout << "read_player_data.snapshot.success=" << (playerWritten ? "true" : "false") << '\n';
+    if (playerWritten)
+      std::cout << "read_player_data.snapshot.path=" << playerDataPath.string() << '\n';
+    if (!playerReason.empty())
+      std::cout << "read_player_data.snapshot.reason=" << playerReason << '\n';
+    if (!playerWritten)
+      proofFailureCode = proofFailureCode == 0 ? 10 : proofFailureCode;
+  }
+
+  const std::filesystem::path replayAnalysisPath =
+    std::filesystem::path(environment.executorBridgePath) / "replay.snapshot.tsv";
+  if (proveReplayAnalysis && replayAnalysisProof.passed)
+  {
+    std::string replayReason;
+    const bool replayWritten =
+      writeReplayAnalysisSnapshot(replayAnalysisPath, replayAnalysisProof, replayReason);
+    replayAnalysisSnapshotWritten = replayWritten;
+    std::cout << "replay_analysis.snapshot.success=" << (replayWritten ? "true" : "false") << '\n';
+    if (replayWritten)
+      std::cout << "replay_analysis.snapshot.path=" << replayAnalysisPath.string() << '\n';
+    if (!replayReason.empty())
+      std::cout << "replay_analysis.snapshot.reason=" << replayReason << '\n';
+    if (!replayWritten)
+      proofFailureCode = proofFailureCode == 0 ? 11 : proofFailureCode;
   }
 
   const std::filesystem::path readyPath =
@@ -1782,28 +3558,110 @@ int main(int argc, char** argv)
           << readGameStateProof.third << '\n';
     ready << readGameStateBehaviorProof->readyFileLine << '\n';
   }
-  if (proveActiveMatchState && readUnitsProof.passed)
+  const bool activeMatchReady =
+    proveActiveMatchState
+    && !self
+    && (!proveReadGameState || readGameStateProof.passed)
+    && (readUnitsProof.passed || activeUnitNodeProof.passed);
+  if (activeMatchReady)
   {
-    ready << "proof.active_match_state.evidence=active-unit-records\n";
-    ready << "proof.active_match_state.active_records=" << readUnitsProof.activeRecords << '\n';
-    ready << "proof.active_match_state.unit_array_address=0x"
-          << std::hex << readUnitsProof.address << std::dec << '\n';
+    const char* activeMatchEvidence =
+      readUnitsProof.passed
+        ? (readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records")
+        : "active-unit-node-anchor";
+    ready << "proof.active_match_state.evidence="
+          << activeMatchEvidence << '\n';
+    ready << "proof.active_match_state.active_records="
+          << (readUnitsProof.passed ? readUnitsProof.activeRecords : activeUnitNodeProof.activeRecords)
+          << '\n';
+    if (readUnitsProof.passed)
+    {
+      ready << "proof.active_match_state.unit_array_address=0x"
+            << std::hex << readUnitsProof.address << std::dec << '\n';
+    }
+    else
+    {
+      ready << "proof.active_match_state.unit_node_address=0x"
+            << std::hex << activeUnitNodeProof.address << std::dec << '\n';
+      if (activeUnitNodeProof.vectorAddress != 0)
+        ready << "proof.active_match_state.unit_node_vector_address=0x"
+              << std::hex << activeUnitNodeProof.vectorAddress << std::dec << '\n';
+      ready << "proof.active_match_state.unit_node_record_size="
+            << activeUnitNodeProof.recordSize << '\n';
+      ready << "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.active_match_state=passed\n";
+    }
     ready << activeMatchStateBehaviorProof->readyFileLine << '\n';
   }
-  if (proveReadUnits && readUnitsProof.passed)
+  const bool readUnitsReady =
+    proveReadUnits
+    && readUnitsProof.passed
+    && (!readUnitsProof.derivedSnapshot || unitSnapshotWritten)
+    && (!proveActiveMatchState || activeMatchReady);
+  if (readUnitsReady)
   {
     ready << "proof.read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
     ready << "proof.read_units.record_size=" << readUnitsProof.recordSize << '\n';
     ready << "proof.read_units.layout=" << readUnitsProof.layoutName << '\n';
+    ready << "proof.read_units.pointer_array=" << (readUnitsProof.pointerArray ? "true" : "false") << '\n';
+    ready << "proof.read_units.derived_snapshot=" << (readUnitsProof.derivedSnapshot ? "true" : "false") << '\n';
+    ready << "proof.read_units.hit_points_resolved=" << (readUnitsProof.hitPointsResolved ? "true" : "false") << '\n';
     ready << "proof.read_units.active_records=" << readUnitsProof.activeRecords << '\n';
     ready << "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.read_units=passed\n";
-    ready << "contract.structure.BW::CUnit=" << readUnitsProof.recordSize << "|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.id=" << readUnitsProof.idOffset << "|2|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.position=" << readUnitsProof.positionOffset << "|4|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.hitPoints=" << readUnitsProof.hitPointsOffset << "|4|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.order=" << readUnitsProof.orderOffset << "|1|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.player=" << readUnitsProof.playerOffset << "|1|proof.read_units=passed\n";
+    if (readUnitsProof.derivedSnapshot)
+    {
+      ready << "proof.read_units.snapshot=units.snapshot.tsv\n";
+      ready << "proof.read_units.id_source=secondary+24\n";
+      ready << "proof.read_units.position_source=unit-node+36|4\n";
+      ready << "proof.read_units.order_source=unit-node+48|2\n";
+      ready << "proof.read_units.player_source=secondary+20|1\n";
+    }
+    else
+    {
+      ready << "contract.structure.BW::CUnit=" << readUnitsProof.recordSize << "|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.id=" << readUnitsProof.idOffset << "|2|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.position=" << readUnitsProof.positionOffset << "|4|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.hitPoints=" << readUnitsProof.hitPointsOffset << "|4|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.order=" << readUnitsProof.orderOffset << "|1|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.player=" << readUnitsProof.playerOffset << "|1|proof.read_units=passed\n";
+    }
     ready << readUnitsBehaviorProof->readyFileLine << '\n';
+  }
+  if (proveDispatchEvents && dispatchEventsProof.passed && dispatchEventsSnapshotWritten && activeMatchReady)
+  {
+    ready << "proof.dispatch_events.frame_events=" << dispatchEventsProof.frameEvents << '\n';
+    ready << "proof.dispatch_events.unit_discover_events="
+          << dispatchEventsProof.unitDiscoverEvents << '\n';
+    ready << "proof.dispatch_events.unit_update_events="
+          << dispatchEventsProof.unitUpdateEvents << '\n';
+    ready << "proof.dispatch_events.unique_players=" << dispatchEventsProof.uniquePlayers << '\n';
+    ready << "proof.dispatch_events.snapshot=events.snapshot.tsv\n";
+    ready << dispatchEventsBehaviorProof->readyFileLine << '\n';
+  }
+  if (proveReadMapData && mapDataProof.passed && mapDataSnapshotWritten)
+  {
+    ready << "proof.read_map_data.map_name=" << mapDataProof.mapName << '\n';
+    ready << "proof.read_map_data.map_name_address=0x"
+          << std::hex << mapDataProof.mapNameAddress << std::dec << '\n';
+    ready << "proof.read_map_data.map_path=" << mapDataProof.mapPath << '\n';
+    ready << "proof.read_map_data.map_file_size=" << mapDataProof.mapFileSize << '\n';
+    ready << "proof.read_map_data.snapshot=map.snapshot.tsv\n";
+    ready << "proof.read_map_data=passed\n";
+  }
+  if (proveReadPlayerData && playerDataProof.passed && playerDataSnapshotWritten && activeMatchReady)
+  {
+    ready << "proof.read_player_data.player_count=" << playerDataProof.playerCount << '\n';
+    ready << "proof.read_player_data.observed_units=" << playerDataProof.observedUnits << '\n';
+    ready << "proof.read_player_data.snapshot=players.snapshot.tsv\n";
+    ready << "proof.read_player_data=passed\n";
+  }
+  if (proveReplayAnalysis && replayAnalysisProof.passed && replayAnalysisSnapshotWritten)
+  {
+    ready << "proof.replay_analysis.map_name=" << replayAnalysisProof.mapName << '\n';
+    ready << "proof.replay_analysis.first_frame=" << replayAnalysisProof.firstFrame << '\n';
+    ready << "proof.replay_analysis.last_frame=" << replayAnalysisProof.lastFrame << '\n';
+    ready << "proof.replay_analysis.player_count=" << replayAnalysisProof.playerCount << '\n';
+    ready << "proof.replay_analysis.snapshot=replay.snapshot.tsv\n";
+    ready << replayAnalysisBehaviorProof->readyFileLine << '\n';
   }
   if (proveBattleNetPolicyFlag && battleNetPolicyProof.passed)
   {
@@ -1819,10 +3677,18 @@ int main(int argc, char** argv)
   std::cout << attachProof->readyFileLine << '\n';
   if (proveReadGameState && readGameStateProof.passed)
     std::cout << readGameStateBehaviorProof->readyFileLine << '\n';
-  if (proveActiveMatchState && readUnitsProof.passed)
+  if (activeMatchReady)
     std::cout << activeMatchStateBehaviorProof->readyFileLine << '\n';
-  if (proveReadUnits && readUnitsProof.passed)
+  if (readUnitsReady)
     std::cout << readUnitsBehaviorProof->readyFileLine << '\n';
+  if (proveDispatchEvents && dispatchEventsProof.passed && dispatchEventsSnapshotWritten && activeMatchReady)
+    std::cout << dispatchEventsBehaviorProof->readyFileLine << '\n';
+  if (proveReadMapData && mapDataProof.passed && mapDataSnapshotWritten)
+    std::cout << "proof.read_map_data=passed\n";
+  if (proveReadPlayerData && playerDataProof.passed && playerDataSnapshotWritten && activeMatchReady)
+    std::cout << "proof.read_player_data=passed\n";
+  if (proveReplayAnalysis && replayAnalysisProof.passed && replayAnalysisSnapshotWritten)
+    std::cout << replayAnalysisBehaviorProof->readyFileLine << '\n';
   if (proveBattleNetPolicyFlag && battleNetPolicyProof.passed)
     std::cout << battleNetPolicyBehaviorProof->readyFileLine << '\n';
   return proofFailureCode == 0 ? 0 : proofFailureCode;

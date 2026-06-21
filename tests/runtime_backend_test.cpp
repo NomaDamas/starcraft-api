@@ -36,9 +36,9 @@ int main()
   assert(remasteredProbe.capabilities.empty());
   RuntimeCommandSurface remasteredSurface = makeBWAPICommandSurface();
   assert(remasteredProbe.implementedApiSurfaceMethods == makeRemasteredParityContract("unknown").requiredApiSurfaceMethods);
-  assert(remasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
-  assert(remasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
-  assert(remasteredProbe.implementedGameActions == remasteredSurface.gameActions);
+  assert(remasteredProbe.implementedCommandSurfaceEntries == 0);
+  assert(remasteredProbe.implementedUnitCommands.empty());
+  assert(remasteredProbe.implementedGameActions.empty());
   assert(remasteredBackend->state() == RuntimeSessionState::Closed);
   RuntimeOpenResult remasteredOpen = remasteredBackend->open();
   assert(!remasteredOpen.opened);
@@ -77,6 +77,32 @@ int main()
   assert(hasCapability(proofBackedRemasteredProbe, Capability::SharedMemoryClient));
   assert(hasCapability(proofBackedRemasteredProbe, Capability::ReadGameState));
   assert(!hasCapability(proofBackedRemasteredProbe, Capability::ReadUnitData));
+  assert(proofBackedRemasteredProbe.implementedCommandSurfaceEntries == 0);
+  assert(proofBackedRemasteredProbe.implementedUnitCommands.empty());
+  assert(proofBackedRemasteredProbe.implementedGameActions.empty());
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=unit-test\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
+    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+      ready << proof.readyFileLine << '\n';
+  }
+
+  RuntimeProbeResult commandProofRemasteredProbe = proofBackedRemasteredBackend->probe();
+  assert(hasCapability(commandProofRemasteredProbe, Capability::IssueCommands));
+  assert(hasCapability(commandProofRemasteredProbe, Capability::DrawOverlays));
+  assert(commandProofRemasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
+  assert(commandProofRemasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
+  assert(commandProofRemasteredProbe.implementedGameActions == remasteredSurface.gameActions);
   std::filesystem::remove_all(bridgeDir);
 
   RuntimeEnvironment legacy = detected;

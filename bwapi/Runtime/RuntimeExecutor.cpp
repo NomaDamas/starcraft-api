@@ -33,6 +33,12 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    void addCapabilityIfMissing(std::vector<Capability>& capabilities, Capability capability)
+    {
+      if (std::find(capabilities.begin(), capabilities.end(), capability) == capabilities.end())
+        capabilities.push_back(capability);
+    }
+
     std::filesystem::path readyFilePath(const RuntimeEnvironment& environment)
     {
       return std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
@@ -66,6 +72,39 @@ namespace BWAPI::Runtime
           return line.substr(prefix.size());
       }
       return {};
+    }
+
+    std::string contractBindingReadyKey(const std::string& name)
+    {
+      return "contract.binding." + name;
+    }
+
+    bool readyFileHasProofBackedBinding(
+      const std::filesystem::path& readyPath,
+      const std::string& name,
+      BindingKind kind)
+    {
+      const std::string value = readReadyValue(readyPath, contractBindingReadyKey(name));
+      const std::string prefix = std::string(toString(kind)) + '|';
+      if (value.rfind(prefix, 0) != 0)
+        return false;
+
+      const std::string evidence = value.substr(prefix.size());
+      return !evidence.empty() && evidence.rfind("fixture:", 0) != 0;
+    }
+
+    bool readyFileHasActiveRuntimeCommandQueueSink(const std::filesystem::path& readyPath)
+    {
+      return fileContainsLine(readyPath, RuntimeExecutorBridgeActiveCommandReceiverLine)
+        && fileContainsLine(readyPath, RuntimeExecutorBridgeRuntimeCommandQueueSinkLine)
+        && readyFileHasProofBackedBinding(
+          readyPath,
+          "BW::BWDATA::sgdwBytesInCmdQueue",
+          BindingKind::CommandQueue)
+        && readyFileHasProofBackedBinding(
+          readyPath,
+          "BW::BWDATA::TurnBuffer",
+          BindingKind::CommandQueue);
     }
 
     std::vector<std::string> splitPipe(const std::string& value)
@@ -239,11 +278,30 @@ namespace BWAPI::Runtime
     {
       result.executorBridgeMode = readReadyValue(readyPath, "mode");
       result.missingBehaviorProofs.clear();
+      result.provenCapabilities.clear();
       for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       {
         if (!fileContainsLine(readyPath, proof.readyFileLine))
+        {
           result.missingBehaviorProofs.push_back(proof.readyFileLine);
+          continue;
+        }
+
+        if (std::string(proof.id) == "issue-commands"
+            && !readyFileHasActiveRuntimeCommandQueueSink(readyPath))
+        {
+          result.missingBehaviorProofs.push_back(proof.readyFileLine);
+          result.errors.push_back(
+            "runtime executor bridge issue-commands proof is missing an active runtime command queue sink");
+          continue;
+        }
+
+        addCapabilityIfMissing(result.provenCapabilities, proof.capability);
       }
+      if (fileContainsLine(readyPath, "proof.read_map_data=passed"))
+        addCapabilityIfMissing(result.provenCapabilities, Capability::ReadMapData);
+      if (fileContainsLine(readyPath, "proof.read_player_data=passed"))
+        addCapabilityIfMissing(result.provenCapabilities, Capability::ReadPlayerData);
 
       if (result.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode)
       {

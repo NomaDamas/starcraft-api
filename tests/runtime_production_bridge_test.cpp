@@ -33,6 +33,14 @@ namespace
     ready << "executable=" << executable << '\n';
   }
 
+  void writeRuntimeCommandQueueSink(std::ofstream& ready)
+  {
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
+  }
+
   void writeBootstrapReadyFile(
     const std::filesystem::path& bridgePath,
     int processId,
@@ -57,6 +65,7 @@ namespace
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
+    writeRuntimeCommandQueueSink(ready);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -72,6 +81,7 @@ namespace
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
+    writeRuntimeCommandQueueSink(ready);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
     {
       if (std::string(proof.id) != "multiplayer-sync")

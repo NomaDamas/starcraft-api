@@ -172,7 +172,7 @@ contract.field.<structure>.<field>=<offset>|<byte-size>|<evidence-id>
 
 The runtime only applies these lines when the ready file protocol, product, version, process id, executable identity, and `mode=validated-runtime-adapter` all match the selected runtime. Current built-in proofs emit `contract.binding.shared-memory-client-transport=transport|proof.attach=passed` after authorized attach/memory access succeeds. A passing `--prove-read-units` run additionally emits the CUnit array binding, CUnit record size, and the BWAPI-facing CUnit fields that the scanner validated. Missing or failed proof lines are not inferred, even when the same adapter run wrote other passing proof lines.
 
-`starcraft-runtime-submit-command` also requires the validated adapter mode and behavior proof lines before it appends commands to the bridge. Bootstrap bridges cannot receive BWAPI commands because they have not proven in-game command execution.
+`starcraft-runtime-submit-command` also requires validated adapter mode, behavior proof lines, an active command receiver, a runtime command queue sink, and proof-backed command queue bindings before it appends commands to the bridge. A one-shot `starcraft-runtime-adapter-proof` ready file is not enough: it proves attach/read behavior and then exits, so there is no resident command receiver that can consume `commands.log` and deliver it into SC:R. Bootstrap bridges cannot receive BWAPI commands because they have not proven in-game command execution.
 
 Adapter implementations should use `requiredRuntimeExecutorBehaviorProofs()` as the canonical behavior-proof inventory. The ready file strings below are generated from that same runtime contract in tests.
 
@@ -183,6 +183,17 @@ process_id=<selected-runtime-pid>
 executable=<selected-runtime-executable>
 mode=validated-runtime-adapter
 ```
+
+For `proof.issue_commands=passed` to count, the ready file must also prove that a live executor is receiving commands and that the selected runtime command queue was resolved for this session:
+
+```text
+command.receiver=active
+command.sink=runtime-command-queue-v1
+contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|<non-fixture-evidence-id>
+contract.binding.BW::BWDATA::TurnBuffer=command-queue|<non-fixture-evidence-id>
+```
+
+Without these lines, `proof.issue_commands=passed` is treated as missing by preflight. This prevents a diagnostic bridge log from being mistaken for a working in-game Move/Attack/Build command path.
 
 The required behavior proof lines are:
 

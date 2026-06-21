@@ -193,6 +193,54 @@ if(combined_units_index EQUAL -1)
   message(FATAL_ERROR "combined proof must preserve passing read-units proof\n${combined_ready}")
 endif()
 
+set(dispatch_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-dispatch-bridge")
+file(REMOVE_RECURSE "${dispatch_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${dispatch_bridge_dir}"
+    --prove-dispatch-events
+    --state-max-scan-mb 1
+    --state-scan-timeout-ms 1
+    --unit-max-scan-mb 128
+    --self-unit-fixture
+  RESULT_VARIABLE dispatch_result
+  OUTPUT_VARIABLE dispatch_output
+  ERROR_VARIABLE dispatch_error
+)
+if(dispatch_result EQUAL 0)
+  message(FATAL_ERROR "expected dispatch-events proof to reject self fixture\nstdout:\n${dispatch_output}\nstderr:\n${dispatch_error}")
+endif()
+foreach(needle
+    "active_match_state.in_game=false"
+    "dispatch_events.ready=false")
+  string(FIND "${dispatch_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "dispatch-events rejection output missing '${needle}'\n${dispatch_output}")
+  endif()
+endforeach()
+
+set(dispatch_ready_file "${dispatch_bridge_dir}/ready")
+if(NOT EXISTS "${dispatch_ready_file}")
+  message(FATAL_ERROR "failed dispatch-events proof must still write partial attach ready file")
+endif()
+file(READ "${dispatch_ready_file}" dispatch_ready)
+foreach(needle
+    "mode=validated-runtime-adapter"
+    "proof.attach=passed")
+  string(FIND "${dispatch_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "partial dispatch ready file missing '${needle}'\n${dispatch_ready}")
+  endif()
+endforeach()
+string(FIND "${dispatch_ready}" "proof.dispatch_events=passed" failed_dispatch_ready_index)
+if(NOT failed_dispatch_ready_index EQUAL -1)
+  message(FATAL_ERROR "failed dispatch-events proof must not claim passed behavior\n${dispatch_ready}")
+endif()
+
 set(active_match_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-active-match-bridge")
 file(REMOVE_RECURSE "${active_match_bridge_dir}")
 

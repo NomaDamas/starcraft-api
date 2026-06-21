@@ -1,8 +1,11 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
+#include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -46,6 +49,31 @@ int main()
   RuntimeProbeResult attachableRemasteredProbe = attachableRemasteredBackend->probe();
   assert(!attachableRemasteredProbe.supported);
   assert(hasCapability(attachableRemasteredProbe, Capability::SharedMemoryClient));
+
+  const std::filesystem::path bridgeDir =
+    std::filesystem::temp_directory_path() / "starcraft-api-runtime-backend-proof-test";
+  std::filesystem::remove_all(bridgeDir);
+  std::filesystem::create_directories(bridgeDir);
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=unit-test\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.read_game_state=passed\n";
+  }
+
+  RuntimeEnvironment proofBackedRemastered = attachableRemastered;
+  proofBackedRemastered.executorBridgePath = bridgeDir.string();
+  std::unique_ptr<RuntimeBackend> proofBackedRemasteredBackend = createRuntimeBackend(proofBackedRemastered);
+  RuntimeProbeResult proofBackedRemasteredProbe = proofBackedRemasteredBackend->probe();
+  assert(hasCapability(proofBackedRemasteredProbe, Capability::SharedMemoryClient));
+  assert(hasCapability(proofBackedRemasteredProbe, Capability::ReadGameState));
+  assert(!hasCapability(proofBackedRemasteredProbe, Capability::ReadUnitData));
+  std::filesystem::remove_all(bridgeDir);
 
   RuntimeEnvironment legacy = detected;
   legacy.product = Product::StarCraftBroodWar1161;

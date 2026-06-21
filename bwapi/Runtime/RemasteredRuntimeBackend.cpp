@@ -52,6 +52,30 @@ namespace BWAPI::Runtime
         contract.requiredCapabilities.end(),
         capability) != contract.requiredCapabilities.end();
     }
+
+    bool containsMissingProof(
+      const RuntimeExecutorPreflightResult& preflight,
+      const RuntimeExecutorBehaviorProof& proof)
+    {
+      return std::find(
+        preflight.missingBehaviorProofs.begin(),
+        preflight.missingBehaviorProofs.end(),
+        proof.readyFileLine) != preflight.missingBehaviorProofs.end();
+    }
+
+    void addValidatedBridgeCapabilities(
+      RuntimeProbeResult& result,
+      const RuntimeExecutorPreflightResult& preflight)
+    {
+      if (preflight.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode)
+        return;
+
+      for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+      {
+        if (!containsMissingProof(preflight, proof))
+          addCapabilityIfMissing(result, proof.capability);
+      }
+    }
   }
 
   RemasteredRuntimeBackend::RemasteredRuntimeBackend(RuntimeEnvironment environment)
@@ -92,6 +116,8 @@ namespace BWAPI::Runtime
       addCapabilityIfMissing(result, Capability::SharedMemoryClient);
 
     RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment_, contract);
+    addValidatedBridgeCapabilities(result, preflight);
+
     result.supported = true;
     result.supported = canClaimProductionSupport(result, contract)
       && preflight.executorAvailable

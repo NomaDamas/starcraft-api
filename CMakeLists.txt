@@ -68,6 +68,7 @@ add_library(starcraft_runtime STATIC
   "${BWAPI_ROOT}/Runtime/RemasteredRuntimeBackend.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeBackend.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeBackendFactory.cpp"
+  "${BWAPI_ROOT}/Runtime/RuntimeCommandEncoder.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeCommandQueue.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeCommandSurface.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeContract.cpp"

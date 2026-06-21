@@ -31,6 +31,17 @@ target_link_libraries(runtime_command_queue_test
 
 add_test(NAME runtime_command_queue_test COMMAND runtime_command_queue_test)
 
+add_executable(runtime_command_encoder_test
+  runtime_command_encoder_test.cpp
+)
+
+target_link_libraries(runtime_command_encoder_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_command_encoder_test COMMAND runtime_command_encoder_test)
+
 add_executable(runtime_contract_test
   runtime_contract_test.cpp
 )

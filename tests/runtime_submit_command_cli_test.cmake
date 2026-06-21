@@ -57,6 +57,42 @@ if(NOT command_log MATCHES "game-action\\|pauseGame\\|0\\|")
   message(FATAL_ERROR "expected pauseGame command in bridge log\nlog:\n${command_log}")
 endif()
 
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --dry-run-encode
+    --unit-command Move
+    --arg 100
+    --arg 200
+    --arg 0
+  RESULT_VARIABLE dry_run_result
+  OUTPUT_VARIABLE dry_run_output
+  ERROR_VARIABLE dry_run_error
+)
+if(NOT dry_run_result EQUAL 0)
+  message(FATAL_ERROR "expected dry-run command encoding to pass\nstdout:\n${dry_run_output}\nstderr:\n${dry_run_error}")
+endif()
+if(NOT dry_run_output MATCHES "encoded=true")
+  message(FATAL_ERROR "expected encoded=true in dry-run output\nstdout:\n${dry_run_output}")
+endif()
+if(NOT dry_run_output MATCHES "encoded.bytes=15 64 00 c8 00 00 00 e4 00 06 00")
+  message(FATAL_ERROR "expected Move command bytes in dry-run output\nstdout:\n${dry_run_output}")
+endif()
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --dry-run-encode
+    --unit-command Load
+  RESULT_VARIABLE unsupported_dry_run_result
+  OUTPUT_VARIABLE unsupported_dry_run_output
+  ERROR_VARIABLE unsupported_dry_run_error
+)
+if(unsupported_dry_run_result EQUAL 0)
+  message(FATAL_ERROR "expected unsupported dry-run command encoding to fail\nstdout:\n${unsupported_dry_run_output}\nstderr:\n${unsupported_dry_run_error}")
+endif()
+if(NOT unsupported_dry_run_output MATCHES "encoded=false")
+  message(FATAL_ERROR "expected encoded=false in unsupported dry-run output\nstdout:\n${unsupported_dry_run_output}")
+endif()
+
 set(bootstrap_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-submit-command-bootstrap-bridge")
 file(REMOVE_RECURSE "${bootstrap_bridge_dir}")
 file(MAKE_DIRECTORY "${bootstrap_bridge_dir}")

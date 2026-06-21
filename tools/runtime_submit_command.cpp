@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
+#include <BWAPI/Runtime/RuntimeCommandEncoder.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
@@ -26,7 +27,8 @@ namespace
     std::cout
       << "usage: starcraft-runtime-submit-command [--product <product>] [--version <version>] "
       << "[--manifest <path>] [--process-id <pid>] [--executable <path>] --bridge <dir> "
-      << "(--unit-command <name> --unit <id> | --game-action <name>) [--arg <int>...]\n";
+      << "(--unit-command <name> --unit <id> | --game-action <name>) [--arg <int>...] "
+      << "[--dry-run-encode]\n";
   }
 }
 
@@ -35,6 +37,7 @@ int main(int argc, char** argv)
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   RuntimeCommandRequest command;
   bool commandKindSelected = false;
+  bool dryRunEncode = false;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -43,6 +46,11 @@ int main(int argc, char** argv)
     {
       printUsage();
       return 0;
+    }
+    if (arg == "--dry-run-encode")
+    {
+      dryRunEncode = true;
+      continue;
     }
     if (arg == "--product")
     {
@@ -152,6 +160,30 @@ int main(int argc, char** argv)
     return 64;
   }
 
+  if (!commandKindSelected)
+  {
+    std::cerr << "a unit command or game action is required\n";
+    return 64;
+  }
+  if (command.kind == RuntimeCommandKind::UnitCommand && command.targetUnitId < 0)
+  {
+    std::cerr << "unit command target id must be non-negative\n";
+    return 64;
+  }
+
+  if (dryRunEncode)
+  {
+    RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(command);
+    std::cout << "encoded=" << (encoded.encoded ? "true" : "false") << '\n';
+    std::cout << "encoded.size=" << encoded.bytes.size() << '\n';
+    std::cout << "encoded.bytes=" << formatCommandBytesHex(encoded.bytes) << '\n';
+    if (!encoded.reason.empty())
+      std::cout << "reason=" << encoded.reason << '\n';
+    for (const std::string& warning : encoded.warnings)
+      std::cout << "warning=" << warning << '\n';
+    return encoded.encoded ? 0 : 2;
+  }
+
   if (!environment.manifestPath.empty())
   {
     RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
@@ -179,16 +211,6 @@ int main(int argc, char** argv)
   if (environment.executorBridgePath.empty())
   {
     std::cerr << "runtime executor bridge directory is required\n";
-    return 64;
-  }
-  if (!commandKindSelected)
-  {
-    std::cerr << "a unit command or game action is required\n";
-    return 64;
-  }
-  if (command.kind == RuntimeCommandKind::UnitCommand && command.targetUnitId < 0)
-  {
-    std::cerr << "unit command target id must be non-negative\n";
     return 64;
   }
 

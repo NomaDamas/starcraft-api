@@ -1,5 +1,6 @@
 #include "RemasteredRuntimeBackend.h"
 
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
@@ -23,6 +24,7 @@ namespace BWAPI::Runtime
           contract = manifest.manifest.contract;
       }
 
+      contract = applyRuntimeExecutorBridgeContractProofs(environment, contract);
       ContractValidationResult validation = validateRuntimeContract(contract);
       RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, contract);
 
@@ -76,6 +78,15 @@ namespace BWAPI::Runtime
           addCapabilityIfMissing(result, proof.capability);
       }
     }
+
+    void addBuiltInAdapterSurface(RuntimeProbeResult& result, const RuntimeContract& contract)
+    {
+      const RuntimeCommandSurface surface = makeBWAPICommandSurface();
+      result.implementedUnitCommands = surface.unitCommands;
+      result.implementedGameActions = surface.gameActions;
+      result.implementedApiSurfaceMethods = contract.requiredApiSurfaceMethods;
+      result.implementedCommandSurfaceEntries = surface.totalEntries();
+    }
   }
 
   RemasteredRuntimeBackend::RemasteredRuntimeBackend(RuntimeEnvironment environment)
@@ -97,11 +108,13 @@ namespace BWAPI::Runtime
   {
     RuntimeProbeResult result;
     RuntimeContract contract = makeRemasteredParityContract(environment_.version.empty() ? "unknown" : environment_.version);
+    bool manifestLoaded = false;
     if (!environment_.manifestPath.empty())
     {
       RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment_.manifestPath);
       if (manifest.loaded)
       {
+        manifestLoaded = true;
         contract = manifest.manifest.contract;
         result.capabilities = manifest.manifest.capabilities;
         result.implementedUnitCommands = manifest.manifest.unitCommands;
@@ -110,6 +123,9 @@ namespace BWAPI::Runtime
         result.implementedCommandSurfaceEntries = manifest.manifest.implementedCommandSurfaceEntries;
       }
     }
+    if (!manifestLoaded)
+      addBuiltInAdapterSurface(result, contract);
+    contract = applyRuntimeExecutorBridgeContractProofs(environment_, contract);
 
     const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment_.processId);
     if (memoryAccess.accessible)

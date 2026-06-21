@@ -48,6 +48,9 @@ namespace BWAPI::Runtime
   };
 
   const std::vector<RuntimeExecutorBehaviorProof>& requiredRuntimeExecutorBehaviorProofs();
+  RuntimeContract applyRuntimeExecutorBridgeContractProofs(
+    const RuntimeEnvironment& environment,
+    RuntimeContract contract);
   RuntimeExecutorPreflightResult preflightRuntimeExecutor(
     const RuntimeEnvironment& environment,
     const RuntimeContract& contract);

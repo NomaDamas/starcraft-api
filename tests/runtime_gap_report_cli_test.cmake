@@ -41,10 +41,7 @@ foreach(needle
     "executor.behavior_proof.missing_count="
     "implementation_gap.category_count="
     "implementation_gap.category.backend.count=1"
-    "implementation_gap.category.api-surface.count=1"
-    "implementation_gap.category.command-surface.count=1"
-    "implementation_gap.category.unit-command.count="
-    "implementation_gap.category.game-action.count="
+    "implementation_gap.category.capability.count="
     "implementation_gap.category.data-address.count="
     "implementation_gap.category.structure-layout.count="
     "implementation_gap.category.structure-field.count="
@@ -54,10 +51,8 @@ foreach(needle
     "diagnosis.game_process_count=0"
     "diagnosis.blocker_count=1"
     "implementation_gap.0.category=backend"
-    "implementation_gap.1.category=api-surface"
-    "implementation_gap.1.id=BWAPI.abstract-methods"
-    "implementation_gap.3.category=unit-command"
-    "implementation_gap.3.id=Attack_Move"
+    "implementation_gap.1.category=capability"
+    "implementation_gap.1.id=read-game-state"
     "category=data-address"
     "id=BW::BWDATA::Game"
     "category=executor-preflight"
@@ -131,7 +126,7 @@ execute_process(
     --product starcraft-remastered
     --version test-build
     --executable "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
-    --category unit-command
+    --category capability
   RESULT_VARIABLE filtered_result
   OUTPUT_VARIABLE filtered_output
   ERROR_VARIABLE filtered_error
@@ -142,10 +137,10 @@ if(NOT filtered_result EQUAL 0)
 endif()
 
 foreach(needle
-    "implementation_gap.filter.category=unit-command"
+    "implementation_gap.filter.category=capability"
     "implementation_gap.filtered_count="
-    "implementation_gap.0.category=unit-command"
-    "implementation_gap.0.id=Attack_Move")
+    "implementation_gap.0.category=capability"
+    "implementation_gap.0.id=read-game-state")
   string(FIND "${filtered_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "gap report category output missing '${needle}'\n${filtered_output}")
@@ -192,6 +187,7 @@ file(WRITE "${bridge_dir}/ready"
   "version=test-build\n"
   "executable=${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest\n"
   "mode=validated-runtime-adapter\n"
+  "contract.binding.shared-memory-client-transport=transport|proof.attach=passed\n"
   "proof.attach=passed\n"
   "proof.read_game_state=passed\n"
   "proof.read_units=passed\n"
@@ -222,6 +218,7 @@ foreach(needle
     "executor.behavior_proof.missing_count=1"
     "executor.behavior_proof.missing=proof.multiplayer_sync=passed"
     "readiness.blocking_gap=executor-behavior-proof-complete"
+    "implementation_gap.category.transport.count=1"
     "implementation_gap.category.executor-behavior-proof.count=1")
   string(FIND "${bridge_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)

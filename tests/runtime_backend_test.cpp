@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
@@ -33,8 +34,11 @@ int main()
   assert(!remasteredProbe.supported);
   assert(!remasteredProbe.reason.empty());
   assert(remasteredProbe.capabilities.empty());
-  assert(remasteredProbe.implementedApiSurfaceMethods == 0);
-  assert(remasteredProbe.implementedCommandSurfaceEntries == 0);
+  RuntimeCommandSurface remasteredSurface = makeBWAPICommandSurface();
+  assert(remasteredProbe.implementedApiSurfaceMethods == makeRemasteredParityContract("unknown").requiredApiSurfaceMethods);
+  assert(remasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
+  assert(remasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
+  assert(remasteredProbe.implementedGameActions == remasteredSurface.gameActions);
   assert(remasteredBackend->state() == RuntimeSessionState::Closed);
   RuntimeOpenResult remasteredOpen = remasteredBackend->open();
   assert(!remasteredOpen.opened);

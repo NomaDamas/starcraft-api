@@ -19,6 +19,8 @@ Before a StarCraft Remastered backend can be marked supported, it must provide:
 
 This repository now has a portable CMake entry point, a `BWAPI::Runtime` abstraction, and a runtime contract validator. Unsupported runtimes fail explicitly with a reason instead of silently reusing unsafe 1.16.1 memory bindings.
 
+The Remastered backend advertises the built-in BWAPI facade surface and command serialization surface when no manifest is supplied: 385 abstract API methods, 44 unit commands, and 28 game actions. This removes static facade/queue gaps, but it does not prove in-game behavior. Actual state extraction, command delivery, overlay rendering, event dispatch, replay analysis, multiplayer synchronization, and AI module loading remain gated by versioned runtime bindings plus live adapter proof lines.
+
 The production gate is `canClaimProductionSupport(probe, contract)`. A backend can only claim support when:
 
 - The backend probe reports supported.
@@ -145,6 +147,16 @@ The current macOS/Linux executor preflight can validate contracts, locate target
 The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. `starcraft-runtime-launch --bridge` writes `mode=launch-attach-bootstrap`, which is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence and is rejected by production preflight. `starcraft-runtime-adapter-proof` writes `proof.attach=passed` only after the selected process identity is visible and the required process-memory access succeeds.
 
 `starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category, including when no validated executor bridge is configured.
+
+Validated adapter ready files may also publish contract proof lines for evidence that was directly proven by that adapter run:
+
+```text
+contract.binding.<binding-name>=<binding-kind>|<evidence-id>
+contract.structure.<structure-name>=<byte-size>|<evidence-id>
+contract.field.<structure>.<field>=<offset>|<byte-size>|<evidence-id>
+```
+
+The runtime only applies these lines when the ready file protocol, product, version, process id, executable identity, and `mode=validated-runtime-adapter` all match the selected runtime. Current built-in proofs emit `contract.binding.shared-memory-client-transport=transport|proof.attach=passed` after authorized attach/memory access succeeds. A passing `--prove-read-units` run additionally emits the CUnit array binding, CUnit record size, and the BWAPI-facing CUnit fields that the scanner validated. Missing proof lines are not inferred.
 
 `starcraft-runtime-submit-command` also requires the validated adapter mode and behavior proof lines before it appends commands to the bridge. Bootstrap bridges cannot receive BWAPI commands because they have not proven in-game command execution.
 

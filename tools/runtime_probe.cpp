@@ -163,6 +163,7 @@ int main(int argc, char** argv)
   RuntimeContract contract = contractFor(environment);
   if (manifest.loaded)
     contract = manifest.manifest.contract;
+  contract = applyRuntimeExecutorBridgeContractProofs(environment, contract);
 
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);
 

@@ -3,9 +3,11 @@
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 namespace BWAPI::Runtime
 {
@@ -66,6 +68,33 @@ namespace BWAPI::Runtime
       return {};
     }
 
+    std::vector<std::string> splitPipe(const std::string& value)
+    {
+      std::vector<std::string> parts;
+      std::string part;
+      std::istringstream input(value);
+      while (std::getline(input, part, '|'))
+        parts.push_back(part);
+      return parts;
+    }
+
+    bool parseSizeValue(const std::string& value, std::size_t& parsed)
+    {
+      try
+      {
+        std::size_t consumed = 0;
+        const unsigned long long number = std::stoull(value, &consumed, 0);
+        if (consumed != value.size())
+          return false;
+        parsed = static_cast<std::size_t>(number);
+        return static_cast<unsigned long long>(parsed) == number;
+      }
+      catch (...)
+      {
+        return false;
+      }
+    }
+
     std::string normalizePath(const std::string& path)
     {
       if (path.empty())
@@ -78,6 +107,20 @@ namespace BWAPI::Runtime
       if (error)
         normalized = path;
       return normalized.lexically_normal().string();
+    }
+
+    bool bridgeReadyFileMatchesRuntime(
+      const RuntimeEnvironment& environment,
+      const std::filesystem::path& readyPath)
+    {
+      if (!fileContainsLine(readyPath, std::string("protocol=") + RuntimeExecutorBridgeProtocol))
+        return false;
+      if (!fileContainsLine(readyPath, std::string("product=") + toString(environment.product)))
+        return false;
+      if (!environment.version.empty()
+          && !fileContainsLine(readyPath, std::string("version=") + environment.version))
+        return false;
+      return readReadyValue(readyPath, "mode") == RuntimeExecutorBridgeValidatedAdapterMode;
     }
 
     std::string validateBridgeRuntimeIdentity(
@@ -98,6 +141,95 @@ namespace BWAPI::Runtime
           return "runtime executor bridge ready file executable does not match the selected runtime";
       }
       return {};
+    }
+
+    void applyBindingProof(RuntimeContract& contract, const std::string& name, const std::string& value)
+    {
+      const std::vector<std::string> parts = splitPipe(value);
+      if (parts.size() != 2 || parts[1].empty())
+        return;
+
+      BindingKind kind = BindingKind::DataAddress;
+      if (!parseBindingKind(parts[0], kind))
+        return;
+
+      auto it = std::find_if(
+        contract.bindings.begin(),
+        contract.bindings.end(),
+        [&](const RuntimeBinding& binding)
+        {
+          return binding.name == name && binding.kind == kind;
+        });
+      if (it == contract.bindings.end())
+        return;
+
+      it->resolved = true;
+      it->evidence = parts[1];
+    }
+
+    void applyStructureProof(RuntimeContract& contract, const std::string& name, const std::string& value)
+    {
+      const std::vector<std::string> parts = splitPipe(value);
+      if (parts.size() != 2 || parts[1].empty())
+        return;
+
+      std::size_t size = 0;
+      if (!parseSizeValue(parts[0], size) || size == 0)
+        return;
+
+      auto it = std::find_if(
+        contract.structures.begin(),
+        contract.structures.end(),
+        [&](const StructureLayout& structure)
+        {
+          return structure.name == name;
+        });
+      if (it == contract.structures.end())
+        return;
+
+      it->size = size;
+    }
+
+    void applyFieldProof(RuntimeContract& contract, const std::string& name, const std::string& value)
+    {
+      const std::size_t separator = name.rfind('.');
+      if (separator == std::string::npos || separator == 0 || separator + 1 >= name.size())
+        return;
+
+      const std::string structureName = name.substr(0, separator);
+      const std::string fieldName = name.substr(separator + 1);
+      const std::vector<std::string> parts = splitPipe(value);
+      if (parts.size() != 3 || parts[2].empty())
+        return;
+
+      std::size_t offset = 0;
+      std::size_t size = 0;
+      if (!parseSizeValue(parts[0], offset) || !parseSizeValue(parts[1], size) || size == 0)
+        return;
+
+      auto structureIt = std::find_if(
+        contract.structures.begin(),
+        contract.structures.end(),
+        [&](const StructureLayout& structure)
+        {
+          return structure.name == structureName;
+        });
+      if (structureIt == contract.structures.end())
+        return;
+
+      auto fieldIt = std::find_if(
+        structureIt->fields.begin(),
+        structureIt->fields.end(),
+        [&](const StructureField& field)
+        {
+          return field.name == fieldName;
+        });
+      if (fieldIt == structureIt->fields.end())
+        return;
+
+      fieldIt->resolved = true;
+      fieldIt->offset = offset;
+      fieldIt->size = size;
     }
 
     bool validateProductionBridgeProof(
@@ -312,13 +444,56 @@ namespace BWAPI::Runtime
     }
   }
 
+  RuntimeContract applyRuntimeExecutorBridgeContractProofs(
+    const RuntimeEnvironment& environment,
+    RuntimeContract contract)
+  {
+    if (environment.executorBridgePath.empty())
+      return contract;
+
+    std::error_code error;
+    const std::filesystem::path readyPath = readyFilePath(environment);
+    if (!std::filesystem::exists(readyPath, error) || error)
+      return contract;
+    if (!bridgeReadyFileMatchesRuntime(environment, readyPath))
+      return contract;
+    if (!validateBridgeRuntimeIdentity(environment, readyPath).empty())
+      return contract;
+
+    std::ifstream input(readyPath);
+    std::string line;
+    while (std::getline(input, line))
+    {
+      const std::size_t separator = line.find('=');
+      if (separator == std::string::npos)
+        continue;
+
+      const std::string key = line.substr(0, separator);
+      const std::string value = line.substr(separator + 1);
+      constexpr const char* bindingPrefix = "contract.binding.";
+      constexpr const char* structurePrefix = "contract.structure.";
+      constexpr const char* fieldPrefix = "contract.field.";
+
+      if (key.rfind(bindingPrefix, 0) == 0)
+        applyBindingProof(contract, key.substr(std::char_traits<char>::length(bindingPrefix)), value);
+      else if (key.rfind(structurePrefix, 0) == 0)
+        applyStructureProof(contract, key.substr(std::char_traits<char>::length(structurePrefix)), value);
+      else if (key.rfind(fieldPrefix, 0) == 0)
+        applyFieldProof(contract, key.substr(std::char_traits<char>::length(fieldPrefix)), value);
+    }
+
+    return contract;
+  }
+
   RuntimeExecutorPreflightResult preflightRuntimeExecutor(
     const RuntimeEnvironment& environment,
     const RuntimeContract& contract)
   {
     RuntimeExecutorPreflightResult result;
 
-    const ContractValidationResult validation = validateRuntimeContract(contract);
+    const RuntimeContract proofBackedContract =
+      applyRuntimeExecutorBridgeContractProofs(environment, contract);
+    const ContractValidationResult validation = validateRuntimeContract(proofBackedContract);
     result.contractValid = validation.valid;
     result.errors.insert(result.errors.end(), validation.errors.begin(), validation.errors.end());
     result.warnings.insert(result.warnings.end(), validation.warnings.begin(), validation.warnings.end());
@@ -348,7 +523,7 @@ namespace BWAPI::Runtime
     {
       result.errors.push_back(process.reason);
     }
-    else if (contractRequiresCapability(contract, Capability::SharedMemoryClient))
+    else if (contractRequiresCapability(proofBackedContract, Capability::SharedMemoryClient))
     {
       const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment.processId);
       result.memoryAccessible = memoryAccess.accessible;

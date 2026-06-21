@@ -296,6 +296,7 @@ int main(int argc, char** argv)
     contract = manifest.manifest.contract;
   else
     contract = contractFor(environment);
+  contract = applyRuntimeExecutorBridgeContractProofs(environment, contract);
 
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);
   RuntimeProbeResult probe = backend->probe();

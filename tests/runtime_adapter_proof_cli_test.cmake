@@ -62,7 +62,9 @@ endif()
 file(REMOVE_RECURSE "${bridge_dir}")
 
 set(units_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-units-bridge")
+set(units_best_dump "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-units-best.bin")
 file(REMOVE_RECURSE "${units_bridge_dir}")
+file(REMOVE "${units_best_dump}")
 
 execute_process(
   COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
@@ -74,6 +76,7 @@ execute_process(
     --state-max-scan-mb 1
     --unit-max-scan-mb 128
     --unit-scan-diagnostics
+    --unit-best-dump-out "${units_best_dump}"
     --self-unit-fixture
   RESULT_VARIABLE units_result
   OUTPUT_VARIABLE units_output
@@ -94,12 +97,17 @@ foreach(needle
     "read_units.scan.window_candidate_arrays_scored="
     "read_units.scan.field_plausible_records="
     "read_units.scan.sprite_rejected_records="
+    "read_units.scan.best_dump.success=true"
+    "read_units.scan.best_dump.path=${units_best_dump}"
     "proof.read_units=passed")
   string(FIND "${units_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "read-units proof output missing '${needle}'\n${units_output}")
   endif()
 endforeach()
+if(NOT EXISTS "${units_best_dump}")
+  message(FATAL_ERROR "read-units best candidate dump was not written")
+endif()
 
 set(units_ready_file "${units_bridge_dir}/ready")
 if(NOT EXISTS "${units_ready_file}")

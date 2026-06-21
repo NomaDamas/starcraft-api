@@ -49,6 +49,8 @@ namespace
       << "                           include readable non-writable non-executable regions in unit scans\n"
       << "  --unit-scan-vectors      also scan std::vector-like begin/end/capacity triples\n"
       << "                           after strided CUnit arrays\n"
+      << "  --unit-best-dump-out <path>\n"
+      << "                           dump bytes from the best CUnit candidate for offline analysis\n"
       << "  --bridge <dir>           write adapter proof ready file\n"
       << "  --help                   show this help\n";
   }
@@ -118,6 +120,7 @@ namespace
     std::uintptr_t bestAddress = 0;
     std::size_t bestRecordSize = 0;
     std::string bestLayoutName;
+    std::vector<unsigned char> bestBytes;
     bool timedOut = false;
     bool byteLimitReached = false;
   };
@@ -216,6 +219,42 @@ namespace
       return false;
     const std::uint32_t delta = after - before;
     return delta <= 10000;
+  }
+
+  bool writeBinaryFile(
+    const std::filesystem::path& path,
+    const std::vector<unsigned char>& bytes,
+    std::string& reason)
+  {
+    std::error_code error;
+    const std::filesystem::path parent = path.parent_path();
+    if (!parent.empty())
+    {
+      std::filesystem::create_directories(parent, error);
+      if (error)
+      {
+        reason = "unable to create dump parent directory: " + error.message();
+        return false;
+      }
+    }
+
+    std::ofstream output(path, std::ios::binary);
+    if (!output)
+    {
+      reason = "unable to open dump output";
+      return false;
+    }
+
+    output.write(
+      reinterpret_cast<const char*>(bytes.data()),
+      static_cast<std::streamsize>(bytes.size()));
+    if (!output)
+    {
+      reason = "unable to write dump output";
+      return false;
+    }
+
+    return true;
   }
 
   bool timedOut(const std::chrono::steady_clock::time_point& deadline)
@@ -394,7 +433,10 @@ namespace
 
   void rememberBestCandidate(
     UnitScanDiagnostics* diagnostics,
-    const LiveUnitsProof& proof)
+    const LiveUnitsProof& proof,
+    const std::vector<unsigned char>* bytes = nullptr,
+    std::size_t offset = 0,
+    std::size_t recordSize = 0)
   {
     if (diagnostics == nullptr || proof.activeRecords <= diagnostics->bestActiveRecords)
       return;
@@ -403,6 +445,15 @@ namespace
     diagnostics->bestAddress = proof.address;
     diagnostics->bestRecordSize = proof.recordSize;
     diagnostics->bestLayoutName = proof.layoutName;
+    diagnostics->bestBytes.clear();
+    if (bytes != nullptr && offset < bytes->size() && recordSize > 0)
+    {
+      const std::size_t bytesToCopy =
+        std::min(recordSize * 8, bytes->size() - offset);
+      diagnostics->bestBytes.assign(
+        bytes->begin() + static_cast<std::vector<unsigned char>::difference_type>(offset),
+        bytes->begin() + static_cast<std::vector<unsigned char>::difference_type>(offset + bytesToCopy));
+    }
   }
 
   LiveUnitsProof proveClassicUnitArrayInBytes(
@@ -463,7 +514,7 @@ namespace
             }
             if (windowProof.passed)
               return windowProof;
-            rememberBestCandidate(diagnostics, windowProof);
+            rememberBestCandidate(diagnostics, windowProof, &bytes, recordOffset, recordSize);
             if (windowProof.activeRecords > bestForRecordSize.activeRecords)
               bestForRecordSize = windowProof;
             ++windowScoresForRecordSize;
@@ -491,7 +542,7 @@ namespace
           }
           if (proof.passed)
             return proof;
-          rememberBestCandidate(diagnostics, proof);
+          rememberBestCandidate(diagnostics, proof, &bytes, baseOffset, recordSize);
           if (proof.activeRecords > bestForRecordSize.activeRecords)
             bestForRecordSize = proof;
           scoredResidue[baseOffset] = true;
@@ -551,7 +602,7 @@ namespace
             ++diagnostics->candidateArraysScored;
           if (proof.passed)
             return proof;
-          rememberBestCandidate(diagnostics, proof);
+          rememberBestCandidate(diagnostics, proof, &read.bytes, 0, recordSize);
         }
       }
     }
@@ -872,6 +923,7 @@ int main(int argc, char** argv)
   bool unitScanDiagnosticsFlag = false;
   bool unitScanReadableOnlyFlag = false;
   bool unitScanVectorsFlag = false;
+  std::string unitBestDumpOut;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 128 * 1024 * 1024;
   std::size_t unitMaxScanBytes = 0;
@@ -918,6 +970,16 @@ int main(int argc, char** argv)
     if (arg == "--unit-scan-vectors")
     {
       unitScanVectorsFlag = true;
+      continue;
+    }
+    if (arg == "--unit-best-dump-out")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--unit-best-dump-out requires a path\n";
+        return 64;
+      }
+      unitBestDumpOut = argv[++i];
       continue;
     }
     if (arg == "--prove-battle-net-policy")
@@ -1146,6 +1208,62 @@ int main(int argc, char** argv)
                   << std::hex << unitScanDiagnostics.bestAddress << std::dec << '\n';
         std::cout << "read_units.scan.best_record_size=" << unitScanDiagnostics.bestRecordSize << '\n';
         std::cout << "read_units.scan.best_layout=" << unitScanDiagnostics.bestLayoutName << '\n';
+        std::cout << "read_units.scan.best_snapshot_bytes="
+                  << unitScanDiagnostics.bestBytes.size() << '\n';
+      }
+    }
+    if (!unitBestDumpOut.empty())
+    {
+      const std::uintptr_t dumpAddress =
+        readUnitsProof.passed ? readUnitsProof.address : unitScanDiagnostics.bestAddress;
+      const std::size_t dumpRecordSize =
+        readUnitsProof.passed ? readUnitsProof.recordSize : unitScanDiagnostics.bestRecordSize;
+      const std::size_t dumpSize = dumpRecordSize == 0 ? 0 : dumpRecordSize * 8;
+      if (dumpAddress == 0 || dumpSize == 0)
+      {
+        std::cout << "read_units.scan.best_dump.success=false\n";
+        std::cout << "read_units.scan.best_dump.reason=no unit candidate address is available\n";
+      }
+      else
+      {
+        RuntimeMemoryReadResult dumpRead =
+          readProcessMemory(environment.processId, dumpAddress, dumpSize);
+        std::cout << "read_units.scan.best_dump.address=0x"
+                  << std::hex << dumpAddress << std::dec << '\n';
+        std::cout << "read_units.scan.best_dump.requested_bytes=" << dumpSize << '\n';
+        std::cout << "read_units.scan.best_dump.read_success="
+                  << (dumpRead.success ? "true" : "false") << '\n';
+        std::cout << "read_units.scan.best_dump.bytes=" << dumpRead.bytesRead << '\n';
+        if (!dumpRead.reason.empty())
+          std::cout << "read_units.scan.best_dump.read_reason=" << dumpRead.reason << '\n';
+        if (dumpRead.success)
+        {
+          std::string dumpReason;
+          const bool dumpWritten = writeBinaryFile(unitBestDumpOut, dumpRead.bytes, dumpReason);
+          std::cout << "read_units.scan.best_dump.success="
+                    << (dumpWritten ? "true" : "false") << '\n';
+          if (dumpWritten)
+            std::cout << "read_units.scan.best_dump.path=" << unitBestDumpOut << '\n';
+          if (!dumpReason.empty())
+            std::cout << "read_units.scan.best_dump.reason=" << dumpReason << '\n';
+        }
+        else if (!unitScanDiagnostics.bestBytes.empty())
+        {
+          std::string dumpReason;
+          const bool dumpWritten =
+            writeBinaryFile(unitBestDumpOut, unitScanDiagnostics.bestBytes, dumpReason);
+          std::cout << "read_units.scan.best_dump.success="
+                    << (dumpWritten ? "true" : "false") << '\n';
+          std::cout << "read_units.scan.best_dump.source=snapshot\n";
+          if (dumpWritten)
+          {
+            std::cout << "read_units.scan.best_dump.path=" << unitBestDumpOut << '\n';
+            std::cout << "read_units.scan.best_dump.bytes="
+                      << unitScanDiagnostics.bestBytes.size() << '\n';
+          }
+          if (!dumpReason.empty())
+            std::cout << "read_units.scan.best_dump.reason=" << dumpReason << '\n';
+        }
       }
     }
     if (!readUnitsProof.passed)

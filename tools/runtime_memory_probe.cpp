@@ -335,11 +335,12 @@ int main(int argc, char** argv)
   {
     RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(environment.processId);
     std::cout << "memory.find.requested=true\n";
-    std::cout << "memory.find.success=" << (regions.success ? "true" : "false") << '\n';
+    std::cout << "memory.find.scan_success=" << (regions.success ? "true" : "false") << '\n';
     if (!regions.reason.empty())
       std::cout << "memory.find.reason=" << regions.reason << '\n';
     if (!regions.success)
     {
+      std::cout << "memory.find.success=false\n";
       if (requireOpen && !open.opened)
         return 3;
       if (requireAccess && !access.accessible)
@@ -437,6 +438,7 @@ int main(int argc, char** argv)
     std::cout << "memory.find.scanned_bytes=" << scannedBytes << '\n';
     std::cout << "memory.find.match.count=" << matchCount << '\n';
     std::cout << "memory.find.match.printed=" << std::min(matchCount, maxPrintedMatches) << '\n';
+    std::cout << "memory.find.success=" << (matchCount > 0 ? "true" : "false") << '\n';
     if (requireFind && matchCount == 0)
       return 7;
   }

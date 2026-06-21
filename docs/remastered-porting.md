@@ -132,6 +132,8 @@ For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to em
 
 Use `starcraft-runtime-memory-probe --require-open` to verify process identity visibility, and add `--require-access` when the check must prove actual process-memory access rights. The probe resolves the same runtime environment as the launcher and prints both `memory.opened` and `memory.accessible`; on macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied. It only attempts `readProcessMemory` when `--address` is explicitly supplied. This is diagnostic evidence for the attach layer, not BWAPI parity evidence.
 
+`starcraft-runtime-memory-probe --find-ascii` and `--find-u64` now separate scan execution from match proof: `memory.find.scan_success=true` means the readable memory scan ran, while `memory.find.success=true` requires at least one actual match. Use `--require-find` when a missing map/replay marker must fail the command.
+
 When the selected parity contract requires `SharedMemoryClient`, executor preflight also emits `executor.memory_accessible` and fails readiness with `runtime-memory-accessible` plus a `memory-access` implementation gap if the target process cannot be opened for real VM access. This keeps a visible StarCraft process from being mistaken for an attachable BWAPI-compatible runtime.
 
 For macOS local attach tests, `starcraft-runtime-sign-debug-tools` ad-hoc signs the runtime diagnostic tools with `tools/macos-debugger.entitlements`. After signing, `starcraft-runtime-memory-probe --read-first-readable --require-open --require-access --require-read` discovers a readable target VM region and reads bytes from the selected process. This proves the attach/read primitive without depending on a hard-coded StarCraft address.
@@ -149,6 +151,8 @@ The current macOS/Linux executor preflight can validate contracts, locate target
 The local filesystem bridge can now create a readiness file for launch/attach bootstrapping. `starcraft-runtime-launch --bridge` writes `mode=launch-attach-bootstrap`, which is sufficient for command-submission plumbing tests, but it is not in-game command execution evidence and is rejected by production preflight. `starcraft-runtime-adapter-proof` writes `proof.attach=passed` only after the selected process identity is visible and the required process-memory access succeeds.
 
 `starcraft-runtime-gap-report` and `starcraft-runtime-probe` expose bridge proof status directly through `executor.bridge_mode`, `executor.behavior_proof.missing_count`, and `executor.behavior_proof.missing=*` rows. Missing behavior proofs are also counted under the `executor-behavior-proof` implementation gap category, including when no validated executor bridge is configured.
+
+`starcraft-runtime-adapter-proof --prove-read-units --unit-best-dump-out <path>` dumps the strongest CUnit candidate snapshot when the live scanner cannot prove a full active array. This is failure-analysis evidence only; it does not emit `proof.read_units=passed` unless the active unit array threshold is met.
 
 Validated adapter ready files may also publish contract proof lines for evidence that was directly proven by that adapter run:
 

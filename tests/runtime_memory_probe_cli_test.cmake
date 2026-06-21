@@ -24,6 +24,7 @@ endif()
 
 foreach(needle
     "memory.find.requested=true"
+    "memory.find.scan_success=true"
     "memory.find.success=true"
     "memory.find.needle=${self_needle}"
     "memory.find.filter.writable_only=true"
@@ -57,3 +58,12 @@ execute_process(
 if(absent_result EQUAL 0)
   message(FATAL_ERROR "expected --require-find to fail for absent fixture\nstdout:\n${absent_output}\nstderr:\n${absent_error}")
 endif()
+foreach(needle
+    "memory.find.scan_success=true"
+    "memory.find.success=false"
+    "memory.find.match.count=0")
+  string(FIND "${absent_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "absent memory probe output missing '${needle}'\n${absent_output}")
+  endif()
+endforeach()

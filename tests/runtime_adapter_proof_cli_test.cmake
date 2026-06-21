@@ -55,3 +55,57 @@ if(NOT read_game_state_index EQUAL -1)
 endif()
 
 file(REMOVE_RECURSE "${bridge_dir}")
+
+set(policy_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-bridge")
+set(policy_root "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-root")
+set(policy_executable "${STARCRAFT_RUNTIME_ADAPTER_PROOF}")
+set(policy_process_snapshot "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-processes.snapshot")
+file(REMOVE_RECURSE "${policy_bridge_dir}" "${policy_root}")
+file(WRITE "${policy_process_snapshot}" "123 1 ${policy_executable} -launch -uid s1\n")
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "STARCRAFT_API_PROCESS_SNAPSHOT=${policy_process_snapshot}"
+    "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+      --self
+      --product starcraft-remastered
+      --version test-build
+      --executable "${policy_executable}"
+      --bridge "${policy_bridge_dir}"
+      --prove-battle-net-policy
+  RESULT_VARIABLE policy_result
+  OUTPUT_VARIABLE policy_output
+  ERROR_VARIABLE policy_error
+)
+if(NOT policy_result EQUAL 0)
+  message(FATAL_ERROR "expected Battle.net policy proof to pass\nstdout:\n${policy_output}\nstderr:\n${policy_error}")
+endif()
+foreach(needle
+    "battle_net_policy.ready_for_attach=true"
+    "battle_net_policy.game_process_count=1"
+    "battle_net_policy.blocker_count=0"
+    "proof.battle_net_policy=passed")
+  string(FIND "${policy_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "Battle.net policy proof output missing '${needle}'\n${policy_output}")
+  endif()
+endforeach()
+
+set(policy_ready_file "${policy_bridge_dir}/ready")
+if(NOT EXISTS "${policy_ready_file}")
+  message(FATAL_ERROR "Battle.net policy proof did not write ready file")
+endif()
+file(READ "${policy_ready_file}" policy_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.battle_net_policy.status=runtime-process-visible"
+    "proof.battle_net_policy.game_process_count=1"
+    "proof.battle_net_policy.blocker_count=0"
+    "proof.battle_net_policy=passed")
+  string(FIND "${policy_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "Battle.net policy ready file missing '${needle}'\n${policy_ready}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${policy_bridge_dir}" "${policy_root}")

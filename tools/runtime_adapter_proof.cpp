@@ -31,6 +31,8 @@ namespace
       << "  --executable <path>      override runtime executable path\n"
       << "  --self                   prove attach against this CLI process\n"
       << "  --prove-read-game-state  prove live state reads by finding a changing runtime counter\n"
+      << "  --prove-battle-net-policy\n"
+      << "                           prove Battle.net launch/attach policy preflight has no blockers\n"
       << "  --state-sample-delay-ms <ms>\n"
       << "                           delay between live state samples (default: 250)\n"
       << "  --state-max-scan-mb <mb> maximum readable writable memory to sample (default: 128)\n"
@@ -65,6 +67,13 @@ namespace
     std::uint32_t first = 0;
     std::uint32_t second = 0;
     std::uint32_t third = 0;
+    std::string reason;
+  };
+
+  struct BattleNetPolicyProof
+  {
+    bool passed = false;
+    RuntimeLaunchDiagnosis diagnosis;
     std::string reason;
   };
 
@@ -176,6 +185,53 @@ namespace
 
     return { false, 0, 0, 0, 0, "candidate counters did not keep increasing across the third sample" };
   }
+
+  std::string firstBlocker(const RuntimeLaunchDiagnosis& diagnosis)
+  {
+    if (diagnosis.blockers.empty())
+      return {};
+    return diagnosis.blockers.front();
+  }
+
+  BattleNetPolicyProof proveBattleNetPolicy(const RuntimeEnvironment& environment)
+  {
+    BattleNetPolicyProof proof;
+    if (environment.product != Product::StarCraftRemastered)
+    {
+      proof.reason = "Battle.net policy proof requires StarCraft Remastered";
+      return proof;
+    }
+
+    const RuntimeInstallation installation = detectStarCraftInstallation(environment);
+    RuntimeLaunchResult launchResult;
+    launchResult.running = environment.processId > 0;
+    launchResult.processId = environment.processId;
+    launchResult.reason = launchResult.running
+      ? "adapter proof selected an existing runtime process id"
+      : "adapter proof did not select a runtime process id";
+
+    const RuntimeEvidence evidence = collectRuntimeEvidence(installation, launchResult);
+    proof.diagnosis = evidence.diagnosis;
+
+    if (!installation.found)
+      proof.reason = installation.reason.empty() ? "StarCraft Remastered installation is not configured" : installation.reason;
+    else if (!evidence.executable.exists)
+      proof.reason = evidence.executable.reason.empty() ? "StarCraft executable is missing" : evidence.executable.reason;
+    else if (!proof.diagnosis.readyForAttach)
+      proof.reason = proof.diagnosis.status.empty() ? "runtime is not ready for attach" : proof.diagnosis.status;
+    else if (proof.diagnosis.gameProcessCount != 1)
+      proof.reason = "expected exactly one StarCraft game process";
+    else if (proof.diagnosis.multipleBattleNetMainVisible)
+      proof.reason = "multiple Battle.net main processes are visible";
+    else if (proof.diagnosis.multipleBattleNetHandoffsVisible)
+      proof.reason = "multiple Battle.net StarCraft handoff processes are visible";
+    else if (!proof.diagnosis.blockers.empty())
+      proof.reason = firstBlocker(proof.diagnosis);
+    else
+      proof.passed = true;
+
+    return proof;
+  }
 }
 
 int main(int argc, char** argv)
@@ -183,6 +239,7 @@ int main(int argc, char** argv)
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   bool self = false;
   bool proveReadGameState = false;
+  bool proveBattleNetPolicyFlag = false;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 128 * 1024 * 1024;
 
@@ -202,6 +259,11 @@ int main(int argc, char** argv)
     if (arg == "--prove-read-game-state")
     {
       proveReadGameState = true;
+      continue;
+    }
+    if (arg == "--prove-battle-net-policy")
+    {
+      proveBattleNetPolicyFlag = true;
       continue;
     }
     if (arg == "--state-sample-delay-ms")
@@ -322,6 +384,7 @@ int main(int argc, char** argv)
     return 3;
 
   LiveCounterProof readGameStateProof;
+  BattleNetPolicyProof battleNetPolicyProof;
   if (proveReadGameState)
   {
     readGameStateProof = proveLiveCounterRead(
@@ -340,6 +403,28 @@ int main(int argc, char** argv)
       std::cout << "read_game_state.reason=" << readGameStateProof.reason << '\n';
     if (!readGameStateProof.passed)
       return 4;
+  }
+
+  if (proveBattleNetPolicyFlag)
+  {
+    battleNetPolicyProof = proveBattleNetPolicy(environment);
+    std::cout << "battle_net_policy.ready_for_attach="
+              << (battleNetPolicyProof.diagnosis.readyForAttach ? "true" : "false") << '\n';
+    std::cout << "battle_net_policy.status=" << battleNetPolicyProof.diagnosis.status << '\n';
+    std::cout << "battle_net_policy.game_process_count="
+              << battleNetPolicyProof.diagnosis.gameProcessCount << '\n';
+    std::cout << "battle_net_policy.battle_net_main_count="
+              << battleNetPolicyProof.diagnosis.battleNetMainCount << '\n';
+    std::cout << "battle_net_policy.battle_net_handoff_count="
+              << battleNetPolicyProof.diagnosis.battleNetHandoffCount << '\n';
+    std::cout << "battle_net_policy.battle_net_support_count="
+              << battleNetPolicyProof.diagnosis.battleNetSupportCount << '\n';
+    std::cout << "battle_net_policy.blocker_count="
+              << battleNetPolicyProof.diagnosis.blockers.size() << '\n';
+    if (!battleNetPolicyProof.reason.empty())
+      std::cout << "battle_net_policy.reason=" << battleNetPolicyProof.reason << '\n';
+    if (!battleNetPolicyProof.passed)
+      return 5;
   }
 
   std::error_code error;
@@ -361,6 +446,13 @@ int main(int argc, char** argv)
   if (proveReadGameState && readGameStateBehaviorProof == nullptr)
   {
     std::cerr << "read-game-state proof definition is missing\n";
+    return 1;
+  }
+
+  const RuntimeExecutorBehaviorProof* battleNetPolicyBehaviorProof = findProof("battle-net-policy");
+  if (proveBattleNetPolicyFlag && battleNetPolicyBehaviorProof == nullptr)
+  {
+    std::cerr << "battle-net-policy proof definition is missing\n";
     return 1;
   }
 
@@ -390,10 +482,21 @@ int main(int argc, char** argv)
           << readGameStateProof.third << '\n';
     ready << readGameStateBehaviorProof->readyFileLine << '\n';
   }
+  if (proveBattleNetPolicyFlag)
+  {
+    ready << "proof.battle_net_policy.status=" << battleNetPolicyProof.diagnosis.status << '\n';
+    ready << "proof.battle_net_policy.game_process_count="
+          << battleNetPolicyProof.diagnosis.gameProcessCount << '\n';
+    ready << "proof.battle_net_policy.blocker_count="
+          << battleNetPolicyProof.diagnosis.blockers.size() << '\n';
+    ready << battleNetPolicyBehaviorProof->readyFileLine << '\n';
+  }
 
   std::cout << "bridge.ready=" << readyPath.string() << '\n';
   std::cout << attachProof->readyFileLine << '\n';
   if (proveReadGameState)
     std::cout << readGameStateBehaviorProof->readyFileLine << '\n';
+  if (proveBattleNetPolicyFlag)
+    std::cout << battleNetPolicyBehaviorProof->readyFileLine << '\n';
   return 0;
 }

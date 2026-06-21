@@ -188,7 +188,7 @@ int main(int argc, char** argv)
   assert(mismatchedIdentityPreflight.memoryAccessible);
   assert(mismatchedIdentityPreflight.targetLocated);
   assert(!mismatchedIdentityPreflight.executorAvailable);
-  assert(mismatchedIdentityPreflight.missingBehaviorProofs.size() == proofs.size());
+  assert(mismatchedIdentityPreflight.missingBehaviorProofs.empty());
   assert(!mismatchedIdentityPreflight.errors.empty());
 
   RuntimeEnvironment staleProcessEnvironment = bridgeEnvironment;

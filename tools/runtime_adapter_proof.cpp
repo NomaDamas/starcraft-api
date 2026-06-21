@@ -53,8 +53,18 @@ namespace
       << "                           include readable non-writable non-executable regions in unit scans\n"
       << "  --unit-scan-vectors      also scan std::vector-like begin/end/capacity triples\n"
       << "                           after strided CUnit arrays\n"
+      << "  --unit-scan-include-image-regions\n"
+      << "                           include regions mapped from the target executable in unit scans\n"
+      << "  --unit-candidate-address <address>\n"
+      << "                           validate an explicit CUnit array candidate before broad scans\n"
       << "  --unit-best-dump-out <path>\n"
       << "                           dump bytes from the best CUnit candidate for offline analysis\n"
+      << "  --state-scan-diagnostics\n"
+      << "                           print live state-counter scan counters on success/failure\n"
+      << "  --active-match-wait-ms <ms>\n"
+      << "                           poll live memory until an active match is proven or timeout expires\n"
+      << "  --active-match-poll-ms <ms>\n"
+      << "                           delay between active-match polling attempts (default: 1000)\n"
       << "  --bridge <dir>           write adapter proof ready file\n"
       << "  --help                   show this help\n";
   }
@@ -67,6 +77,16 @@ namespace
       return false;
     output = static_cast<int>(parsed);
     return true;
+  }
+
+  bool parseAddress(const std::string& value, std::uintptr_t& output)
+  {
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(value.c_str(), &end, 0);
+    if (end == value.c_str() || *end != '\0' || parsed == 0)
+      return false;
+    output = static_cast<std::uintptr_t>(parsed);
+    return static_cast<unsigned long long>(output) == parsed;
   }
 
   const RuntimeExecutorBehaviorProof* findProof(const std::string& id)
@@ -111,6 +131,8 @@ namespace
     std::size_t readableOnlyRegions = 0;
     std::size_t scannedReadableOnlyRegions = 0;
     std::size_t executableReadableRegions = 0;
+    std::size_t imageMappedRegions = 0;
+    std::size_t skippedImageMappedRegions = 0;
     std::size_t scannedRegions = 0;
     std::size_t scannedBytes = 0;
     std::size_t vectorCandidates = 0;
@@ -125,6 +147,18 @@ namespace
     std::size_t bestRecordSize = 0;
     std::string bestLayoutName;
     std::vector<unsigned char> bestBytes;
+    bool timedOut = false;
+    bool byteLimitReached = false;
+  };
+
+  struct StateScanDiagnostics
+  {
+    std::size_t readableWritableRegions = 0;
+    std::size_t skippedNonReadableRegions = 0;
+    std::size_t skippedNonWritableRegions = 0;
+    std::size_t scannedRegions = 0;
+    std::size_t scannedBytes = 0;
+    std::size_t candidateCounters = 0;
     bool timedOut = false;
     bool byteLimitReached = false;
   };
@@ -295,6 +329,37 @@ namespace
     if (address == 0 || !addressFits(address))
       return false;
     return readableAddress(regions, static_cast<std::uintptr_t>(address), size);
+  }
+
+  std::string normalizedPathForCompare(const std::string& path)
+  {
+    if (path.empty())
+      return {};
+
+    std::error_code error;
+    std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
+    if (error)
+      normalized = std::filesystem::absolute(path, error);
+    if (error)
+      normalized = path;
+    return normalized.lexically_normal().string();
+  }
+
+  bool sameMappedFile(const std::string& lhs, const std::string& rhs)
+  {
+    if (lhs.empty() || rhs.empty())
+      return false;
+    return normalizedPathForCompare(lhs) == normalizedPathForCompare(rhs);
+  }
+
+  bool shouldSkipImageMappedRegion(
+    const RuntimeMemoryRegion& region,
+    const std::string& executablePath,
+    bool includeImageMappedRegions)
+  {
+    return !includeImageMappedRegions
+      && !executablePath.empty()
+      && sameMappedFile(region.mappedPath, executablePath);
   }
 
   bool plausibleSpritePointer(
@@ -648,9 +713,11 @@ namespace
 
   LiveUnitsProof proveLiveUnitsRead(
     int processId,
+    const std::string& executablePath,
     std::size_t maxScanBytes,
     int scanTimeoutMs,
     bool includeReadableOnlyRegions,
+    bool includeImageMappedRegions,
     bool scanVectors,
     UnitScanDiagnostics* diagnostics)
   {
@@ -676,6 +743,15 @@ namespace
       {
         if (diagnostics != nullptr)
           ++diagnostics->executableReadableRegions;
+        continue;
+      }
+      const bool imageMappedRegion = sameMappedFile(region.mappedPath, executablePath);
+      if (imageMappedRegion && diagnostics != nullptr)
+        ++diagnostics->imageMappedRegions;
+      if (shouldSkipImageMappedRegion(region, executablePath, includeImageMappedRegions))
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->skippedImageMappedRegions;
         continue;
       }
       if (!region.writable)
@@ -755,11 +831,125 @@ namespace
     return failedUnitsProof("no active in-game BWAPI-compatible CUnit array candidate found");
   }
 
+  LiveUnitsProof proveExplicitUnitCandidateAddresses(
+    int processId,
+    const std::vector<std::uintptr_t>& candidateAddresses,
+    std::size_t maxScanBytes,
+    int scanTimeoutMs,
+    UnitScanDiagnostics* diagnostics)
+  {
+    if (candidateAddresses.empty())
+      return failedUnitsProof("no explicit CUnit candidate address was provided");
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+      return failedUnitsProof(regions.reason);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
+    for (std::uintptr_t candidateAddress : candidateAddresses)
+    {
+      if (timedOut(deadline))
+      {
+        if (diagnostics != nullptr)
+          diagnostics->timedOut = true;
+        return failedUnitsProof(unitScanTimeoutReason(diagnostics));
+      }
+
+      const RuntimeMemoryRegion* containingRegion = nullptr;
+      for (const RuntimeMemoryRegion& region : regions.regions)
+      {
+        if (region.readable && !region.executable && regionContains(region, candidateAddress, 336 * 4))
+        {
+          containingRegion = &region;
+          break;
+        }
+      }
+      if (containingRegion == nullptr)
+        continue;
+
+      if (diagnostics != nullptr)
+      {
+        if (containingRegion->writable)
+          ++diagnostics->readableWritableRegions;
+        else
+          ++diagnostics->scannedReadableOnlyRegions;
+      }
+
+      for (const UnitRecordLayout& layout : unitRecordLayouts)
+      {
+        for (std::size_t recordSize : candidateUnitRecordSizes)
+        {
+          if (timedOut(deadline))
+          {
+            if (diagnostics != nullptr)
+              diagnostics->timedOut = true;
+            return failedUnitsProof(unitScanTimeoutReason(diagnostics));
+          }
+
+          constexpr std::size_t maxSampledRecords = 1700;
+          const std::uintptr_t regionEnd = containingRegion->address + containingRegion->size;
+          const std::size_t regionBytes =
+            regionEnd > candidateAddress
+              ? static_cast<std::size_t>(regionEnd - candidateAddress)
+              : 0;
+          const std::size_t bytesToRead = std::min({
+            maxScanBytes,
+            regionBytes,
+            recordSize * maxSampledRecords
+          });
+          if (bytesToRead < recordSize * minActiveUnitRecords)
+            continue;
+
+          RuntimeMemoryReadResult read = readProcessMemory(processId, candidateAddress, bytesToRead);
+          if (!read.success || read.bytesRead < recordSize * minActiveUnitRecords)
+            continue;
+
+          if (diagnostics != nullptr)
+          {
+            ++diagnostics->scannedRegions;
+            diagnostics->scannedBytes += read.bytesRead;
+          }
+
+          bool scanTimedOut = false;
+          LiveUnitsProof proof = scoreClassicCUnitArray(
+            read.bytes,
+            candidateAddress,
+            0,
+            recordSize,
+            layout,
+            regions.regions,
+            deadline,
+            scanTimedOut,
+            true);
+          if (scanTimedOut)
+          {
+            if (diagnostics != nullptr)
+              diagnostics->timedOut = true;
+            return failedUnitsProof(unitScanTimeoutReason(diagnostics));
+          }
+          if (diagnostics != nullptr)
+          {
+            ++diagnostics->candidateArraysScored;
+            diagnostics->plausibleRecords += proof.activeRecords;
+            if (proof.activeRecords > 0)
+              ++diagnostics->stridedCandidates;
+          }
+          if (proof.passed)
+            return proof;
+          rememberBestCandidate(diagnostics, proof, &read.bytes, 0, recordSize);
+        }
+      }
+    }
+
+    return failedUnitsProof("no explicit CUnit candidate address contained enough active BWAPI-compatible records");
+  }
+
   LiveCounterProof proveLiveCounterRead(
     int processId,
     int sampleDelayMs,
     std::size_t maxScanBytes,
-    int scanTimeoutMs)
+    int scanTimeoutMs,
+    StateScanDiagnostics* diagnostics)
   {
     struct Candidate
     {
@@ -785,11 +975,33 @@ namespace
     for (const RuntimeMemoryRegion& region : regions.regions)
     {
       if (timedOut(deadline))
+      {
+        if (diagnostics != nullptr)
+          diagnostics->timedOut = true;
         return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
-      if (!region.readable || !region.writable || region.size < sizeof(std::uint32_t))
+      }
+      if (!region.readable)
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->skippedNonReadableRegions;
         continue;
+      }
+      if (!region.writable)
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->skippedNonWritableRegions;
+        continue;
+      }
+      if (region.size < sizeof(std::uint32_t))
+        continue;
+      if (diagnostics != nullptr)
+        ++diagnostics->readableWritableRegions;
       if (scanned >= maxScanBytes)
+      {
+        if (diagnostics != nullptr)
+          diagnostics->byteLimitReached = true;
         break;
+      }
 
       const std::size_t bytesToRead = std::min(region.size, std::min(maxRegionBytes, maxScanBytes - scanned));
       RuntimeMemoryReadResult first = readProcessMemory(processId, region.address, bytesToRead);
@@ -800,6 +1012,11 @@ namespace
       snapshot.address = region.address;
       snapshot.bytes = std::move(first.bytes);
       snapshots.push_back(std::move(snapshot));
+      if (diagnostics != nullptr)
+      {
+        ++diagnostics->scannedRegions;
+        diagnostics->scannedBytes += snapshots.back().bytes.size();
+      }
       scanned += first.bytesRead;
     }
 
@@ -812,7 +1029,11 @@ namespace
     for (const Snapshot& snapshot : snapshots)
     {
       if (timedOut(deadline))
+      {
+        if (diagnostics != nullptr)
+          diagnostics->timedOut = true;
         return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
+      }
       RuntimeMemoryReadResult second = readProcessMemory(processId, snapshot.address, snapshot.bytes.size());
       if (!second.success || second.bytesRead != snapshot.bytes.size())
         continue;
@@ -820,7 +1041,11 @@ namespace
       for (std::size_t offset = 0; offset + sizeof(std::uint32_t) <= snapshot.bytes.size(); offset += sizeof(std::uint32_t))
       {
         if ((offset % (4 * 1024)) == 0 && timedOut(deadline))
+        {
+          if (diagnostics != nullptr)
+            diagnostics->timedOut = true;
           return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
+        }
         const std::uint32_t firstValue = readU32(snapshot.bytes, offset);
         const std::uint32_t secondValue = readU32(second.bytes, offset);
         if (plausibleCounterDelta(firstValue, secondValue))
@@ -830,6 +1055,8 @@ namespace
           candidate.first = firstValue;
           candidate.second = secondValue;
           candidates.push_back(candidate);
+          if (diagnostics != nullptr)
+            ++diagnostics->candidateCounters;
           if (candidates.size() >= 4096)
             break;
         }
@@ -846,7 +1073,11 @@ namespace
     for (const Candidate& candidate : candidates)
     {
       if (timedOut(deadline))
+      {
+        if (diagnostics != nullptr)
+          diagnostics->timedOut = true;
         return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
+      }
       RuntimeMemoryReadResult third = readProcessMemory(processId, candidate.address, sizeof(std::uint32_t));
       if (!third.success || third.bytesRead != sizeof(std::uint32_t))
         continue;
@@ -969,12 +1200,17 @@ int main(int argc, char** argv)
   bool unitScanDiagnosticsFlag = false;
   bool unitScanReadableOnlyFlag = false;
   bool unitScanVectorsFlag = false;
+  bool unitScanIncludeImageRegionsFlag = false;
+  bool stateScanDiagnosticsFlag = false;
   std::string unitBestDumpOut;
+  std::vector<std::uintptr_t> unitCandidateAddresses;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 128 * 1024 * 1024;
   int stateScanTimeoutMs = 30000;
   std::size_t unitMaxScanBytes = 0;
   int unitScanTimeoutMs = 15000;
+  int activeMatchWaitMs = 0;
+  int activeMatchPollMs = 1000;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -1022,6 +1258,27 @@ int main(int argc, char** argv)
     if (arg == "--unit-scan-vectors")
     {
       unitScanVectorsFlag = true;
+      continue;
+    }
+    if (arg == "--unit-scan-include-image-regions")
+    {
+      unitScanIncludeImageRegionsFlag = true;
+      continue;
+    }
+    if (arg == "--state-scan-diagnostics")
+    {
+      stateScanDiagnosticsFlag = true;
+      continue;
+    }
+    if (arg == "--unit-candidate-address")
+    {
+      std::uintptr_t address = 0;
+      if (i + 1 >= argc || !parseAddress(argv[++i], address))
+      {
+        std::cerr << "--unit-candidate-address requires a positive integer address\n";
+        return 64;
+      }
+      unitCandidateAddresses.push_back(address);
       continue;
     }
     if (arg == "--unit-best-dump-out")
@@ -1086,6 +1343,24 @@ int main(int argc, char** argv)
         return 64;
       }
       unitMaxScanBytes = static_cast<std::size_t>(megabytes) * 1024 * 1024;
+      continue;
+    }
+    if (arg == "--active-match-wait-ms")
+    {
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], activeMatchWaitMs))
+      {
+        std::cerr << "--active-match-wait-ms requires a positive integer\n";
+        return 64;
+      }
+      continue;
+    }
+    if (arg == "--active-match-poll-ms")
+    {
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], activeMatchPollMs))
+      {
+        std::cerr << "--active-match-poll-ms requires a positive integer\n";
+        return 64;
+      }
       continue;
     }
     if (arg == "--product")
@@ -1189,6 +1464,7 @@ int main(int argc, char** argv)
 
   LiveCounterProof readGameStateProof;
   LiveUnitsProof readUnitsProof;
+  StateScanDiagnostics stateScanDiagnostics;
   UnitScanDiagnostics unitScanDiagnostics;
   BattleNetPolicyProof battleNetPolicyProof;
   SelfUnitFixture unitFixture;
@@ -1202,7 +1478,8 @@ int main(int argc, char** argv)
       environment.processId,
       stateSampleDelayMs,
       stateMaxScanBytes,
-      stateScanTimeoutMs);
+      stateScanTimeoutMs,
+      stateScanDiagnosticsFlag ? &stateScanDiagnostics : nullptr);
     std::cout << "read_game_state.live_counter=" << (readGameStateProof.passed ? "true" : "false") << '\n';
     if (readGameStateProof.passed)
     {
@@ -1213,6 +1490,25 @@ int main(int argc, char** argv)
     }
     if (!readGameStateProof.reason.empty())
       std::cout << "read_game_state.reason=" << readGameStateProof.reason << '\n';
+    if (stateScanDiagnosticsFlag)
+    {
+      std::cout << "read_game_state.scan.readable_writable_regions="
+                << stateScanDiagnostics.readableWritableRegions << '\n';
+      std::cout << "read_game_state.scan.skipped_non_readable_regions="
+                << stateScanDiagnostics.skippedNonReadableRegions << '\n';
+      std::cout << "read_game_state.scan.skipped_non_writable_regions="
+                << stateScanDiagnostics.skippedNonWritableRegions << '\n';
+      std::cout << "read_game_state.scan.scanned_regions="
+                << stateScanDiagnostics.scannedRegions << '\n';
+      std::cout << "read_game_state.scan.scanned_bytes="
+                << stateScanDiagnostics.scannedBytes << '\n';
+      std::cout << "read_game_state.scan.candidate_counters="
+                << stateScanDiagnostics.candidateCounters << '\n';
+      std::cout << "read_game_state.scan.timed_out="
+                << (stateScanDiagnostics.timedOut ? "true" : "false") << '\n';
+      std::cout << "read_game_state.scan.byte_limit_reached="
+                << (stateScanDiagnostics.byteLimitReached ? "true" : "false") << '\n';
+    }
     if (!readGameStateProof.passed)
       proofFailureCode = proofFailureCode == 0 ? 4 : proofFailureCode;
   }
@@ -1226,15 +1522,48 @@ int main(int argc, char** argv)
 
   if (proveReadUnits || (proveActiveMatchState && !self))
   {
-    readUnitsProof = proveLiveUnitsRead(
-      environment.processId,
-      unitMaxScanBytes,
-      unitScanTimeoutMs,
-      unitScanReadableOnlyFlag,
-      unitScanVectorsFlag,
-      unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
+    int unitScanAttempts = 0;
+    const auto activeMatchDeadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(activeMatchWaitMs);
+    while (true)
+    {
+      ++unitScanAttempts;
+      unitScanDiagnostics = {};
+      if (!unitCandidateAddresses.empty())
+      {
+        readUnitsProof = proveExplicitUnitCandidateAddresses(
+          environment.processId,
+          unitCandidateAddresses,
+          unitMaxScanBytes,
+          unitScanTimeoutMs,
+          unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
+      }
+      if (!readUnitsProof.passed)
+      {
+        readUnitsProof = proveLiveUnitsRead(
+          environment.processId,
+          environment.executablePath,
+          unitMaxScanBytes,
+          unitScanTimeoutMs,
+          unitScanReadableOnlyFlag,
+          unitScanIncludeImageRegionsFlag,
+          unitScanVectorsFlag,
+          unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
+      }
+      if (readUnitsProof.passed || activeMatchWaitMs <= 0 || std::chrono::steady_clock::now() >= activeMatchDeadline)
+        break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(activeMatchPollMs));
+    }
+    if (activeMatchWaitMs > 0)
+    {
+      std::cout << "active_match_state.wait_ms=" << activeMatchWaitMs << '\n';
+      std::cout << "active_match_state.poll_ms=" << activeMatchPollMs << '\n';
+      std::cout << "active_match_state.scan_attempts=" << unitScanAttempts << '\n';
+    }
     if (proveReadUnits)
     {
+      if (!unitCandidateAddresses.empty())
+        std::cout << "read_units.candidate_address.count=" << unitCandidateAddresses.size() << '\n';
       std::cout << "read_units.unit_array=" << (readUnitsProof.passed ? "true" : "false") << '\n';
       if (readUnitsProof.passed)
       {
@@ -1272,6 +1601,10 @@ int main(int argc, char** argv)
                 << unitScanDiagnostics.scannedReadableOnlyRegions << '\n';
       std::cout << "read_units.scan.executable_readable_regions="
                 << unitScanDiagnostics.executableReadableRegions << '\n';
+      std::cout << "read_units.scan.image_mapped_regions="
+                << unitScanDiagnostics.imageMappedRegions << '\n';
+      std::cout << "read_units.scan.skipped_image_mapped_regions="
+                << unitScanDiagnostics.skippedImageMappedRegions << '\n';
       std::cout << "read_units.scan.scanned_regions=" << unitScanDiagnostics.scannedRegions << '\n';
       std::cout << "read_units.scan.scanned_bytes=" << unitScanDiagnostics.scannedBytes << '\n';
       std::cout << "read_units.scan.vector_candidates=" << unitScanDiagnostics.vectorCandidates << '\n';

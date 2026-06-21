@@ -209,6 +209,18 @@ if(TARGET starcraft-runtime-adapter-proof)
   )
 endif()
 
+if(TARGET starcraft-runtime-binary-anchors)
+  add_test(NAME runtime_binary_anchors_help COMMAND starcraft-runtime-binary-anchors --help)
+  add_test(
+    NAME runtime_binary_anchors_self_fixture
+    COMMAND
+      starcraft-runtime-binary-anchors
+      --executable $<TARGET_FILE:starcraft-runtime-binary-anchors>
+      --anchor starcraft-api-binary-anchor-self-fixture
+      --require-anchor
+  )
+endif()
+
 if(TARGET starcraft-runtime-input)
   add_test(NAME runtime_input_help COMMAND starcraft-runtime-input --help)
   add_test(

@@ -43,6 +43,7 @@ namespace BWAPI::Runtime
     bool readable = false;
     bool writable = false;
     bool executable = false;
+    std::string mappedPath;
   };
 
   struct RuntimeMemoryRegionListResult

@@ -147,6 +147,10 @@ if(STARCRAFT_API_BUILD_TOOLS)
       StarCraftAPI::runtime
   )
 
+  add_executable(starcraft-runtime-binary-anchors
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_binary_anchors.cpp"
+  )
+
   add_executable(starcraft-runtime-input
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_input.cpp"
   )
@@ -187,6 +191,10 @@ if(STARCRAFT_API_BUILD_TOOLS)
       COMMAND
         /usr/bin/codesign --force --sign - --entitlements
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-binary-anchors>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
         $<TARGET_FILE:starcraft-runtime-input>
       DEPENDS
         starcraft-runtime-memory-probe
@@ -194,6 +202,7 @@ if(STARCRAFT_API_BUILD_TOOLS)
         starcraft-runtime-probe
         starcraft-runtime-gap-report
         starcraft-runtime-launch
+        starcraft-runtime-binary-anchors
         starcraft-runtime-input
       COMMENT "Ad-hoc signing runtime debug tools with macOS debugger entitlements"
       VERBATIM

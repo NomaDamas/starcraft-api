@@ -547,12 +547,13 @@ namespace BWAPI::Runtime
       result.memoryAccessReason = memoryAccess.reason;
     }
 
-    if (!preflightExecutorBridge(
-          environment,
-          result,
-          contractRequiresCapability(proofBackedContract, Capability::SharedMemoryClient)))
+    const bool bridgePreflightHandled = preflightExecutorBridge(
+      environment,
+      result,
+      contractRequiresCapability(proofBackedContract, Capability::SharedMemoryClient));
+    if (!bridgePreflightHandled)
       result.warnings.push_back("authorized runtime executor bridge is not configured");
-    if (!result.executorAvailable)
+    if (!result.executorAvailable && !bridgePreflightHandled)
       addMissingBehaviorProofsIfEmpty(result);
 
     return result;

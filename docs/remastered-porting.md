@@ -93,8 +93,8 @@ For launch/attach gap analysis, pass the runtime identity from `starcraft-runtim
 starcraft-runtime-gap-report \
   --manifest /tmp/starcraft-api-local-bootstrap.manifest \
   --product starcraft-remastered \
-  --version 1.23.10.13515 \
-  --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
+  --version <version> \
+  --executable "$STARCRAFT_API_EXECUTABLE" \
   --bridge /tmp/starcraft-api-local-bridge \
   --evidence-out /tmp/starcraft-api-local-gap.evidence
 ```
@@ -154,9 +154,13 @@ The local filesystem bridge can now create a readiness file for launch/attach bo
 
 `starcraft-runtime-memory-probe --process-state --region-summary` prints OS process status, thread count, and readable/writable/executable memory-region counters for launch debugging. These diagnostics help distinguish "process exists and can be attached" from "adapter proved an active match." They are not parity proof lines.
 
-`starcraft-runtime-input --post-timeout-ms <ms>` bounds macOS keyboard event posting during manual windowed tests. If Accessibility trust is unavailable or the target process blocks event delivery, the helper exits with `input.success=false` instead of hanging and leaving a background process.
+`starcraft-runtime-binary-anchors --default-remastered-anchors --executable <path>` scans the SC:R binary directly for known state/unit diagnostic anchors, maps Mach-O file offsets to VM addresses, emits duplicate anchor occurrences, reports enclosing C-string start addresses, and emits candidate code/data references. Use this before broad live-memory scans so Remastered binding work is driven by binary evidence instead of UI automation or menu screenshots. These anchors become production evidence only after the live adapter proves the matching in-process structure or command path.
 
-`starcraft-runtime-adapter-proof --prove-active-match-state` requires live active-unit evidence from the selected StarCraft process and rejects self fixtures. This is the gate that prevents menu/login state from being mistaken for in-game BWAPI parity evidence. `starcraft-runtime-adapter-proof --prove-read-units --unit-best-dump-out <path>` dumps the strongest CUnit candidate snapshot when the live scanner cannot prove a full active array. Use `--state-scan-timeout-ms <ms>` and `--unit-scan-timeout-ms <ms>` to keep live debugging loops bounded. This is failure-analysis evidence only; it does not emit `proof.read_units=passed` unless the active unit array threshold is met.
+`starcraft-runtime-adapter-proof --unit-candidate-address <addr>` validates explicit CUnit array candidates before broad memory scans. Pair it with binary-anchor or live-memory analysis when a likely unit array address is available; the tool still refuses `proof.read_units=passed` unless the candidate or fallback scan proves active BWAPI-compatible unit records.
+
+`starcraft-runtime-input --post-timeout-ms <ms>` bounds macOS keyboard event posting during manual windowed tests. If Accessibility trust is unavailable or the target process blocks event delivery, the helper exits with `input.success=false` instead of hanging and leaving a background process. This helper is not part of the production adapter contract; it is only local test-control plumbing when no replay or validated in-process command path is available.
+
+`starcraft-runtime-adapter-proof --prove-active-match-state` requires live active-unit evidence from the selected StarCraft process and rejects self fixtures. This is the gate that prevents menu/login state from being mistaken for in-game BWAPI parity evidence. `starcraft-runtime-adapter-proof --prove-read-units --unit-best-dump-out <path>` dumps the strongest CUnit candidate snapshot when the live scanner cannot prove a full active array. Use `--state-scan-timeout-ms <ms>` and `--unit-scan-timeout-ms <ms>` to keep live debugging loops bounded. Add `--state-scan-diagnostics` and `--unit-scan-diagnostics` to print scanned region/byte counts, timeout and byte-limit status, candidate counts, best-candidate counters, and executable-image region skips. Broad unit scans skip target-executable mapped regions by default because SC:R image/cstring mappings create many false positives; pass `--unit-scan-include-image-regions` only for deliberate image-data audits. This is failure-analysis evidence only; it does not emit `proof.read_units=passed` unless the active unit array threshold is met.
 
 Validated adapter ready files may also publish contract proof lines for evidence that was directly proven by that adapter run:
 

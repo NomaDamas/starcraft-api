@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -99,6 +100,27 @@ namespace
     if (bytes.size() > limit)
       output << " ...";
     return output.str();
+  }
+
+  std::string normalizedPathForCompare(const std::string& path)
+  {
+    if (path.empty())
+      return {};
+
+    std::error_code error;
+    std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
+    if (error)
+      normalized = std::filesystem::absolute(path, error);
+    if (error)
+      normalized = path;
+    return normalized.lexically_normal().string();
+  }
+
+  bool sameMappedFile(const std::string& lhs, const std::string& rhs)
+  {
+    if (lhs.empty() || rhs.empty())
+      return false;
+    return normalizedPathForCompare(lhs) == normalizedPathForCompare(rhs);
   }
 }
 
@@ -366,6 +388,8 @@ int main(int argc, char** argv)
     std::size_t executableRegions = 0;
     std::size_t readableNonExecutableRegions = 0;
     std::size_t readableNonExecutableBytes = 0;
+    std::size_t mappedFileRegions = 0;
+    std::size_t targetExecutableMappedRegions = 0;
     for (const RuntimeMemoryRegion& region : regions.regions)
     {
       if (region.readable)
@@ -379,6 +403,10 @@ int main(int argc, char** argv)
         ++readableNonExecutableRegions;
         readableNonExecutableBytes += region.size;
       }
+      if (!region.mappedPath.empty())
+        ++mappedFileRegions;
+      if (sameMappedFile(region.mappedPath, environment.executablePath))
+        ++targetExecutableMappedRegions;
     }
     std::cout << "memory.region_summary.total_regions=" << regions.regions.size() << '\n';
     std::cout << "memory.region_summary.readable_regions=" << readableRegions << '\n';
@@ -388,6 +416,9 @@ int main(int argc, char** argv)
               << readableNonExecutableRegions << '\n';
     std::cout << "memory.region_summary.readable_non_executable_bytes="
               << readableNonExecutableBytes << '\n';
+    std::cout << "memory.region_summary.mapped_file_regions=" << mappedFileRegions << '\n';
+    std::cout << "memory.region_summary.target_executable_mapped_regions="
+              << targetExecutableMappedRegions << '\n';
   }
 
   if (findRequested)

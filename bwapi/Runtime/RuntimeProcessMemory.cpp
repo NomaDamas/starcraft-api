@@ -13,6 +13,7 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mach/vm_region.h>
+#include <libproc.h>
 #include <unistd.h>
 #elif defined(__linux__)
 #include <algorithm>
@@ -60,6 +61,23 @@ namespace BWAPI::Runtime
       message << operation << " failed: " << std::strerror(errno);
       return message.str();
     }
+
+#if defined(__linux__)
+    std::string linuxMappedPath(const std::string& mapsLine)
+    {
+      std::size_t cursor = 0;
+      for (int field = 0; field < 5; ++field)
+      {
+        cursor = mapsLine.find(' ', cursor);
+        if (cursor == std::string::npos)
+          return {};
+        cursor = mapsLine.find_first_not_of(' ', cursor);
+        if (cursor == std::string::npos)
+          return {};
+      }
+      return mapsLine.substr(cursor);
+    }
+#endif
 
 #if defined(__APPLE__)
     std::string taskForPidFailureMessage(kern_return_t result)
@@ -268,6 +286,9 @@ namespace BWAPI::Runtime
         region.readable = (info.protection & VM_PROT_READ) != 0;
         region.writable = (info.protection & VM_PROT_WRITE) != 0;
         region.executable = (info.protection & VM_PROT_EXECUTE) != 0;
+        char mappedPath[PROC_PIDPATHINFO_MAXSIZE] = {};
+        if (proc_regionfilename(processId, address, mappedPath, sizeof(mappedPath)) > 0)
+          region.mappedPath = mappedPath;
         result.regions.push_back(region);
       }
 
@@ -316,6 +337,7 @@ namespace BWAPI::Runtime
       region.readable = line[space + 1] == 'r';
       region.writable = line[space + 2] == 'w';
       region.executable = line[space + 3] == 'x';
+      region.mappedPath = linuxMappedPath(line);
       result.regions.push_back(region);
     }
 

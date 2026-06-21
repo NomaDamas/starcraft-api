@@ -77,6 +77,7 @@ execute_process(
     --version test-build
     --bridge "${units_bridge_dir}"
     --prove-read-units
+    --unit-candidate-address 0x1
     --state-max-scan-mb 1
     --unit-max-scan-mb 128
     --unit-scan-diagnostics
@@ -90,6 +91,7 @@ if(NOT units_result EQUAL 0)
   message(FATAL_ERROR "expected read-units proof to pass with self fixture\nstdout:\n${units_output}\nstderr:\n${units_error}")
 endif()
 foreach(needle
+    "read_units.candidate_address.count=1"
     "read_units.unit_array=true"
     "read_units.record_size=336"
     "read_units.layout=bwapi-classic-cunit"
@@ -98,6 +100,8 @@ foreach(needle
     "read_units.scan.readable_only_regions="
     "read_units.scan.scanned_readable_only_regions="
     "read_units.scan.executable_readable_regions="
+    "read_units.scan.image_mapped_regions="
+    "read_units.scan.skipped_image_mapped_regions="
     "read_units.scan.window_candidate_arrays_scored="
     "read_units.scan.field_plausible_records="
     "read_units.scan.sprite_rejected_records="
@@ -156,6 +160,7 @@ execute_process(
     --prove-read-game-state
     --state-max-scan-mb 1
     --state-scan-timeout-ms 1
+    --state-scan-diagnostics
     --prove-read-units
     --unit-max-scan-mb 128
     --self-unit-fixture
@@ -168,6 +173,8 @@ if(NOT combined_result EQUAL 0 AND NOT combined_result EQUAL 4)
 endif()
 foreach(needle
     "read_game_state.live_counter="
+    "read_game_state.scan.scanned_regions="
+    "read_game_state.scan.candidate_counters="
     "read_units.unit_array=true"
     "proof.read_units=passed")
   string(FIND "${combined_output}" "${needle}" needle_index)

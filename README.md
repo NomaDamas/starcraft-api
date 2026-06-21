@@ -56,9 +56,13 @@ Gap reports now print `executor.bridge_mode`, `executor.behavior_proof.missing_c
 
 Executor bridge ready files are also bound to the selected runtime identity. If `STARCRAFT_API_PROCESS_ID` or `--process-id` is set, the ready file must contain the same `process_id`. If `STARCRAFT_API_EXECUTABLE` or `--executable` is set, the ready file must contain the same normalized `executable` path. Stale ready files from another StarCraft process are rejected before preflight or command submission can pass.
 
-Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process identity is visible. Use `--require-access` to require actual process memory access rights. Add `--process-state --region-summary` when debugging macOS Battle.net launches so the report includes OS process status, thread count, and memory-region counters. On macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied, and an attachable menu/login process is still not in-game BWAPI evidence. The production readiness report also emits `runtime-memory-accessible` and a `memory-access` implementation gap when the BWAPI parity contract requires a shared-memory client but the selected runtime process cannot be accessed. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
+Use `starcraft-runtime-memory-probe --require-open` after a successful launch to verify that the selected runtime process identity is visible. Use `--require-access` to require actual process memory access rights. Add `--process-state --region-summary` when debugging macOS Battle.net launches so the report includes OS process status, thread count, memory-region counters, mapped-file region counts, and target-executable mapped region counts. On macOS, `memory.opened=true` can still be paired with `memory.accessible=false` when `task_for_pid` is denied, and an attachable menu/login process is still not in-game BWAPI evidence. The production readiness report also emits `runtime-memory-accessible` and a `memory-access` implementation gap when the BWAPI parity contract requires a shared-memory client but the selected runtime process cannot be accessed. Pass `--address <addr> --size <bytes> --require-read` only for an address that has been separately authorized and validated; the default probe does not read arbitrary game memory.
 
-`starcraft-runtime-input` is a local macOS test helper for sending bounded keyboard input to one selected StarCraft process. Use `--post-timeout-ms <ms>` during live debugging so a blocked macOS event post fails cleanly instead of leaving a stuck helper process. This is only automation plumbing; it does not satisfy BWAPI parity proof by itself.
+`starcraft-runtime-binary-anchors` is a code-level SC:R porting tool. It scans a target executable for stable ASCII anchors such as `CUnit::sgUnitsMem`, maps Mach-O file offsets to VM addresses on macOS, prints all duplicate anchor occurrences plus enclosing C-string start addresses, and prints RIP-relative/pointer xref candidates that can be turned into validated runtime binding proofs. This is static analysis evidence only; a binding still must be verified against the live process before it can remove a production gap.
+
+`starcraft-runtime-adapter-proof --unit-candidate-address <addr>` validates explicit CUnit array candidates before broad memory scans. Use it with addresses derived from binary or live memory analysis to avoid treating menu-state heuristic scans as production evidence; the proof still emits `proof.read_units=passed` only when the candidate or fallback scan contains enough active BWAPI-compatible unit records. Broad unit scans skip regions mapped from the selected StarCraft executable by default because static image/cstring mappings produce high false-positive rates; pass `--unit-scan-include-image-regions` only when deliberately auditing executable-image data. Add `--state-scan-diagnostics` and `--unit-scan-diagnostics` to print scan coverage, timeout, byte-limit, image-skip, candidate, and best-candidate counters.
+
+`starcraft-runtime-input` is a local macOS test helper for sending bounded keyboard input to one selected StarCraft process. Use `--post-timeout-ms <ms>` during live debugging so a blocked macOS event post fails cleanly instead of leaving a stuck helper process. Codex, Accessibility, and keyboard automation are not runtime dependencies for the StarCraft API adapter; they are only optional local test-control plumbing and do not satisfy BWAPI parity proof by themselves.
 
 On macOS local development builds, run `cmake --build build --target starcraft-runtime-sign-debug-tools` to ad-hoc sign the runtime diagnostic tools with debugger entitlements from `tools/macos-debugger.entitlements`. This enables authorized local attach tests on systems that allow debugger-signed tools. Then use `starcraft-runtime-memory-probe --read-first-readable --require-open --require-access --require-read` to prove real target-process VM reads without hard-coding an address.
 
@@ -68,8 +72,8 @@ When using a bootstrap manifest, pass the runtime identity explicitly so the rep
 build/starcraft-runtime-gap-report \
   --manifest /tmp/starcraft-api-local-bootstrap.manifest \
   --product starcraft-remastered \
-  --version 1.23.10.13515 \
-  --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
+  --version <version> \
+  --executable "$STARCRAFT_API_EXECUTABLE" \
   --bridge /tmp/starcraft-api-local-bridge \
   --evidence-out /tmp/starcraft-api-local-gap.evidence
 ```
@@ -79,9 +83,9 @@ Command submission is manifest-backed for StarCraft: Remastered and requires a v
 ```sh
 build/starcraft-runtime-submit-command \
   --product starcraft-remastered \
-  --version 1.23.10.13515 \
-  --process-id 94840 \
-  --executable /Users/jinminseong/Desktop/Starcraft1/StarCraft/x86_64/StarCraft.app/Contents/MacOS/StarCraft \
+  --version <version> \
+  --process-id <pid> \
+  --executable "$STARCRAFT_API_EXECUTABLE" \
   --manifest /path/to/validated-remastered.manifest \
   --bridge /path/to/authorized-runtime-bridge \
   --game-action pauseGame

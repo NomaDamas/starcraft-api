@@ -92,7 +92,9 @@ foreach(needle
     "memory.region_summary.success="
     "memory.region_summary.total_regions="
     "memory.region_summary.readable_regions="
-    "memory.region_summary.readable_non_executable_bytes=")
+    "memory.region_summary.readable_non_executable_bytes="
+    "memory.region_summary.mapped_file_regions="
+    "memory.region_summary.target_executable_mapped_regions=")
   string(FIND "${diagnostic_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "diagnostic memory probe output missing '${needle}'\n${diagnostic_output}")

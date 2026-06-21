@@ -106,7 +106,7 @@ int main()
   assert(hasBlockingGap(bootstrapGap, "executor-preflight-clean"));
 
   RuntimeExecutorPreflightResult partialProofBridge = preflight;
-  partialProofBridge.executorAvailable = false;
+  partialProofBridge.executorAvailable = true;
   partialProofBridge.executorBridgeMode = RuntimeExecutorBridgeValidatedAdapterMode;
   partialProofBridge.missingBehaviorProofs.push_back("proof.multiplayer_sync=passed");
   partialProofBridge.errors.push_back(

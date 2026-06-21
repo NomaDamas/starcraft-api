@@ -42,6 +42,7 @@ namespace
     unsetEnvValue("STARCRAFT_API_WINDOW_HEIGHT");
     unsetEnvValue("STARCRAFT_API_WINDOW_X");
     unsetEnvValue("STARCRAFT_API_WINDOW_Y");
+    unsetEnvValue("STARCRAFT_API_EXTRA_ARGS");
   }
 
   void writeFile(const std::filesystem::path& path, const std::string& content)
@@ -81,6 +82,8 @@ namespace
 
 int main()
 {
+  clearWindowedLaunchEnv();
+
   const std::filesystem::path tempRoot =
     std::filesystem::temp_directory_path() / "starcraft-api-runtime-installation-test";
   std::filesystem::remove_all(tempRoot);
@@ -178,6 +181,20 @@ int main()
   assert(gameProcessIds.size() == 1);
   assert(gameProcessIds.front() == 4430);
 
+  writeFile(
+    processSnapshot,
+    "987654321 4428 " + executable.string() + " -launch -uid s1\n");
+  const RuntimeLaunchResult replaceMissingGameProcess =
+    launchOrAttachRuntime(installation, true, 0, 0, false, true);
+  assert(!replaceMissingGameProcess.launched);
+  assert(!replaceMissingGameProcess.running);
+  assert(hasWarning(replaceMissingGameProcess, "runtime.existing_process_count=1"));
+  assert(containsText(replaceMissingGameProcess.reason, "unable to terminate existing StarCraft process"));
+
+  writeFile(
+    processSnapshot,
+    "4430 4428 " + executable.string() + " -launch -uid s1\n");
+
   RuntimeEnvironment unresolvedEnvironment = RuntimeEnvironment::detectHost();
   unresolvedEnvironment.platform = Platform::MacOS;
   unresolvedEnvironment.product = Product::Unknown;
@@ -257,6 +274,47 @@ int main()
   assert(hasWarning(windowedResult, "runtime.launch_target=executable"));
   assert(!hasWarning(windowedResult, "runtime.launch_target=launcher"));
   assert(!hasWarning(windowedResult, "runtime.launch_target_no_game=launcher"));
+  clearWindowedLaunchEnv();
+
+  const std::filesystem::path extraRoot = tempRoot / "windowed-extra-args";
+  const std::filesystem::path extraLauncher = extraRoot / "launcher";
+  const std::filesystem::path extraExecutable = extraRoot / "StarCraft";
+  const std::filesystem::path extraSnapshot = extraRoot / "processes.snapshot";
+  writeFile(
+    extraLauncher,
+    "#!/bin/sh\n"
+    "exit 70\n");
+  writeFile(
+    extraExecutable,
+    "#!/bin/sh\n"
+    "if [ \"$#\" -ne 17 ]; then exit 63; fi\n"
+    "if [ \"$1\" != \"-launch\" ] || [ \"$2\" != \"-uid\" ] || [ \"$3\" != \"s1\" ]; then exit 64; fi\n"
+    "if [ \"$14\" != \"playReplay\" ]; then exit 65; fi\n"
+    "if [ \"$15\" != \"Maps/Replays/test replay.rep\" ]; then exit 66; fi\n"
+    "if [ \"$16\" != \"-testFlag\" ] || [ \"$17\" != \"quoted value\" ]; then exit 67; fi\n"
+    "printf '%s 1 %s -launch -uid s1 playReplay\\n' \"$$\" \"$STARCRAFT_API_TEST_EXECUTABLE\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
+    "sleep 2\n");
+  makeExecutable(extraLauncher);
+  makeExecutable(extraExecutable);
+  writeFile(extraSnapshot, "");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", extraSnapshot.string());
+  setEnvValue("STARCRAFT_API_TEST_EXECUTABLE", extraExecutable.string());
+  setEnvValue("STARCRAFT_API_WINDOWED", "1");
+  setEnvValue("STARCRAFT_API_EXTRA_ARGS", "playReplay \"Maps/Replays/test replay.rep\" -testFlag 'quoted value'");
+
+  RuntimeInstallation extraInstallation;
+  extraInstallation.found = true;
+  extraInstallation.product = Product::StarCraftRemastered;
+  extraInstallation.platform = Platform::Linux;
+  extraInstallation.installRoot = extraRoot.string();
+  extraInstallation.executablePath = extraExecutable.string();
+  extraInstallation.launcherPath = extraLauncher.string();
+
+  const RuntimeLaunchResult extraResult = launchOrAttachRuntime(extraInstallation, true, 0, 0);
+  assert(extraResult.launched);
+  assert(extraResult.running);
+  assert(extraResult.processId > 0);
+  assert(hasWarning(extraResult, "runtime.launch_target=executable"));
   clearWindowedLaunchEnv();
 
   const std::filesystem::path fallbackRoot = tempRoot / "fallback";

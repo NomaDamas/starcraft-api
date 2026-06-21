@@ -186,7 +186,15 @@ endif()
 if(TARGET starcraft-runtime-memory-probe)
   add_test(NAME runtime_memory_probe_help COMMAND starcraft-runtime-memory-probe --help)
   add_test(NAME runtime_memory_probe_self_open COMMAND starcraft-runtime-memory-probe --self --require-open --require-access)
+  add_test(NAME runtime_memory_probe_self_product_version COMMAND starcraft-runtime-memory-probe --self --product starcraft-remastered --version test-build --require-open --require-access)
   add_test(NAME runtime_memory_probe_self_read_first_readable COMMAND starcraft-runtime-memory-probe --self --read-first-readable --require-open --require-access --require-read)
+  add_test(
+    NAME runtime_memory_probe_find_cli_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_RUNTIME_MEMORY_PROBE=$<TARGET_FILE:starcraft-runtime-memory-probe>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_memory_probe_cli_test.cmake
+  )
 endif()
 
 if(TARGET starcraft-runtime-adapter-proof)

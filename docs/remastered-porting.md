@@ -122,6 +122,8 @@ These fields are diagnostic evidence, not readiness evidence. If sessions stop a
 
 On StarCraft: Remastered, launch retries prefer the partial-screen direct executable path before launcher fallback. The default executable arguments are `-launch -uid s1 -displayMode 0 -windowwidth 1024 -windowheight 768 -windowx 100 -windowy 100`; if this does not produce a stable game process, macOS falls back to `open StarCraft Launcher.app` and then the launcher binary. Each target is followed by a stable game-process check. Attempted paths are emitted as `runtime.warning=runtime.launch_target=*`; targets that did not produce a stable game process are emitted as `runtime.warning=runtime.launch_target_no_game=*`.
 
+For controlled command-line launch experiments, set `STARCRAFT_API_EXTRA_ARGS` to append quoted arguments after the default Remastered flags. Pair `--launch --replace-running` when an existing StarCraft game process must be terminated before testing the new arguments, so only one StarCraft instance remains visible.
+
 POSIX launch children are detached from the short-lived CLI process before `exec`, so a stable StarCraft process remains attachable after `starcraft-runtime-launch` exits.
 
 For repeated gap audits, use `starcraft-runtime-gap-report --summary-only` to emit only readiness and implementation category totals. Use `starcraft-runtime-gap-report --category <name>` to print only one implementation gap category while preserving the global category counts. When `--evidence-out` is enabled, the gap report also mirrors launch diagnosis rows to stdout, including `diagnosis.status`, `diagnosis.ready_for_attach`, `diagnosis.battle_net_support_*`, and `diagnosis.blocker.*`.

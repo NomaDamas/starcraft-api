@@ -16,6 +16,7 @@
 #include <limits>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace BWAPI::Runtime;
@@ -39,8 +40,15 @@ namespace
       << "  --state-sample-delay-ms <ms>\n"
       << "                           delay between live state samples (default: 250)\n"
       << "  --state-max-scan-mb <mb> maximum readable writable memory to sample (default: 128)\n"
+      << "  --unit-max-scan-mb <mb>  maximum readable writable memory to scan for units\n"
+      << "                           (default: --state-max-scan-mb)\n"
       << "  --unit-scan-timeout-ms <ms>\n"
       << "                           maximum time for --prove-read-units scan (default: 15000)\n"
+      << "  --unit-scan-diagnostics  print direct memory unit-scan counters on success/failure\n"
+      << "  --unit-scan-readable-only\n"
+      << "                           include readable non-writable non-executable regions in unit scans\n"
+      << "  --unit-scan-vectors      also scan std::vector-like begin/end/capacity triples\n"
+      << "                           after strided CUnit arrays\n"
       << "  --bridge <dir>           write adapter proof ready file\n"
       << "  --help                   show this help\n";
   }
@@ -80,10 +88,63 @@ namespace
     bool passed = false;
     std::uintptr_t address = 0;
     std::size_t recordSize = 0;
+    std::size_t idOffset = 0;
+    std::size_t positionOffset = 0;
+    std::size_t hitPointsOffset = 0;
+    std::size_t orderOffset = 0;
+    std::size_t playerOffset = 0;
     std::size_t sampledRecords = 0;
     std::size_t activeRecords = 0;
+    std::string layoutName;
     std::string reason;
   };
+
+  struct UnitScanDiagnostics
+  {
+    std::size_t readableWritableRegions = 0;
+    std::size_t readableOnlyRegions = 0;
+    std::size_t scannedReadableOnlyRegions = 0;
+    std::size_t executableReadableRegions = 0;
+    std::size_t scannedRegions = 0;
+    std::size_t scannedBytes = 0;
+    std::size_t vectorCandidates = 0;
+    std::size_t stridedCandidates = 0;
+    std::size_t candidateArraysScored = 0;
+    std::size_t windowCandidateArraysScored = 0;
+    std::size_t fieldPlausibleRecords = 0;
+    std::size_t spriteRejectedRecords = 0;
+    std::size_t plausibleRecords = 0;
+    std::size_t bestActiveRecords = 0;
+    std::uintptr_t bestAddress = 0;
+    std::size_t bestRecordSize = 0;
+    std::string bestLayoutName;
+    bool timedOut = false;
+    bool byteLimitReached = false;
+  };
+
+  struct UnitRecordLayout
+  {
+    const char* name = "";
+    std::size_t hitPointsOffset = 0;
+    std::size_t spriteOffset = 0;
+    std::size_t positionOffset = 0;
+    std::size_t playerOffset = 0;
+    std::size_t orderOffset = 0;
+    std::size_t unitTypeOffset = 0;
+    std::size_t idOffset = 0;
+  };
+
+  constexpr std::array<UnitRecordLayout, 3> unitRecordLayouts = {
+    UnitRecordLayout { "bwapi-classic-cunit", 0x08, 0x0c, 0x28, 0x4c, 0x4d, 0x64, 0x64 },
+    UnitRecordLayout { "scr-x64-packed-cunit", 0x10, 0x14, 0x38, 0x5c, 0x5d, 0x78, 0x78 },
+    UnitRecordLayout { "scr-x64-aligned-cunit", 0x10, 0x18, 0x40, 0x64, 0x65, 0x80, 0x80 }
+  };
+
+  constexpr std::array<std::size_t, 8> candidateUnitRecordSizes = {
+    336, 384, 416, 432, 448, 512, 672, 768
+  };
+
+  constexpr std::size_t minActiveUnitRecords = 4;
 
   struct BattleNetPolicyProof
   {
@@ -91,6 +152,30 @@ namespace
     RuntimeLaunchDiagnosis diagnosis;
     std::string reason;
   };
+
+  LiveUnitsProof failedUnitsProof(std::string reason)
+  {
+    LiveUnitsProof proof;
+    proof.reason = std::move(reason);
+    return proof;
+  }
+
+  std::string unitScanTimeoutReason(const UnitScanDiagnostics* diagnostics)
+  {
+    std::string reason = "unit array scan timed out before proof";
+    if (diagnostics != nullptr && diagnostics->bestActiveRecords == 0 && diagnostics->plausibleRecords == 0)
+    {
+      reason += "; no active in-game unit records were observed, so the attached process may be at menu/login instead of an active match";
+    }
+    else if (diagnostics != nullptr && diagnostics->bestActiveRecords > 0)
+    {
+      reason += "; best candidate active records="
+        + std::to_string(diagnostics->bestActiveRecords)
+        + " below required="
+        + std::to_string(minActiveUnitRecords);
+    }
+    return reason;
+  }
 
   std::uint32_t readU32(const std::vector<unsigned char>& bytes, std::size_t offset)
   {
@@ -172,48 +257,94 @@ namespace
   bool plausibleSpritePointer(
     const std::vector<unsigned char>& bytes,
     std::size_t offset,
+    std::size_t spriteOffset,
     const std::vector<RuntimeMemoryRegion>& regions,
     bool requireReadableSprite)
   {
-    const std::uint32_t sprite32 = readU32(bytes, offset + 0x0c);
+    const std::uint32_t sprite32 = readU32(bytes, offset + spriteOffset);
     if (!requireReadableSprite)
       return sprite32 != 0;
 
     if (readablePointerValue(regions, sprite32, 16))
       return true;
-    if (offset + 0x14 <= bytes.size() && readablePointerValue(regions, readU64(bytes, offset + 0x0c), 16))
+    if (offset + spriteOffset + sizeof(std::uint64_t) <= bytes.size()
+        && readablePointerValue(regions, readU64(bytes, offset + spriteOffset), 16))
       return true;
 
     return false;
   }
 
-  bool plausibleClassicCUnitRecord(
+  bool plausibleUnitRecordFields(
     const std::vector<unsigned char>& bytes,
     std::size_t offset,
     std::size_t recordSize,
-    const std::vector<RuntimeMemoryRegion>& regions,
-    bool requireReadableSprite)
+    const UnitRecordLayout& layout)
   {
-    if (recordSize < 0x66 || offset + recordSize > bytes.size())
+    const std::size_t requiredSize = std::max({
+      layout.hitPointsOffset + sizeof(std::uint32_t),
+      layout.spriteOffset + sizeof(std::uint64_t),
+      layout.positionOffset + sizeof(std::uint32_t),
+      layout.playerOffset + sizeof(unsigned char),
+      layout.orderOffset + sizeof(unsigned char),
+      layout.unitTypeOffset + sizeof(std::uint16_t)
+    });
+    if (recordSize < requiredSize || offset + recordSize > bytes.size())
       return false;
 
-    const std::uint32_t hitPoints = readU32(bytes, offset + 0x08);
-    const std::int16_t x = readS16(bytes, offset + 0x28);
-    const std::int16_t y = readS16(bytes, offset + 0x2a);
-    const unsigned char player = bytes[offset + 0x4c];
-    const unsigned char order = bytes[offset + 0x4d];
-    const std::uint16_t unitType = readU16(bytes, offset + 0x64);
+    const std::uint32_t hitPoints = readU32(bytes, offset + layout.hitPointsOffset);
+    const std::int16_t x = readS16(bytes, offset + layout.positionOffset);
+    const std::int16_t y = readS16(bytes, offset + layout.positionOffset + sizeof(std::int16_t));
+    const unsigned char player = bytes[offset + layout.playerOffset];
+    const unsigned char order = bytes[offset + layout.orderOffset];
+    const std::uint16_t unitType = readU16(bytes, offset + layout.unitTypeOffset);
 
     return hitPoints >= 256
       && hitPoints <= 1000000
-      && x > 0
+      && (hitPoints % 64) == 0
+      && x >= 16
       && x <= 16384
-      && y > 0
+      && y >= 16
       && y <= 16384
       && player < 12
       && order < 190
-      && unitType < 256
-      && plausibleSpritePointer(bytes, offset, regions, requireReadableSprite);
+      && unitType < 256;
+  }
+
+  bool plausibleUnitRecord(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t recordSize,
+    const UnitRecordLayout& layout,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    bool requireReadableSprite)
+  {
+    return plausibleUnitRecordFields(bytes, offset, recordSize, layout)
+      && plausibleSpritePointer(bytes, offset, layout.spriteOffset, regions, requireReadableSprite);
+  }
+
+  bool plausibleUnitRecordWithDiagnostics(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t recordSize,
+    const UnitRecordLayout& layout,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    bool requireReadableSprite,
+    UnitScanDiagnostics* diagnostics)
+  {
+    if (!plausibleUnitRecordFields(bytes, offset, recordSize, layout))
+      return false;
+
+    if (diagnostics != nullptr)
+      ++diagnostics->fieldPlausibleRecords;
+
+    if (!plausibleSpritePointer(bytes, offset, layout.spriteOffset, regions, requireReadableSprite))
+    {
+      if (diagnostics != nullptr)
+        ++diagnostics->spriteRejectedRecords;
+      return false;
+    }
+
+    return true;
   }
 
   LiveUnitsProof scoreClassicCUnitArray(
@@ -221,29 +352,36 @@ namespace
     std::uintptr_t baseAddress,
     std::size_t offset,
     std::size_t recordSize,
+    const UnitRecordLayout& layout,
     const std::vector<RuntimeMemoryRegion>& regions,
     bool requireReadableSprite)
   {
-    constexpr std::size_t minActiveRecords = 8;
     constexpr std::size_t maxSampledRecords = 1700;
 
     LiveUnitsProof proof;
     proof.address = baseAddress + offset;
     proof.recordSize = recordSize;
+    proof.idOffset = layout.idOffset;
+    proof.positionOffset = layout.positionOffset;
+    proof.hitPointsOffset = layout.hitPointsOffset;
+    proof.orderOffset = layout.orderOffset;
+    proof.playerOffset = layout.playerOffset;
+    proof.layoutName = layout.name;
 
     const std::size_t availableRecords = (bytes.size() - offset) / recordSize;
     proof.sampledRecords = std::min(maxSampledRecords, availableRecords);
     for (std::size_t i = 0; i < proof.sampledRecords; ++i)
     {
-      if (plausibleClassicCUnitRecord(
+      if (plausibleUnitRecord(
             bytes,
             offset + i * recordSize,
             recordSize,
+            layout,
             regions,
             requireReadableSprite))
         ++proof.activeRecords;
 
-      if (proof.activeRecords >= minActiveRecords)
+      if (proof.activeRecords >= minActiveUnitRecords)
       {
         proof.passed = true;
         return proof;
@@ -254,39 +392,111 @@ namespace
     return proof;
   }
 
+  void rememberBestCandidate(
+    UnitScanDiagnostics* diagnostics,
+    const LiveUnitsProof& proof)
+  {
+    if (diagnostics == nullptr || proof.activeRecords <= diagnostics->bestActiveRecords)
+      return;
+
+    diagnostics->bestActiveRecords = proof.activeRecords;
+    diagnostics->bestAddress = proof.address;
+    diagnostics->bestRecordSize = proof.recordSize;
+    diagnostics->bestLayoutName = proof.layoutName;
+  }
+
   LiveUnitsProof proveClassicUnitArrayInBytes(
     const std::vector<unsigned char>& bytes,
     std::uintptr_t baseAddress,
     const std::vector<RuntimeMemoryRegion>& regions,
     const std::chrono::steady_clock::time_point& deadline,
     bool& scanTimedOut,
-    bool requireReadableSprite)
+    bool requireReadableSprite,
+    UnitScanDiagnostics* diagnostics)
   {
-    const std::array<std::size_t, 3> recordSizes = { 336, 512, 672 };
-    for (std::size_t offset = 0; offset < bytes.size(); offset += 8)
+    for (const UnitRecordLayout& layout : unitRecordLayouts)
     {
-      if ((offset % (64 * 1024)) == 0 && timedOut(deadline))
+      for (std::size_t recordSize : candidateUnitRecordSizes)
       {
-        scanTimedOut = true;
-        return {};
-      }
-
-      for (std::size_t recordSize : recordSizes)
-      {
-        if (offset + recordSize * 4 > bytes.size())
-          continue;
-        if (!plausibleClassicCUnitRecord(bytes, offset, recordSize, regions, requireReadableSprite))
+        if (recordSize * 4 > bytes.size())
           continue;
 
-        LiveUnitsProof proof = scoreClassicCUnitArray(
-          bytes,
-          baseAddress,
-          offset,
-          recordSize,
-          regions,
-          requireReadableSprite);
-        if (proof.passed)
-          return proof;
+        constexpr std::size_t maxWindowScoresPerRecordSize = 512;
+        std::size_t windowScoresForRecordSize = 0;
+        std::vector<std::size_t> plausibleByResidue(recordSize, 0);
+        std::vector<bool> scoredResidue(recordSize, false);
+        LiveUnitsProof bestForRecordSize;
+        for (std::size_t recordOffset = 0; recordOffset + recordSize <= bytes.size(); recordOffset += 8)
+        {
+          if ((recordOffset % (64 * 1024)) == 0 && timedOut(deadline))
+          {
+            scanTimedOut = true;
+            return {};
+          }
+          if (!plausibleUnitRecordWithDiagnostics(
+                bytes,
+                recordOffset,
+                recordSize,
+                layout,
+                regions,
+                requireReadableSprite,
+                diagnostics))
+            continue;
+
+          if (windowScoresForRecordSize < maxWindowScoresPerRecordSize)
+          {
+            LiveUnitsProof windowProof = scoreClassicCUnitArray(
+              bytes,
+              baseAddress,
+              recordOffset,
+              recordSize,
+              layout,
+              regions,
+              requireReadableSprite);
+            if (diagnostics != nullptr)
+            {
+              ++diagnostics->candidateArraysScored;
+              ++diagnostics->windowCandidateArraysScored;
+              diagnostics->plausibleRecords += windowProof.activeRecords;
+              if (windowProof.activeRecords > 0)
+                ++diagnostics->stridedCandidates;
+            }
+            if (windowProof.passed)
+              return windowProof;
+            rememberBestCandidate(diagnostics, windowProof);
+            if (windowProof.activeRecords > bestForRecordSize.activeRecords)
+              bestForRecordSize = windowProof;
+            ++windowScoresForRecordSize;
+          }
+
+          const std::size_t baseOffset = recordOffset % recordSize;
+          ++plausibleByResidue[baseOffset];
+          if (plausibleByResidue[baseOffset] < minActiveUnitRecords || scoredResidue[baseOffset])
+            continue;
+
+          LiveUnitsProof proof = scoreClassicCUnitArray(
+            bytes,
+            baseAddress,
+            baseOffset,
+            recordSize,
+            layout,
+            regions,
+            requireReadableSprite);
+          if (diagnostics != nullptr)
+          {
+            ++diagnostics->candidateArraysScored;
+            diagnostics->plausibleRecords += proof.activeRecords;
+            if (proof.activeRecords > 0)
+              ++diagnostics->stridedCandidates;
+          }
+          if (proof.passed)
+            return proof;
+          rememberBestCandidate(diagnostics, proof);
+          if (proof.activeRecords > bestForRecordSize.activeRecords)
+            bestForRecordSize = proof;
+          scoredResidue[baseOffset] = true;
+        }
+        rememberBestCandidate(diagnostics, bestForRecordSize);
       }
     }
 
@@ -299,9 +509,9 @@ namespace
     const std::vector<unsigned char>& bytes,
     std::uintptr_t baseAddress,
     const std::chrono::steady_clock::time_point& deadline,
-    bool& scanTimedOut)
+    bool& scanTimedOut,
+    UnitScanDiagnostics* diagnostics)
   {
-    const std::array<std::size_t, 3> recordSizes = { 336, 512, 672 };
     constexpr std::size_t maxVectorBytes = 32 * 1024 * 1024;
 
     for (std::size_t offset = 0; offset + sizeof(std::uint64_t) * 3 <= bytes.size(); offset += 8)
@@ -317,24 +527,32 @@ namespace
       const std::uintptr_t capacity = static_cast<std::uintptr_t>(readU64(bytes, offset + 16));
       if (begin == 0 || end <= begin || capacity < end)
         continue;
+      if (diagnostics != nullptr)
+        ++diagnostics->vectorCandidates;
       const std::size_t usedBytes = static_cast<std::size_t>(end - begin);
       if (usedBytes == 0 || usedBytes > maxVectorBytes)
         continue;
       if (!readableAddress(regions, begin, std::min<std::size_t>(usedBytes, 4096)))
         continue;
 
-      for (std::size_t recordSize : recordSizes)
+      for (const UnitRecordLayout& layout : unitRecordLayouts)
       {
-        if (usedBytes < recordSize * 4 || usedBytes % recordSize != 0)
-          continue;
+        for (std::size_t recordSize : candidateUnitRecordSizes)
+        {
+          if (usedBytes < recordSize * 4 || usedBytes % recordSize != 0)
+            continue;
 
-        RuntimeMemoryReadResult read = readProcessMemory(processId, begin, std::min<std::size_t>(usedBytes, recordSize * 64));
-        if (!read.success || read.bytesRead < recordSize * 4)
-          continue;
+          RuntimeMemoryReadResult read = readProcessMemory(processId, begin, std::min<std::size_t>(usedBytes, recordSize * 64));
+          if (!read.success || read.bytesRead < recordSize * 4)
+            continue;
 
-        LiveUnitsProof proof = scoreClassicCUnitArray(read.bytes, begin, 0, recordSize, regions, true);
-        if (proof.passed)
-          return proof;
+          LiveUnitsProof proof = scoreClassicCUnitArray(read.bytes, begin, 0, recordSize, layout, regions, true);
+          if (diagnostics != nullptr)
+            ++diagnostics->candidateArraysScored;
+          if (proof.passed)
+            return proof;
+          rememberBestCandidate(diagnostics, proof);
+        }
       }
     }
 
@@ -345,11 +563,14 @@ namespace
   LiveUnitsProof proveLiveUnitsRead(
     int processId,
     std::size_t maxScanBytes,
-    int scanTimeoutMs)
+    int scanTimeoutMs,
+    bool includeReadableOnlyRegions,
+    bool scanVectors,
+    UnitScanDiagnostics* diagnostics)
   {
     RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
     if (!regions.success)
-      return { false, 0, 0, 0, 0, regions.reason };
+      return failedUnitsProof(regions.reason);
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
     const std::size_t maxRegionBytes = 2 * 1024 * 1024;
@@ -357,47 +578,95 @@ namespace
     for (const RuntimeMemoryRegion& region : regions.regions)
     {
       if (timedOut(deadline))
-        return { false, 0, 0, 0, 0, "unit array scan timed out before proof" };
+      {
+        if (diagnostics != nullptr)
+          diagnostics->timedOut = true;
+        return failedUnitsProof(unitScanTimeoutReason(diagnostics));
+      }
 
-      if (!region.readable || !region.writable || region.executable || region.size < 336 * 4)
+      if (!region.readable || region.size < 336 * 4)
         continue;
+      if (region.executable)
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->executableReadableRegions;
+        continue;
+      }
+      if (!region.writable)
+      {
+        if (diagnostics != nullptr)
+          ++diagnostics->readableOnlyRegions;
+        if (!includeReadableOnlyRegions)
+          continue;
+      }
+      if (diagnostics != nullptr)
+      {
+        if (region.writable)
+          ++diagnostics->readableWritableRegions;
+        else
+          ++diagnostics->scannedReadableOnlyRegions;
+      }
       if (scanned >= maxScanBytes)
+      {
+        if (diagnostics != nullptr)
+          diagnostics->byteLimitReached = true;
         break;
+      }
 
       const std::size_t bytesToRead = std::min(region.size, std::min(maxRegionBytes, maxScanBytes - scanned));
       RuntimeMemoryReadResult read = readProcessMemory(processId, region.address, bytesToRead);
       if (!read.success || read.bytesRead < 336 * 4)
         continue;
+      if (diagnostics != nullptr)
+      {
+        ++diagnostics->scannedRegions;
+        diagnostics->scannedBytes += read.bytesRead;
+      }
 
       bool scanTimedOut = false;
-      LiveUnitsProof vectorProof = proveClassicUnitVectorInBytes(
-        processId,
-        regions.regions,
-        read.bytes,
-        region.address,
-        deadline,
-        scanTimedOut);
-      if (vectorProof.passed)
-        return vectorProof;
-      if (scanTimedOut)
-        return { false, 0, 0, 0, 0, "unit array scan timed out before proof" };
-
       LiveUnitsProof arrayProof = proveClassicUnitArrayInBytes(
         read.bytes,
         region.address,
         regions.regions,
         deadline,
         scanTimedOut,
-        true);
+        true,
+        diagnostics);
       if (arrayProof.passed)
         return arrayProof;
       if (scanTimedOut)
-        return { false, 0, 0, 0, 0, "unit array scan timed out before proof" };
+      {
+        if (diagnostics != nullptr)
+          diagnostics->timedOut = true;
+        return failedUnitsProof(unitScanTimeoutReason(diagnostics));
+      }
+
+      if (scanVectors)
+      {
+        LiveUnitsProof vectorProof = proveClassicUnitVectorInBytes(
+          processId,
+          regions.regions,
+          read.bytes,
+          region.address,
+          deadline,
+          scanTimedOut,
+          diagnostics);
+        if (vectorProof.passed)
+          return vectorProof;
+        if (scanTimedOut)
+        {
+          if (diagnostics != nullptr)
+            diagnostics->timedOut = true;
+          return failedUnitsProof(unitScanTimeoutReason(diagnostics));
+        }
+      }
 
       scanned += read.bytesRead;
     }
 
-    return { false, 0, 0, 0, 0, "no BWAPI-compatible live CUnit array candidate found" };
+    if (diagnostics != nullptr && diagnostics->byteLimitReached)
+      return failedUnitsProof("no active in-game BWAPI-compatible CUnit array candidate found before scan byte limit");
+    return failedUnitsProof("no active in-game BWAPI-compatible CUnit array candidate found");
   }
 
   LiveCounterProof proveLiveCounterRead(
@@ -600,8 +869,12 @@ int main(int argc, char** argv)
   bool proveReadUnits = false;
   bool selfUnitFixture = false;
   bool proveBattleNetPolicyFlag = false;
+  bool unitScanDiagnosticsFlag = false;
+  bool unitScanReadableOnlyFlag = false;
+  bool unitScanVectorsFlag = false;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 128 * 1024 * 1024;
+  std::size_t unitMaxScanBytes = 0;
   int unitScanTimeoutMs = 15000;
 
   for (int i = 1; i < argc; ++i)
@@ -630,6 +903,21 @@ int main(int argc, char** argv)
     if (arg == "--self-unit-fixture")
     {
       selfUnitFixture = true;
+      continue;
+    }
+    if (arg == "--unit-scan-diagnostics")
+    {
+      unitScanDiagnosticsFlag = true;
+      continue;
+    }
+    if (arg == "--unit-scan-readable-only")
+    {
+      unitScanReadableOnlyFlag = true;
+      continue;
+    }
+    if (arg == "--unit-scan-vectors")
+    {
+      unitScanVectorsFlag = true;
       continue;
     }
     if (arg == "--prove-battle-net-policy")
@@ -664,6 +952,17 @@ int main(int argc, char** argv)
         std::cerr << "--unit-scan-timeout-ms requires a positive integer\n";
         return 64;
       }
+      continue;
+    }
+    if (arg == "--unit-max-scan-mb")
+    {
+      int megabytes = 0;
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], megabytes))
+      {
+        std::cerr << "--unit-max-scan-mb requires a positive integer\n";
+        return 64;
+      }
+      unitMaxScanBytes = static_cast<std::size_t>(megabytes) * 1024 * 1024;
       continue;
     }
     if (arg == "--product")
@@ -748,6 +1047,8 @@ int main(int argc, char** argv)
     std::cerr << "runtime executor bridge directory is required\n";
     return 64;
   }
+  if (unitMaxScanBytes == 0)
+    unitMaxScanBytes = stateMaxScanBytes;
 
   const RuntimeProcessOpenResult attach = openRuntimeProcess(environment);
   std::cout << "attach.opened=" << (attach.opened ? "true" : "false") << '\n';
@@ -765,8 +1066,10 @@ int main(int argc, char** argv)
 
   LiveCounterProof readGameStateProof;
   LiveUnitsProof readUnitsProof;
+  UnitScanDiagnostics unitScanDiagnostics;
   BattleNetPolicyProof battleNetPolicyProof;
   SelfUnitFixture unitFixture;
+  int proofFailureCode = 0;
   if (self && selfUnitFixture)
     unitFixture = makeSelfUnitFixture();
 
@@ -787,24 +1090,66 @@ int main(int argc, char** argv)
     if (!readGameStateProof.reason.empty())
       std::cout << "read_game_state.reason=" << readGameStateProof.reason << '\n';
     if (!readGameStateProof.passed)
-      return 4;
+      proofFailureCode = proofFailureCode == 0 ? 4 : proofFailureCode;
   }
 
   if (proveReadUnits)
   {
-    readUnitsProof = proveLiveUnitsRead(environment.processId, stateMaxScanBytes, unitScanTimeoutMs);
+    readUnitsProof = proveLiveUnitsRead(
+      environment.processId,
+      unitMaxScanBytes,
+      unitScanTimeoutMs,
+      unitScanReadableOnlyFlag,
+      unitScanVectorsFlag,
+      unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
     std::cout << "read_units.unit_array=" << (readUnitsProof.passed ? "true" : "false") << '\n';
     if (readUnitsProof.passed)
     {
       std::cout << "read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
       std::cout << "read_units.record_size=" << readUnitsProof.recordSize << '\n';
+      std::cout << "read_units.layout=" << readUnitsProof.layoutName << '\n';
       std::cout << "read_units.sampled_records=" << readUnitsProof.sampledRecords << '\n';
       std::cout << "read_units.active_records=" << readUnitsProof.activeRecords << '\n';
     }
     if (!readUnitsProof.reason.empty())
       std::cout << "read_units.reason=" << readUnitsProof.reason << '\n';
+    if (unitScanDiagnosticsFlag)
+    {
+      std::cout << "read_units.scan.readable_writable_regions="
+                << unitScanDiagnostics.readableWritableRegions << '\n';
+      std::cout << "read_units.scan.readable_only_regions="
+                << unitScanDiagnostics.readableOnlyRegions << '\n';
+      std::cout << "read_units.scan.scanned_readable_only_regions="
+                << unitScanDiagnostics.scannedReadableOnlyRegions << '\n';
+      std::cout << "read_units.scan.executable_readable_regions="
+                << unitScanDiagnostics.executableReadableRegions << '\n';
+      std::cout << "read_units.scan.scanned_regions=" << unitScanDiagnostics.scannedRegions << '\n';
+      std::cout << "read_units.scan.scanned_bytes=" << unitScanDiagnostics.scannedBytes << '\n';
+      std::cout << "read_units.scan.vector_candidates=" << unitScanDiagnostics.vectorCandidates << '\n';
+      std::cout << "read_units.scan.strided_candidates=" << unitScanDiagnostics.stridedCandidates << '\n';
+      std::cout << "read_units.scan.candidate_arrays_scored=" << unitScanDiagnostics.candidateArraysScored << '\n';
+      std::cout << "read_units.scan.window_candidate_arrays_scored="
+                << unitScanDiagnostics.windowCandidateArraysScored << '\n';
+      std::cout << "read_units.scan.field_plausible_records="
+                << unitScanDiagnostics.fieldPlausibleRecords << '\n';
+      std::cout << "read_units.scan.sprite_rejected_records="
+                << unitScanDiagnostics.spriteRejectedRecords << '\n';
+      std::cout << "read_units.scan.plausible_records=" << unitScanDiagnostics.plausibleRecords << '\n';
+      std::cout << "read_units.scan.timed_out="
+                << (unitScanDiagnostics.timedOut ? "true" : "false") << '\n';
+      std::cout << "read_units.scan.byte_limit_reached="
+                << (unitScanDiagnostics.byteLimitReached ? "true" : "false") << '\n';
+      std::cout << "read_units.scan.best_active_records=" << unitScanDiagnostics.bestActiveRecords << '\n';
+      if (unitScanDiagnostics.bestAddress != 0)
+      {
+        std::cout << "read_units.scan.best_address=0x"
+                  << std::hex << unitScanDiagnostics.bestAddress << std::dec << '\n';
+        std::cout << "read_units.scan.best_record_size=" << unitScanDiagnostics.bestRecordSize << '\n';
+        std::cout << "read_units.scan.best_layout=" << unitScanDiagnostics.bestLayoutName << '\n';
+      }
+    }
     if (!readUnitsProof.passed)
-      return 6;
+      proofFailureCode = proofFailureCode == 0 ? 6 : proofFailureCode;
   }
 
   if (proveBattleNetPolicyFlag)
@@ -826,8 +1171,11 @@ int main(int argc, char** argv)
     if (!battleNetPolicyProof.reason.empty())
       std::cout << "battle_net_policy.reason=" << battleNetPolicyProof.reason << '\n';
     if (!battleNetPolicyProof.passed)
-      return 5;
+      proofFailureCode = proofFailureCode == 0 ? 5 : proofFailureCode;
   }
+
+  if (proofFailureCode != 0)
+    return proofFailureCode;
 
   std::error_code error;
   std::filesystem::create_directories(environment.executorBridgePath, error);
@@ -896,14 +1244,15 @@ int main(int argc, char** argv)
   {
     ready << "proof.read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
     ready << "proof.read_units.record_size=" << readUnitsProof.recordSize << '\n';
+    ready << "proof.read_units.layout=" << readUnitsProof.layoutName << '\n';
     ready << "proof.read_units.active_records=" << readUnitsProof.activeRecords << '\n';
     ready << "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.read_units=passed\n";
     ready << "contract.structure.BW::CUnit=" << readUnitsProof.recordSize << "|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.id=100|2|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.position=40|4|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.hitPoints=8|4|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.order=77|1|proof.read_units=passed\n";
-    ready << "contract.field.BW::CUnit.player=76|1|proof.read_units=passed\n";
+    ready << "contract.field.BW::CUnit.id=" << readUnitsProof.idOffset << "|2|proof.read_units=passed\n";
+    ready << "contract.field.BW::CUnit.position=" << readUnitsProof.positionOffset << "|4|proof.read_units=passed\n";
+    ready << "contract.field.BW::CUnit.hitPoints=" << readUnitsProof.hitPointsOffset << "|4|proof.read_units=passed\n";
+    ready << "contract.field.BW::CUnit.order=" << readUnitsProof.orderOffset << "|1|proof.read_units=passed\n";
+    ready << "contract.field.BW::CUnit.player=" << readUnitsProof.playerOffset << "|1|proof.read_units=passed\n";
     ready << readUnitsBehaviorProof->readyFileLine << '\n';
   }
   if (proveBattleNetPolicyFlag)

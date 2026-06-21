@@ -173,7 +173,8 @@ int main(int argc, char** argv)
   assert(partialProofPreflight.processIdentified);
   assert(partialProofPreflight.memoryAccessible);
   assert(partialProofPreflight.targetLocated);
-  assert(!partialProofPreflight.executorAvailable);
+  assert(partialProofPreflight.executorAvailable);
+  assert(partialProofPreflight.executorName == "filesystem-bridge-validated-runtime-adapter");
   assert(partialProofPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
   assert(partialProofPreflight.missingBehaviorProofs.size() == 1);
   assert(partialProofPreflight.missingBehaviorProofs.front() == "proof.multiplayer_sync=passed");

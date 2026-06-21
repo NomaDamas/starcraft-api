@@ -19,6 +19,7 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -40,6 +41,58 @@ namespace BWAPI::Runtime
           return value;
       }
       return {};
+    }
+
+    std::vector<std::string> splitExtraLaunchArguments(const std::string& value)
+    {
+      std::vector<std::string> arguments;
+      std::string current;
+      char quote = '\0';
+      bool escaped = false;
+
+      for (char ch : value)
+      {
+        if (escaped)
+        {
+          current.push_back(ch);
+          escaped = false;
+          continue;
+        }
+        if (ch == '\\')
+        {
+          escaped = true;
+          continue;
+        }
+        if (quote != '\0')
+        {
+          if (ch == quote)
+            quote = '\0';
+          else
+            current.push_back(ch);
+          continue;
+        }
+        if (ch == '\'' || ch == '"')
+        {
+          quote = ch;
+          continue;
+        }
+        if (std::isspace(static_cast<unsigned char>(ch)) != 0)
+        {
+          if (!current.empty())
+          {
+            arguments.push_back(current);
+            current.clear();
+          }
+          continue;
+        }
+        current.push_back(ch);
+      }
+
+      if (escaped)
+        current.push_back('\\');
+      if (!current.empty())
+        arguments.push_back(current);
+      return arguments;
     }
 
     std::string pathString(const std::filesystem::path& path)
@@ -1701,6 +1754,8 @@ namespace BWAPI::Runtime
         executableArguments.push_back("-windowy");
         executableArguments.push_back(getenvOrDefault("STARCRAFT_API_WINDOW_Y", "100"));
       }
+      for (const std::string& argument : splitExtraLaunchArguments(getenvString("STARCRAFT_API_EXTRA_ARGS")))
+        executableArguments.push_back(argument);
       return executableArguments;
     }
 
@@ -1910,21 +1965,43 @@ namespace BWAPI::Runtime
 #endif
     }
 
-    bool terminateRuntimeProcessIds(const std::vector<int>& processIds, RuntimeLaunchResult& result)
+    bool terminateRuntimeProcessIds(
+      const std::vector<int>& processIds,
+      RuntimeLaunchResult& result,
+      const std::string& warningPrefix,
+      const std::string& failureContext)
     {
       for (int processId : processIds)
       {
         std::string reason;
         if (!terminateRuntimeProcessId(processId, reason))
         {
-          result.reason = "unable to terminate stale Battle.net handoff process: " + reason;
+          result.reason = "unable to terminate " + failureContext + ": " + reason;
           return false;
         }
-        result.warnings.push_back("battle.net.stale_handoff_terminated=" + std::to_string(processId));
+        result.warnings.push_back(warningPrefix + "=" + std::to_string(processId));
       }
 
       std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       return true;
+    }
+
+    bool terminateStaleHandoffProcessIds(const std::vector<int>& processIds, RuntimeLaunchResult& result)
+    {
+      return terminateRuntimeProcessIds(
+        processIds,
+        result,
+        "battle.net.stale_handoff_terminated",
+        "stale Battle.net handoff process");
+    }
+
+    bool terminateExistingGameProcessIds(const std::vector<int>& processIds, RuntimeLaunchResult& result)
+    {
+      return terminateRuntimeProcessIds(
+        processIds,
+        result,
+        "runtime.existing_process_terminated",
+        "existing StarCraft process");
     }
 
     void appendLaunchWarnings(RuntimeLaunchResult& result, const RuntimeLaunchResult& launched)
@@ -2029,7 +2106,7 @@ namespace BWAPI::Runtime
           return result;
         }
 
-        if (!terminateRuntimeProcessIds(handoffProcessIds, result))
+        if (!terminateStaleHandoffProcessIds(handoffProcessIds, result))
           return result;
       }
 
@@ -2134,7 +2211,8 @@ namespace BWAPI::Runtime
     bool launchIfMissing,
     int waitMilliseconds,
     int stableMilliseconds,
-    bool replaceStaleHandoff)
+    bool replaceStaleHandoff,
+    bool replaceRunning)
   {
     RuntimeLaunchResult result;
     result.requiredStableMilliseconds = stableMilliseconds;
@@ -2142,6 +2220,23 @@ namespace BWAPI::Runtime
     {
       result.reason = installation.reason;
       return result;
+    }
+
+    if (replaceRunning)
+    {
+      if (!launchIfMissing)
+      {
+        result.reason = "replace-running requires launch";
+        return result;
+      }
+
+      const std::vector<int> existingProcessIds = findRuntimeProcessIds(installation);
+      if (!existingProcessIds.empty())
+      {
+        result.warnings.push_back("runtime.existing_process_count=" + std::to_string(existingProcessIds.size()));
+        if (!terminateExistingGameProcessIds(existingProcessIds, result))
+          return result;
+      }
     }
 
     int stableProcessId = findStableProcessId(installation, stableMilliseconds);
@@ -2170,7 +2265,7 @@ namespace BWAPI::Runtime
 
       if (replaceStaleHandoff)
       {
-        if (!terminateRuntimeProcessIds(handoffProcessIds, result))
+        if (!terminateStaleHandoffProcessIds(handoffProcessIds, result))
           return result;
 
         RuntimeLaunchResult launched =

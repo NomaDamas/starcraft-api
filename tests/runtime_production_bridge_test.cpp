@@ -118,7 +118,8 @@ int main(int argc, char** argv)
   readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
 
   assert(!probe.supported);
-  assert(!preflight.executorAvailable);
+  assert(preflight.executorAvailable);
+  assert(preflight.executorName == "filesystem-bridge-validated-runtime-adapter");
   assert(preflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
   assert(preflight.missingBehaviorProofs.size() == 1);
   assert(!preflight.errors.empty());

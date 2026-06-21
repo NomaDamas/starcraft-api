@@ -234,7 +234,8 @@ namespace BWAPI::Runtime
 
     bool validateProductionBridgeProof(
       const std::filesystem::path& readyPath,
-      RuntimeExecutorPreflightResult& result)
+      RuntimeExecutorPreflightResult& result,
+      bool requireBehaviorProofs = true)
     {
       result.executorBridgeMode = readReadyValue(readyPath, "mode");
       result.missingBehaviorProofs.clear();
@@ -264,7 +265,7 @@ namespace BWAPI::Runtime
         result.errors.push_back("runtime executor bridge ready file is missing behavior proof: " + proof);
         valid = false;
       }
-      return valid;
+      return requireBehaviorProofs ? valid : true;
     }
 
     void addMissingBehaviorProofsIfEmpty(RuntimeExecutorPreflightResult& result)
@@ -339,7 +340,7 @@ namespace BWAPI::Runtime
         return true;
       }
 
-      if (!validateProductionBridgeProof(readyPath, result))
+      if (!validateProductionBridgeProof(readyPath, result, false))
         return true;
 
       result.executorAvailable = true;

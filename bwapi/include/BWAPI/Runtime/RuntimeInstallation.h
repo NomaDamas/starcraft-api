@@ -151,7 +151,8 @@ namespace BWAPI::Runtime
     bool launchIfMissing,
     int waitMilliseconds,
     int stableMilliseconds = 5000,
-    bool replaceStaleHandoff = false);
+    bool replaceStaleHandoff = false,
+    bool replaceRunning = false);
   RuntimeEvidence collectRuntimeEvidence(
     const RuntimeInstallation& installation,
     const RuntimeLaunchResult& launchResult);

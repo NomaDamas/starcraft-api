@@ -26,12 +26,14 @@ namespace
     std::cout
       << "usage: starcraft-runtime-launch [options]\n"
       << "  --launch                 launch StarCraft if no matching process is running\n"
+      << "  --replace-running        terminate visible StarCraft game process(es) before --launch\n"
       << "  --replace-stale-handoff  terminate existing Battle.net s1 handoff before one launch retry\n"
       << "  --require-running        return non-zero unless a matching process is visible\n"
       << "  --wait-ms <milliseconds> wait after launch while scanning for the process (default: 10000)\n"
       << "  --stable-ms <milliseconds> require the same StarCraft process to survive this long (default: 5000)\n"
       << "  env STARCRAFT_API_WINDOWED=0 disables the default partial-screen executable launch\n"
       << "  env STARCRAFT_API_WINDOW_WIDTH/HEIGHT/X/Y changes the default 1024x768+100+100 window\n"
+      << "  env STARCRAFT_API_EXTRA_ARGS appends quoted extra args after the Remastered launch args\n"
       << "  --manifest-out <path>    write a local bootstrap manifest\n"
       << "  --evidence-out <path>    write a launch/attach diagnostic evidence report\n"
       << "  --bridge <path>          write a filesystem bridge ready file\n"
@@ -49,6 +51,7 @@ namespace
 int main(int argc, char** argv)
 {
   bool launch = false;
+  bool replaceRunning = false;
   bool replaceStaleHandoff = false;
   bool requireRunning = false;
   bool printEnv = false;
@@ -63,6 +66,8 @@ int main(int argc, char** argv)
     const std::string arg = argv[i];
     if (arg == "--launch")
       launch = true;
+    else if (arg == "--replace-running")
+      replaceRunning = true;
     else if (arg == "--replace-stale-handoff")
       replaceStaleHandoff = true;
     else if (arg == "--require-running")
@@ -170,7 +175,13 @@ int main(int argc, char** argv)
   }
 
   RuntimeLaunchResult launchResult =
-    launchOrAttachRuntime(installation, launch, waitMilliseconds, stableMilliseconds, replaceStaleHandoff);
+    launchOrAttachRuntime(
+      installation,
+      launch,
+      waitMilliseconds,
+      stableMilliseconds,
+      replaceStaleHandoff,
+      replaceRunning);
   std::cout << "runtime.launched=" << (launchResult.launched ? "true" : "false") << '\n';
   std::cout << "runtime.running=" << (launchResult.running ? "true" : "false") << '\n';
   std::cout << "runtime.required_stable_ms=" << launchResult.requiredStableMilliseconds << '\n';

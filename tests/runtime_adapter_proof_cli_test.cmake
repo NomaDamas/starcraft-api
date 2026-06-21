@@ -71,6 +71,9 @@ execute_process(
     --version test-build
     --bridge "${units_bridge_dir}"
     --prove-read-units
+    --state-max-scan-mb 1
+    --unit-max-scan-mb 128
+    --unit-scan-diagnostics
     --self-unit-fixture
   RESULT_VARIABLE units_result
   OUTPUT_VARIABLE units_output
@@ -82,7 +85,15 @@ endif()
 foreach(needle
     "read_units.unit_array=true"
     "read_units.record_size=336"
+    "read_units.layout=bwapi-classic-cunit"
     "read_units.active_records="
+    "read_units.scan.readable_writable_regions="
+    "read_units.scan.readable_only_regions="
+    "read_units.scan.scanned_readable_only_regions="
+    "read_units.scan.executable_readable_regions="
+    "read_units.scan.window_candidate_arrays_scored="
+    "read_units.scan.field_plausible_records="
+    "read_units.scan.sprite_rejected_records="
     "proof.read_units=passed")
   string(FIND "${units_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
@@ -100,6 +111,7 @@ foreach(needle
     "contract.binding.shared-memory-client-transport=transport|proof.attach=passed"
     "proof.read_units.address=0x"
     "proof.read_units.record_size=336"
+    "proof.read_units.layout=bwapi-classic-cunit"
     "proof.read_units.active_records="
     "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.read_units=passed"
     "contract.structure.BW::CUnit=336|proof.read_units=passed"

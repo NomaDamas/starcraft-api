@@ -3,8 +3,10 @@
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
+#include <future>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -23,6 +25,7 @@ namespace
       << "  --process-id <pid>      target StarCraft process id\n"
       << "  --keys <sequence>       comma/space separated key tokens, e.g. \"s enter c\"\n"
       << "  --delay-ms <ms>         delay between keys (default: 150)\n"
+      << "  --post-timeout-ms <ms>  maximum time to wait for each key post (default: 3000)\n"
       << "  --allow-untrusted       send even when macOS Accessibility trust is unavailable\n"
       << "  --dry-run               parse and print tokens without sending input\n"
       << "  --help                  show this help\n";
@@ -187,6 +190,39 @@ namespace
     CFRelease(source);
     return true;
   }
+
+  bool postKeyToPidWithTimeout(
+    int processId,
+    CGKeyCode code,
+    int timeoutMs,
+    std::string& reason)
+  {
+    auto completion = std::make_shared<std::promise<std::pair<bool, std::string>>>();
+    std::future<std::pair<bool, std::string>> future = completion->get_future();
+    std::thread(
+      [completion, processId, code]()
+      {
+        std::string postReason;
+        const bool posted = postKeyToPid(processId, code, postReason);
+        try
+        {
+          completion->set_value({ posted, postReason });
+        }
+        catch (const std::future_error&)
+        {
+        }
+      }).detach();
+
+    if (future.wait_for(std::chrono::milliseconds(timeoutMs)) != std::future_status::ready)
+    {
+      reason = "timed out while posting keyboard input to target process";
+      return false;
+    }
+
+    const std::pair<bool, std::string> result = future.get();
+    reason = result.second;
+    return result.first;
+  }
 #endif
 }
 
@@ -194,6 +230,7 @@ int main(int argc, char** argv)
 {
   int processId = 0;
   int delayMs = 150;
+  int postTimeoutMs = 3000;
   bool dryRun = false;
   bool allowUntrusted = false;
   std::string sequence;
@@ -244,6 +281,15 @@ int main(int argc, char** argv)
       }
       continue;
     }
+    if (arg == "--post-timeout-ms")
+    {
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], postTimeoutMs))
+      {
+        std::cerr << "--post-timeout-ms requires a positive integer\n";
+        return 64;
+      }
+      continue;
+    }
 
     std::cerr << "unknown argument: " << arg << '\n';
     return 64;
@@ -269,6 +315,7 @@ int main(int argc, char** argv)
 
   std::cout << "input.process_id=" << processId << '\n';
   std::cout << "input.token_count=" << tokens.size() << '\n';
+  std::cout << "input.post_timeout_ms=" << postTimeoutMs << '\n';
   for (std::size_t i = 0; i < tokens.size(); ++i)
     std::cout << "input.token." << i << '=' << tokens[i] << '\n';
   const bool processVisible = BWAPI::Runtime::runtimeProcessExists(processId);
@@ -315,7 +362,7 @@ int main(int argc, char** argv)
   for (CGKeyCode code : keyCodes)
   {
     std::string reason;
-    if (!postKeyToPid(processId, code, reason))
+    if (!postKeyToPidWithTimeout(processId, code, postTimeoutMs, reason))
     {
       std::cout << "input.sent=" << sent << '\n';
       std::cout << "input.success=false\n";

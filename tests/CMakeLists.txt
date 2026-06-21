@@ -213,7 +213,7 @@ if(TARGET starcraft-runtime-input)
   add_test(NAME runtime_input_help COMMAND starcraft-runtime-input --help)
   add_test(
     NAME runtime_input_dry_run
-    COMMAND starcraft-runtime-input --process-id 1 --keys "s enter c" --dry-run
+    COMMAND starcraft-runtime-input --process-id 1 --keys "s enter c" --post-timeout-ms 1 --dry-run
   )
 endif()
 

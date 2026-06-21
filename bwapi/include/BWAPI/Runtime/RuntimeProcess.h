@@ -14,7 +14,17 @@ namespace BWAPI::Runtime
     std::string reason;
   };
 
+  struct RuntimeProcessStateResult
+  {
+    bool inspected = false;
+    bool suspended = false;
+    unsigned status = 0;
+    int threadCount = -1;
+    std::string reason;
+  };
+
   bool runtimeProcessExists(int processId);
   std::string runtimeProcessExecutablePath(int processId);
+  RuntimeProcessStateResult inspectRuntimeProcessState(int processId);
   RuntimeProcessOpenResult openRuntimeProcess(const RuntimeEnvironment& environment);
 }

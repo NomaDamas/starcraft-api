@@ -13,6 +13,8 @@
 #elif defined(__APPLE__)
 #include <libproc.h>
 #include <signal.h>
+#include <sys/proc.h>
+#include <sys/proc_info.h>
 #elif defined(__linux__)
 #include <signal.h>
 #include <unistd.h>
@@ -115,6 +117,42 @@ namespace BWAPI::Runtime
     return std::string(buffer.data(), static_cast<std::size_t>(count));
 #else
     return {};
+#endif
+  }
+
+  RuntimeProcessStateResult inspectRuntimeProcessState(int processId)
+  {
+    RuntimeProcessStateResult result;
+    if (processId <= 0)
+    {
+      result.reason = "process id must be positive";
+      return result;
+    }
+
+#if defined(__APPLE__)
+    proc_taskallinfo info;
+    std::memset(&info, 0, sizeof(info));
+    const int bytes = proc_pidinfo(
+      processId,
+      PROC_PIDTASKALLINFO,
+      0,
+      &info,
+      static_cast<int>(sizeof(info)));
+    if (bytes <= 0)
+    {
+      result.reason = "proc_pidinfo(PROC_PIDTASKALLINFO) failed";
+      return result;
+    }
+
+    result.inspected = true;
+    result.status = info.pbsd.pbi_status;
+    result.threadCount = info.ptinfo.pti_threadnum;
+    result.suspended = result.status == SSTOP;
+    return result;
+#else
+    (void)processId;
+    result.reason = "runtime process state inspection is unsupported on this platform";
+    return result;
 #endif
   }
 

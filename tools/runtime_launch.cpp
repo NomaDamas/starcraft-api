@@ -31,6 +31,7 @@ namespace
       << "  --require-running        return non-zero unless a matching process is visible\n"
       << "  --wait-ms <milliseconds> wait after launch while scanning for the process (default: 10000)\n"
       << "  --stable-ms <milliseconds> require the same StarCraft process to survive this long (default: 5000)\n"
+      << "  --play-replay <path>     launch Remastered with an existing .rep via playReplay <path>\n"
       << "  env STARCRAFT_API_WINDOWED=0 disables the default partial-screen executable launch\n"
       << "  env STARCRAFT_API_WINDOW_WIDTH/HEIGHT/X/Y changes the default 1024x768+100+100 window\n"
       << "  env STARCRAFT_API_EXTRA_ARGS appends quoted extra args after the Remastered launch args\n"
@@ -60,6 +61,7 @@ int main(int argc, char** argv)
   std::string manifestOut;
   std::string evidenceOut;
   std::string bridgePath;
+  std::string replayPath;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -95,6 +97,20 @@ int main(int argc, char** argv)
       stableMilliseconds = parseNonNegativeInt(argv[++i], "--stable-ms");
       if (stableMilliseconds < 0)
         return 64;
+    }
+    else if (arg == "--play-replay")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--play-replay requires a path\n";
+        return 64;
+      }
+      replayPath = argv[++i];
+      if (replayPath.empty())
+      {
+        std::cerr << "--play-replay requires a non-empty path\n";
+        return 64;
+      }
     }
     else if (arg == "--manifest-out")
     {
@@ -181,7 +197,8 @@ int main(int argc, char** argv)
       waitMilliseconds,
       stableMilliseconds,
       replaceStaleHandoff,
-      replaceRunning);
+      replaceRunning,
+      replayPath);
   std::cout << "runtime.launched=" << (launchResult.launched ? "true" : "false") << '\n';
   std::cout << "runtime.running=" << (launchResult.running ? "true" : "false") << '\n';
   std::cout << "runtime.required_stable_ms=" << launchResult.requiredStableMilliseconds << '\n';
@@ -194,6 +211,8 @@ int main(int argc, char** argv)
     std::cout << "runtime.reason=" << launchResult.reason << '\n';
   for (const std::string& warning : launchResult.warnings)
     std::cout << "runtime.warning=" << warning << '\n';
+  if (!launchResult.requestAccepted)
+    std::cout << "runtime.request_accepted=false\n";
 
   if (!evidenceOut.empty())
   {
@@ -243,6 +262,9 @@ int main(int argc, char** argv)
     printExport("STARCRAFT_API_MANIFEST", runtimeEnvironment.manifestPath);
     printExport("STARCRAFT_API_EXECUTOR_BRIDGE_DIR", runtimeEnvironment.executorBridgePath);
   }
+
+  if (!launchResult.requestAccepted)
+    return 64;
 
   if (requireRunning && !launchResult.running)
     return 3;

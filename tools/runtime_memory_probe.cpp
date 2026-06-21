@@ -39,6 +39,8 @@ namespace
       << "  --self                   probe this CLI process instead of resolving StarCraft\n"
       << "  --address <address>      read from an explicit target address, decimal or 0x-prefixed\n"
       << "  --read-first-readable    find and read the first readable target memory region\n"
+      << "  --process-state          print OS process status/thread diagnostics\n"
+      << "  --region-summary         print process memory region counters\n"
       << "  --find-ascii <text>      scan readable target memory for an ASCII string\n"
       << "  --find-u64 <value>       scan readable target memory for a 64-bit little-endian value\n"
       << "  --find-max-scan-mb <mb>  maximum readable memory scanned by --find-ascii (default: 128)\n"
@@ -107,6 +109,8 @@ int main(int argc, char** argv)
   bool requireRead = false;
   bool readRequested = false;
   bool readFirstReadable = false;
+  bool processStateRequested = false;
+  bool regionSummaryRequested = false;
   bool findRequested = false;
   bool findU64Requested = false;
   bool findWritableOnly = false;
@@ -201,6 +205,14 @@ int main(int argc, char** argv)
     {
       readFirstReadable = true;
       readRequested = true;
+    }
+    else if (arg == "--process-state")
+    {
+      processStateRequested = true;
+    }
+    else if (arg == "--region-summary")
+    {
+      regionSummaryRequested = true;
     }
     else if (arg == "--find-ascii")
     {
@@ -330,6 +342,53 @@ int main(int argc, char** argv)
   std::cout << "memory.accessible=" << (access.accessible ? "true" : "false") << '\n';
   if (!access.reason.empty())
     std::cout << "memory.access.reason=" << access.reason << '\n';
+
+  if (processStateRequested)
+  {
+    const RuntimeProcessStateResult state = inspectRuntimeProcessState(environment.processId);
+    std::cout << "process.state.inspected=" << (state.inspected ? "true" : "false") << '\n';
+    std::cout << "process.state.suspended=" << (state.suspended ? "true" : "false") << '\n';
+    std::cout << "process.state.status=" << state.status << '\n';
+    std::cout << "process.state.thread_count=" << state.threadCount << '\n';
+    if (!state.reason.empty())
+      std::cout << "process.state.reason=" << state.reason << '\n';
+  }
+
+  if (regionSummaryRequested)
+  {
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(environment.processId);
+    std::cout << "memory.region_summary.requested=true\n";
+    std::cout << "memory.region_summary.success=" << (regions.success ? "true" : "false") << '\n';
+    if (!regions.reason.empty())
+      std::cout << "memory.region_summary.reason=" << regions.reason << '\n';
+    std::size_t readableRegions = 0;
+    std::size_t writableRegions = 0;
+    std::size_t executableRegions = 0;
+    std::size_t readableNonExecutableRegions = 0;
+    std::size_t readableNonExecutableBytes = 0;
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (region.readable)
+        ++readableRegions;
+      if (region.writable)
+        ++writableRegions;
+      if (region.executable)
+        ++executableRegions;
+      if (region.readable && !region.executable)
+      {
+        ++readableNonExecutableRegions;
+        readableNonExecutableBytes += region.size;
+      }
+    }
+    std::cout << "memory.region_summary.total_regions=" << regions.regions.size() << '\n';
+    std::cout << "memory.region_summary.readable_regions=" << readableRegions << '\n';
+    std::cout << "memory.region_summary.writable_regions=" << writableRegions << '\n';
+    std::cout << "memory.region_summary.executable_regions=" << executableRegions << '\n';
+    std::cout << "memory.region_summary.readable_non_executable_regions="
+              << readableNonExecutableRegions << '\n';
+    std::cout << "memory.region_summary.readable_non_executable_bytes="
+              << readableNonExecutableBytes << '\n';
+  }
 
   if (findRequested)
   {

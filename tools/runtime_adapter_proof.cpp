@@ -41,6 +41,8 @@ namespace
       << "                           prove Battle.net launch/attach policy preflight has no blockers\n"
       << "  --state-sample-delay-ms <ms>\n"
       << "                           delay between live state samples (default: 250)\n"
+      << "  --state-scan-timeout-ms <ms>\n"
+      << "                           maximum time for --prove-read-game-state scan (default: 30000)\n"
       << "  --state-max-scan-mb <mb> maximum readable writable memory to sample (default: 128)\n"
       << "  --unit-max-scan-mb <mb>  maximum readable writable memory to scan for units\n"
       << "                           (default: --state-max-scan-mb)\n"
@@ -395,6 +397,8 @@ namespace
     std::size_t recordSize,
     const UnitRecordLayout& layout,
     const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut,
     bool requireReadableSprite)
   {
     constexpr std::size_t maxSampledRecords = 1700;
@@ -413,6 +417,11 @@ namespace
     proof.sampledRecords = std::min(maxSampledRecords, availableRecords);
     for (std::size_t i = 0; i < proof.sampledRecords; ++i)
     {
+      if ((i % 16) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
       if (plausibleUnitRecord(
             bytes,
             offset + i * recordSize,
@@ -481,7 +490,7 @@ namespace
         LiveUnitsProof bestForRecordSize;
         for (std::size_t recordOffset = 0; recordOffset + recordSize <= bytes.size(); recordOffset += 8)
         {
-          if ((recordOffset % (64 * 1024)) == 0 && timedOut(deadline))
+          if ((recordOffset % (4 * 1024)) == 0 && timedOut(deadline))
           {
             scanTimedOut = true;
             return {};
@@ -505,7 +514,11 @@ namespace
               recordSize,
               layout,
               regions,
+              deadline,
+              scanTimedOut,
               requireReadableSprite);
+            if (scanTimedOut)
+              return {};
             if (diagnostics != nullptr)
             {
               ++diagnostics->candidateArraysScored;
@@ -534,7 +547,11 @@ namespace
             recordSize,
             layout,
             regions,
+            deadline,
+            scanTimedOut,
             requireReadableSprite);
+          if (scanTimedOut)
+            return {};
           if (diagnostics != nullptr)
           {
             ++diagnostics->candidateArraysScored;
@@ -569,7 +586,7 @@ namespace
 
     for (std::size_t offset = 0; offset + sizeof(std::uint64_t) * 3 <= bytes.size(); offset += 8)
     {
-      if ((offset % (64 * 1024)) == 0 && timedOut(deadline))
+      if ((offset % (4 * 1024)) == 0 && timedOut(deadline))
       {
         scanTimedOut = true;
         return {};
@@ -592,6 +609,11 @@ namespace
       {
         for (std::size_t recordSize : candidateUnitRecordSizes)
         {
+          if (timedOut(deadline))
+          {
+            scanTimedOut = true;
+            return {};
+          }
           if (usedBytes < recordSize * 4 || usedBytes % recordSize != 0)
             continue;
 
@@ -599,7 +621,18 @@ namespace
           if (!read.success || read.bytesRead < recordSize * 4)
             continue;
 
-          LiveUnitsProof proof = scoreClassicCUnitArray(read.bytes, begin, 0, recordSize, layout, regions, true);
+          LiveUnitsProof proof = scoreClassicCUnitArray(
+            read.bytes,
+            begin,
+            0,
+            recordSize,
+            layout,
+            regions,
+            deadline,
+            scanTimedOut,
+            true);
+          if (scanTimedOut)
+            return {};
           if (diagnostics != nullptr)
             ++diagnostics->candidateArraysScored;
           if (proof.passed)
@@ -725,7 +758,8 @@ namespace
   LiveCounterProof proveLiveCounterRead(
     int processId,
     int sampleDelayMs,
-    std::size_t maxScanBytes)
+    std::size_t maxScanBytes,
+    int scanTimeoutMs)
   {
     struct Candidate
     {
@@ -743,12 +777,15 @@ namespace
     if (!regions.success)
       return { false, 0, 0, 0, 0, regions.reason };
 
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
     std::vector<Snapshot> snapshots;
     const std::size_t maxRegionBytes = 4 * 1024 * 1024;
     std::size_t scanned = 0;
 
     for (const RuntimeMemoryRegion& region : regions.regions)
     {
+      if (timedOut(deadline))
+        return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
       if (!region.readable || !region.writable || region.size < sizeof(std::uint32_t))
         continue;
       if (scanned >= maxScanBytes)
@@ -774,12 +811,16 @@ namespace
     std::vector<Candidate> candidates;
     for (const Snapshot& snapshot : snapshots)
     {
+      if (timedOut(deadline))
+        return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
       RuntimeMemoryReadResult second = readProcessMemory(processId, snapshot.address, snapshot.bytes.size());
       if (!second.success || second.bytesRead != snapshot.bytes.size())
         continue;
 
       for (std::size_t offset = 0; offset + sizeof(std::uint32_t) <= snapshot.bytes.size(); offset += sizeof(std::uint32_t))
       {
+        if ((offset % (4 * 1024)) == 0 && timedOut(deadline))
+          return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
         const std::uint32_t firstValue = readU32(snapshot.bytes, offset);
         const std::uint32_t secondValue = readU32(second.bytes, offset);
         if (plausibleCounterDelta(firstValue, secondValue))
@@ -804,6 +845,8 @@ namespace
 
     for (const Candidate& candidate : candidates)
     {
+      if (timedOut(deadline))
+        return { false, 0, 0, 0, 0, "state counter scan timed out before proof" };
       RuntimeMemoryReadResult third = readProcessMemory(processId, candidate.address, sizeof(std::uint32_t));
       if (!third.success || third.bytesRead != sizeof(std::uint32_t))
         continue;
@@ -929,6 +972,7 @@ int main(int argc, char** argv)
   std::string unitBestDumpOut;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 128 * 1024 * 1024;
+  int stateScanTimeoutMs = 30000;
   std::size_t unitMaxScanBytes = 0;
   int unitScanTimeoutMs = 15000;
 
@@ -1013,6 +1057,15 @@ int main(int argc, char** argv)
         return 64;
       }
       stateMaxScanBytes = static_cast<std::size_t>(megabytes) * 1024 * 1024;
+      continue;
+    }
+    if (arg == "--state-scan-timeout-ms")
+    {
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], stateScanTimeoutMs))
+      {
+        std::cerr << "--state-scan-timeout-ms requires a positive integer\n";
+        return 64;
+      }
       continue;
     }
     if (arg == "--unit-scan-timeout-ms")
@@ -1148,7 +1201,8 @@ int main(int argc, char** argv)
     readGameStateProof = proveLiveCounterRead(
       environment.processId,
       stateSampleDelayMs,
-      stateMaxScanBytes);
+      stateMaxScanBytes,
+      stateScanTimeoutMs);
     std::cout << "read_game_state.live_counter=" << (readGameStateProof.passed ? "true" : "false") << '\n';
     if (readGameStateProof.passed)
     {
@@ -1170,7 +1224,7 @@ int main(int argc, char** argv)
     proofFailureCode = proofFailureCode == 0 ? 7 : proofFailureCode;
   }
 
-  if ((proveReadUnits || proveActiveMatchState) && proofFailureCode == 0)
+  if (proveReadUnits || (proveActiveMatchState && !self))
   {
     readUnitsProof = proveLiveUnitsRead(
       environment.processId,
@@ -1325,9 +1379,6 @@ int main(int argc, char** argv)
       proofFailureCode = proofFailureCode == 0 ? 5 : proofFailureCode;
   }
 
-  if (proofFailureCode != 0)
-    return proofFailureCode;
-
   std::error_code error;
   std::filesystem::create_directories(environment.executorBridgePath, error);
   if (error)
@@ -1389,7 +1440,7 @@ int main(int argc, char** argv)
   ready << "executable=" << environment.executablePath << '\n';
   ready << "contract.binding.shared-memory-client-transport=transport|proof.attach=passed\n";
   ready << attachProof->readyFileLine << '\n';
-  if (proveReadGameState)
+  if (proveReadGameState && readGameStateProof.passed)
   {
     ready << "proof.read_game_state.address=0x" << std::hex << readGameStateProof.address << std::dec << '\n';
     ready << "proof.read_game_state.samples="
@@ -1398,7 +1449,7 @@ int main(int argc, char** argv)
           << readGameStateProof.third << '\n';
     ready << readGameStateBehaviorProof->readyFileLine << '\n';
   }
-  if (proveActiveMatchState)
+  if (proveActiveMatchState && readUnitsProof.passed)
   {
     ready << "proof.active_match_state.evidence=active-unit-records\n";
     ready << "proof.active_match_state.active_records=" << readUnitsProof.activeRecords << '\n';
@@ -1406,7 +1457,7 @@ int main(int argc, char** argv)
           << std::hex << readUnitsProof.address << std::dec << '\n';
     ready << activeMatchStateBehaviorProof->readyFileLine << '\n';
   }
-  if (proveReadUnits)
+  if (proveReadUnits && readUnitsProof.passed)
   {
     ready << "proof.read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
     ready << "proof.read_units.record_size=" << readUnitsProof.recordSize << '\n';
@@ -1421,7 +1472,7 @@ int main(int argc, char** argv)
     ready << "contract.field.BW::CUnit.player=" << readUnitsProof.playerOffset << "|1|proof.read_units=passed\n";
     ready << readUnitsBehaviorProof->readyFileLine << '\n';
   }
-  if (proveBattleNetPolicyFlag)
+  if (proveBattleNetPolicyFlag && battleNetPolicyProof.passed)
   {
     ready << "proof.battle_net_policy.status=" << battleNetPolicyProof.diagnosis.status << '\n';
     ready << "proof.battle_net_policy.game_process_count="
@@ -1433,13 +1484,13 @@ int main(int argc, char** argv)
 
   std::cout << "bridge.ready=" << readyPath.string() << '\n';
   std::cout << attachProof->readyFileLine << '\n';
-  if (proveReadGameState)
+  if (proveReadGameState && readGameStateProof.passed)
     std::cout << readGameStateBehaviorProof->readyFileLine << '\n';
-  if (proveActiveMatchState)
+  if (proveActiveMatchState && readUnitsProof.passed)
     std::cout << activeMatchStateBehaviorProof->readyFileLine << '\n';
-  if (proveReadUnits)
+  if (proveReadUnits && readUnitsProof.passed)
     std::cout << readUnitsBehaviorProof->readyFileLine << '\n';
-  if (proveBattleNetPolicyFlag)
+  if (proveBattleNetPolicyFlag && battleNetPolicyProof.passed)
     std::cout << battleNetPolicyBehaviorProof->readyFileLine << '\n';
-  return 0;
+  return proofFailureCode == 0 ? 0 : proofFailureCode;
 }

@@ -183,12 +183,17 @@ if(STARCRAFT_API_BUILD_TOOLS)
       COMMAND
         /usr/bin/codesign --force --sign - --entitlements
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-launch>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
         $<TARGET_FILE:starcraft-runtime-input>
       DEPENDS
         starcraft-runtime-memory-probe
         starcraft-runtime-adapter-proof
         starcraft-runtime-probe
         starcraft-runtime-gap-report
+        starcraft-runtime-launch
         starcraft-runtime-input
       COMMENT "Ad-hoc signing runtime debug tools with macOS debugger entitlements"
       VERBATIM

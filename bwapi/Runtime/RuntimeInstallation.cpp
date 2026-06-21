@@ -2,6 +2,7 @@
 
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
+#include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -108,6 +109,63 @@ namespace BWAPI::Runtime
     {
       std::error_code error;
       return std::filesystem::is_regular_file(path, error) && !error;
+    }
+
+    std::string lowerCase(std::string value)
+    {
+      std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](unsigned char ch)
+        {
+          return static_cast<char>(std::tolower(ch));
+        });
+      return value;
+    }
+
+    bool hasBroodWarReplayExtension(const std::filesystem::path& path)
+    {
+      return lowerCase(path.extension().string()) == ".rep";
+    }
+
+    bool replayPathExistsForLaunch(
+      const RuntimeInstallation& installation,
+      const std::filesystem::path& replayPath)
+    {
+      if (fileExists(replayPath))
+        return true;
+      if (replayPath.is_relative() && !installation.installRoot.empty())
+        return fileExists(std::filesystem::path(installation.installRoot) / replayPath);
+      return false;
+    }
+
+    bool validateReplayLaunchRequest(
+      const RuntimeInstallation& installation,
+      const std::string& replayPath,
+      std::string& reason)
+    {
+      if (replayPath.empty())
+        return true;
+      if (installation.product != Product::StarCraftRemastered)
+      {
+        reason = "play-replay requires StarCraft Remastered";
+        return false;
+      }
+
+      const std::filesystem::path replayFile(replayPath);
+      if (!hasBroodWarReplayExtension(replayFile))
+      {
+        reason = "play-replay requires a Brood War .rep replay file: " + replayPath;
+        return false;
+      }
+      if (!replayPathExistsForLaunch(installation, replayFile))
+      {
+        reason = "play-replay replay file does not exist: " + replayPath;
+        return false;
+      }
+
+      return true;
     }
 
     std::string readPlistStringValue(const std::filesystem::path& plistPath, const std::string& key)
@@ -777,7 +835,47 @@ namespace BWAPI::Runtime
       return false;
     }
 
-    int findStableProcessId(const RuntimeInstallation& installation, int stableMilliseconds)
+    bool runtimeProcessAppearsInitialized(int processId, std::string& reason)
+    {
+      RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+      if (!regions.success)
+      {
+        reason = "runtime memory map inspection is unavailable: " + regions.reason;
+        return !getenvString("STARCRAFT_API_PROCESS_SNAPSHOT").empty();
+      }
+
+      std::size_t readableRegions = 0;
+      std::size_t readableBytes = 0;
+      for (const RuntimeMemoryRegion& region : regions.regions)
+      {
+        if (!region.readable || region.executable)
+          continue;
+        ++readableRegions;
+        readableBytes += region.size;
+      }
+
+      constexpr std::size_t minInitializedReadableRegions = 4;
+      constexpr std::size_t minInitializedReadableBytes = 4 * 1024 * 1024;
+      if (readableRegions < minInitializedReadableRegions
+          || readableBytes < minInitializedReadableBytes)
+      {
+        std::ostringstream message;
+        message << "runtime process " << processId
+                << " has only " << readableRegions
+                << " non-executable readable region(s) and "
+                << readableBytes
+                << " readable byte(s); treating it as launched-suspended/not initialized";
+        reason = message.str();
+        return false;
+      }
+
+      return true;
+    }
+
+    int findStableProcessId(
+      const RuntimeInstallation& installation,
+      int stableMilliseconds,
+      std::string* rejectionReason = nullptr)
     {
       const std::vector<int> firstPass = findRuntimeProcessIds(installation);
       if (firstPass.empty())
@@ -789,7 +887,13 @@ namespace BWAPI::Runtime
 
       const std::vector<int> secondPass = findRuntimeProcessIds(installation);
       if (containsProcessId(secondPass, processId))
-        return processId;
+      {
+        std::string initializedReason;
+        if (runtimeProcessAppearsInitialized(processId, initializedReason))
+          return processId;
+        if (rejectionReason != nullptr)
+          *rejectionReason = initializedReason;
+      }
       return 0;
     }
 
@@ -1732,7 +1836,9 @@ namespace BWAPI::Runtime
       return value.empty() ? fallback : value;
     }
 
-    std::vector<std::string> makeExecutableLaunchArguments(const RuntimeInstallation& installation)
+    std::vector<std::string> makeExecutableLaunchArguments(
+      const RuntimeInstallation& installation,
+      const std::string& replayPath)
     {
       std::vector<std::string> executableArguments = { installation.executablePath };
       if (installation.product != Product::StarCraftRemastered)
@@ -1754,27 +1860,36 @@ namespace BWAPI::Runtime
         executableArguments.push_back("-windowy");
         executableArguments.push_back(getenvOrDefault("STARCRAFT_API_WINDOW_Y", "100"));
       }
+      if (!replayPath.empty())
+      {
+        executableArguments.push_back("playReplay");
+        executableArguments.push_back(replayPath);
+      }
       for (const std::string& argument : splitExtraLaunchArguments(getenvString("STARCRAFT_API_EXTRA_ARGS")))
         executableArguments.push_back(argument);
       return executableArguments;
     }
 
-    RuntimeLaunchTarget makeExecutableLaunchTarget(const RuntimeInstallation& installation)
+    RuntimeLaunchTarget makeExecutableLaunchTarget(
+      const RuntimeInstallation& installation,
+      const std::string& replayPath)
     {
       return {
         "executable",
         installation.executablePath,
-        makeExecutableLaunchArguments(installation),
+        makeExecutableLaunchArguments(installation, replayPath),
         false
       };
     }
 
-    std::vector<RuntimeLaunchTarget> makeRuntimeLaunchTargets(const RuntimeInstallation& installation)
+    std::vector<RuntimeLaunchTarget> makeRuntimeLaunchTargets(
+      const RuntimeInstallation& installation,
+      const std::string& replayPath)
     {
       std::vector<RuntimeLaunchTarget> launchTargets;
 
       if (installation.product == Product::StarCraftRemastered && remasteredWindowedLaunchEnabled())
-        launchTargets.push_back(makeExecutableLaunchTarget(installation));
+        launchTargets.push_back(makeExecutableLaunchTarget(installation, replayPath));
 
       if (!installation.launcherPath.empty() && installation.product == Product::StarCraftRemastered)
       {
@@ -1801,7 +1916,7 @@ namespace BWAPI::Runtime
       }
 
       if (installation.product != Product::StarCraftRemastered || !remasteredWindowedLaunchEnabled())
-        launchTargets.push_back(makeExecutableLaunchTarget(installation));
+        launchTargets.push_back(makeExecutableLaunchTarget(installation, replayPath));
       return launchTargets;
     }
 
@@ -2012,20 +2127,40 @@ namespace BWAPI::Runtime
     int waitForStableRuntimeProcess(
       const RuntimeInstallation& installation,
       int waitMilliseconds,
-      int stableMilliseconds)
+      int stableMilliseconds,
+      std::string* rejectionReason = nullptr)
     {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMilliseconds);
       while (true)
       {
-        const int stableProcessId = findStableProcessId(installation, stableMilliseconds);
+        std::string latestRejectionReason;
+        const int stableProcessId =
+          findStableProcessId(installation, stableMilliseconds, &latestRejectionReason);
         if (stableProcessId > 0)
           return stableProcessId;
+        if (!latestRejectionReason.empty() && rejectionReason != nullptr)
+          *rejectionReason = latestRejectionReason;
 
         if (waitMilliseconds <= 0 || std::chrono::steady_clock::now() >= deadline)
           return 0;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
       }
+    }
+
+    bool terminateLaunchTargetProcess(
+      int processId,
+      RuntimeLaunchResult& result,
+      const std::string& targetKind)
+    {
+      if (processId <= 0 || !runtimeProcessExists(processId))
+        return true;
+
+      return terminateRuntimeProcessIds(
+        { processId },
+        result,
+        "runtime.launch_target_process_terminated",
+        "non-initialized " + targetKind + " launch target process");
     }
 
     void appendBattleNetHandoffWarnings(
@@ -2052,11 +2187,12 @@ namespace BWAPI::Runtime
       const RuntimeInstallation& installation,
       int waitMilliseconds,
       int stableMilliseconds,
-      bool replaceStaleHandoff)
+      bool replaceStaleHandoff,
+      const std::string& replayPath)
     {
       RuntimeLaunchResult result;
       result.requiredStableMilliseconds = stableMilliseconds;
-      const std::vector<RuntimeLaunchTarget> launchTargets = makeRuntimeLaunchTargets(installation);
+      const std::vector<RuntimeLaunchTarget> launchTargets = makeRuntimeLaunchTargets(installation, replayPath);
 
       for (const RuntimeLaunchTarget& target : launchTargets)
       {
@@ -2081,7 +2217,9 @@ namespace BWAPI::Runtime
         }
 #endif
 
-        const int stableProcessId = waitForStableRuntimeProcess(installation, waitMilliseconds, stableMilliseconds);
+        std::string stableRejectionReason;
+        const int stableProcessId =
+          waitForStableRuntimeProcess(installation, waitMilliseconds, stableMilliseconds, &stableRejectionReason);
         if (stableProcessId > 0)
         {
           result.running = true;
@@ -2090,7 +2228,13 @@ namespace BWAPI::Runtime
           return result;
         }
 
+        if (!stableRejectionReason.empty())
+          result.warnings.push_back("runtime.stable_process_rejected=" + stableRejectionReason);
         result.warnings.push_back("runtime.launch_target_no_game=" + target.kind);
+        if (target.kind == "executable"
+            && !stableRejectionReason.empty()
+            && !terminateLaunchTargetProcess(launched.processId, result, target.kind))
+          return result;
 
         const std::vector<int> handoffProcessIds = findBattleNetHandoffProcesses(installation);
         if (handoffProcessIds.empty())
@@ -2212,7 +2356,8 @@ namespace BWAPI::Runtime
     int waitMilliseconds,
     int stableMilliseconds,
     bool replaceStaleHandoff,
-    bool replaceRunning)
+    bool replaceRunning,
+    const std::string& replayPath)
   {
     RuntimeLaunchResult result;
     result.requiredStableMilliseconds = stableMilliseconds;
@@ -2220,6 +2365,18 @@ namespace BWAPI::Runtime
     {
       result.reason = installation.reason;
       return result;
+    }
+
+    if (!replayPath.empty())
+    {
+      result.warnings.push_back("runtime.launch_replay=" + replayPath);
+      std::string replayReason;
+      if (!validateReplayLaunchRequest(installation, replayPath, replayReason))
+      {
+        result.requestAccepted = false;
+        result.reason = replayReason;
+        return result;
+      }
     }
 
     if (replaceRunning)
@@ -2239,13 +2396,38 @@ namespace BWAPI::Runtime
       }
     }
 
-    int stableProcessId = findStableProcessId(installation, stableMilliseconds);
+    std::string stableRejectionReason;
+    int stableProcessId = findStableProcessId(installation, stableMilliseconds, &stableRejectionReason);
     if (stableProcessId > 0)
     {
+      if (!replayPath.empty() && !replaceRunning)
+      {
+        result.requestAccepted = false;
+        result.running = true;
+        result.processId = stableProcessId;
+        result.reason =
+          "play-replay requested but an existing StarCraft process is already running; use --replace-running to relaunch a single process with the replay";
+        result.warnings.push_back("runtime.launch_replay_existing_process_requires_replace_running=true");
+        return result;
+      }
       result.running = true;
       result.processId = stableProcessId;
       result.observedStableMilliseconds = stableMilliseconds;
       return result;
+    }
+    if (!stableRejectionReason.empty())
+    {
+      result.warnings.push_back("runtime.stable_process_rejected=" + stableRejectionReason);
+      const std::vector<int> visibleProcessIds = findRuntimeProcessIds(installation);
+      if (!visibleProcessIds.empty() && !replaceRunning)
+      {
+        result.requestAccepted = false;
+        result.processId = visibleProcessIds.front();
+        result.reason =
+          "a StarCraft process is visible but not initialized for attach; use --replace-running to terminate it before relaunching";
+        result.warnings.push_back("runtime.existing_process_requires_replace_running=true");
+        return result;
+      }
     }
 
     if (!launchIfMissing)
@@ -2269,7 +2451,12 @@ namespace BWAPI::Runtime
           return result;
 
         RuntimeLaunchResult launched =
-          launchRuntimeProcessWithFallback(installation, waitMilliseconds, stableMilliseconds, replaceStaleHandoff);
+          launchRuntimeProcessWithFallback(
+            installation,
+            waitMilliseconds,
+            stableMilliseconds,
+            replaceStaleHandoff,
+            replayPath);
         appendLaunchWarnings(result, launched);
         result.launched = launched.launched;
         result.processId = launched.processId;
@@ -2290,7 +2477,12 @@ namespace BWAPI::Runtime
     else
     {
       RuntimeLaunchResult launched =
-        launchRuntimeProcessWithFallback(installation, waitMilliseconds, stableMilliseconds, replaceStaleHandoff);
+        launchRuntimeProcessWithFallback(
+          installation,
+          waitMilliseconds,
+          stableMilliseconds,
+          replaceStaleHandoff,
+          replayPath);
       appendLaunchWarnings(result, launched);
       result.launched = launched.launched;
       result.processId = launched.processId;
@@ -2369,6 +2561,7 @@ namespace BWAPI::Runtime
 
     writeEvidenceField(output, "runtime.launched", evidence.launchResult.launched);
     writeEvidenceField(output, "runtime.running", evidence.launchResult.running);
+    writeEvidenceField(output, "runtime.request_accepted", evidence.launchResult.requestAccepted);
     writeEvidenceField(output, "runtime.process_id", evidence.launchResult.processId);
     writeEvidenceField(output, "runtime.required_stable_ms", evidence.launchResult.requiredStableMilliseconds);
     writeEvidenceField(output, "runtime.observed_stable_ms", evidence.launchResult.observedStableMilliseconds);

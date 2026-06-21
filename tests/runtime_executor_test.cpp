@@ -191,6 +191,22 @@ int main(int argc, char** argv)
   assert(mismatchedIdentityPreflight.missingBehaviorProofs.size() == proofs.size());
   assert(!mismatchedIdentityPreflight.errors.empty());
 
+  RuntimeEnvironment staleProcessEnvironment = bridgeEnvironment;
+  staleProcessEnvironment.processId = currentProcessId() + 100000;
+  writeValidatedAdapterReadyFile(
+    bridgePath,
+    staleProcessEnvironment.processId,
+    staleProcessEnvironment.executablePath);
+  RuntimeExecutorPreflightResult staleProcessPreflight =
+    preflightRuntimeExecutor(staleProcessEnvironment, complete.manifest.contract);
+  assert(staleProcessPreflight.contractValid);
+  assert(!staleProcessPreflight.processIdentified);
+  assert(staleProcessPreflight.targetLocated);
+  assert(!staleProcessPreflight.executorAvailable);
+  assert(staleProcessPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
+  assert(staleProcessPreflight.missingBehaviorProofs.empty());
+  assert(!staleProcessPreflight.errors.empty());
+
   writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult bridgePreflight =
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);

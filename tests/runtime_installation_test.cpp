@@ -317,6 +317,76 @@ int main()
   assert(hasWarning(extraResult, "runtime.launch_target=executable"));
   clearWindowedLaunchEnv();
 
+  const std::filesystem::path replayRoot = tempRoot / "windowed-play-replay";
+  const std::filesystem::path replayLauncher = replayRoot / "launcher";
+  const std::filesystem::path replayExecutable = replayRoot / "StarCraft";
+  const std::filesystem::path replaySnapshot = replayRoot / "processes.snapshot";
+  writeFile(
+    replayLauncher,
+    "#!/bin/sh\n"
+    "exit 70\n");
+  writeFile(
+    replayExecutable,
+    "#!/bin/sh\n"
+    "if [ \"$#\" -ne 15 ]; then exit 63; fi\n"
+    "if [ \"$1\" != \"-launch\" ] || [ \"$2\" != \"-uid\" ] || [ \"$3\" != \"s1\" ]; then exit 64; fi\n"
+    "if [ \"$4\" != \"-displayMode\" ] || [ \"$5\" != \"0\" ]; then exit 65; fi\n"
+    "if [ \"$14\" != \"playReplay\" ]; then exit 66; fi\n"
+    "if [ \"$15\" != \"Maps/Replays/test replay.rep\" ]; then exit 67; fi\n"
+    "printf '%s 1 %s -launch -uid s1 playReplay %s\\n' \"$$\" \"$STARCRAFT_API_TEST_EXECUTABLE\" \"$15\" > \"$STARCRAFT_API_PROCESS_SNAPSHOT\"\n"
+    "sleep 2\n");
+  makeExecutable(replayLauncher);
+  makeExecutable(replayExecutable);
+  writeFile(replayRoot / "Maps" / "Replays" / "test replay.rep", "fake brood war replay");
+  writeFile(replaySnapshot, "");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", replaySnapshot.string());
+  setEnvValue("STARCRAFT_API_TEST_EXECUTABLE", replayExecutable.string());
+  setEnvValue("STARCRAFT_API_WINDOWED", "1");
+
+  RuntimeInstallation replayInstallation;
+  replayInstallation.found = true;
+  replayInstallation.product = Product::StarCraftRemastered;
+  replayInstallation.platform = Platform::Linux;
+  replayInstallation.installRoot = replayRoot.string();
+  replayInstallation.executablePath = replayExecutable.string();
+  replayInstallation.launcherPath = replayLauncher.string();
+
+  const std::string replayPath = "Maps/Replays/test replay.rep";
+  const RuntimeLaunchResult replayResult =
+    launchOrAttachRuntime(replayInstallation, true, 0, 0, false, false, replayPath);
+  assert(replayResult.launched);
+  assert(replayResult.running);
+  assert(replayResult.processId > 0);
+  assert(hasWarning(replayResult, "runtime.launch_target=executable"));
+  assert(hasWarning(replayResult, "runtime.launch_replay=" + replayPath));
+
+  const RuntimeLaunchResult missingReplayResult =
+    launchOrAttachRuntime(replayInstallation, true, 0, 0, false, false, "Maps/Replays/missing.rep");
+  assert(!missingReplayResult.requestAccepted);
+  assert(!missingReplayResult.launched);
+  assert(containsText(missingReplayResult.reason, "replay file does not exist"));
+  assert(hasWarning(missingReplayResult, "runtime.launch_replay=Maps/Replays/missing.rep"));
+
+  const RuntimeLaunchResult wrongReplayTypeResult =
+    launchOrAttachRuntime(replayInstallation, true, 0, 0, false, false, "Maps/Replays/test.SC2Replay");
+  assert(!wrongReplayTypeResult.requestAccepted);
+  assert(!wrongReplayTypeResult.launched);
+  assert(containsText(wrongReplayTypeResult.reason, "Brood War .rep"));
+
+  writeFile(
+    replaySnapshot,
+    "4430 4428 " + replayExecutable.string() + " -launch -uid s1\n");
+  const RuntimeLaunchResult existingProcessReplayResult =
+    launchOrAttachRuntime(replayInstallation, true, 0, 0, false, false, replayPath);
+  assert(!existingProcessReplayResult.requestAccepted);
+  assert(existingProcessReplayResult.running);
+  assert(existingProcessReplayResult.processId == 4430);
+  assert(containsText(existingProcessReplayResult.reason, "existing StarCraft process"));
+  assert(hasWarning(
+    existingProcessReplayResult,
+    "runtime.launch_replay_existing_process_requires_replace_running=true"));
+  clearWindowedLaunchEnv();
+
   const std::filesystem::path fallbackRoot = tempRoot / "fallback";
   const std::filesystem::path fallbackLauncher = fallbackRoot / "launcher";
   const std::filesystem::path fallbackExecutable = fallbackRoot / "StarCraft";

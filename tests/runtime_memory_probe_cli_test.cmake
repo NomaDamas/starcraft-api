@@ -67,3 +67,34 @@ foreach(needle
     message(FATAL_ERROR "absent memory probe output missing '${needle}'\n${absent_output}")
   endif()
 endforeach()
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_MEMORY_PROBE}"
+    --self
+    --process-state
+    --region-summary
+    --require-open
+    --require-access
+  RESULT_VARIABLE diagnostic_result
+  OUTPUT_VARIABLE diagnostic_output
+  ERROR_VARIABLE diagnostic_error
+)
+if(NOT diagnostic_result EQUAL 0)
+  message(FATAL_ERROR "expected self process diagnostics to pass\nstdout:\n${diagnostic_output}\nstderr:\n${diagnostic_error}")
+endif()
+
+foreach(needle
+    "process.state.inspected="
+    "process.state.suspended="
+    "process.state.status="
+    "process.state.thread_count="
+    "memory.region_summary.requested=true"
+    "memory.region_summary.success="
+    "memory.region_summary.total_regions="
+    "memory.region_summary.readable_regions="
+    "memory.region_summary.readable_non_executable_bytes=")
+  string(FIND "${diagnostic_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "diagnostic memory probe output missing '${needle}'\n${diagnostic_output}")
+  endif()
+endforeach()

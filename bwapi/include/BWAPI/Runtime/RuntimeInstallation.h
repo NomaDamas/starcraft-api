@@ -24,6 +24,7 @@ namespace BWAPI::Runtime
 
   struct RuntimeLaunchResult
   {
+    bool requestAccepted = true;
     bool launched = false;
     bool running = false;
     int processId = 0;
@@ -152,7 +153,8 @@ namespace BWAPI::Runtime
     int waitMilliseconds,
     int stableMilliseconds = 5000,
     bool replaceStaleHandoff = false,
-    bool replaceRunning = false);
+    bool replaceRunning = false,
+    const std::string& replayPath = std::string());
   RuntimeEvidence collectRuntimeEvidence(
     const RuntimeInstallation& installation,
     const RuntimeLaunchResult& launchResult);

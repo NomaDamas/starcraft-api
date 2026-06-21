@@ -18,6 +18,17 @@ int main()
   assert(!runtimeProcessExecutablePath(environment.processId).empty());
   assert(!opened.executablePath.empty());
 
+  RuntimeProcessStateResult state = inspectRuntimeProcessState(environment.processId);
+  if (state.inspected)
+  {
+    assert(state.threadCount > 0);
+    assert(!state.suspended);
+  }
+  else
+  {
+    assert(!state.reason.empty());
+  }
+
   RuntimeEnvironment mismatch = environment;
   mismatch.executablePath = "/definitely/not/the/current/runtime/process";
   RuntimeProcessOpenResult mismatchResult = openRuntimeProcess(mismatch);

@@ -144,6 +144,48 @@ endif()
 
 file(REMOVE_RECURSE "${units_bridge_dir}")
 
+set(combined_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-combined-bridge")
+file(REMOVE_RECURSE "${combined_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${combined_bridge_dir}"
+    --prove-read-game-state
+    --state-max-scan-mb 1
+    --state-scan-timeout-ms 1
+    --prove-read-units
+    --unit-max-scan-mb 128
+    --self-unit-fixture
+  RESULT_VARIABLE combined_result
+  OUTPUT_VARIABLE combined_output
+  ERROR_VARIABLE combined_error
+)
+if(NOT combined_result EQUAL 0 AND NOT combined_result EQUAL 4)
+  message(FATAL_ERROR "expected combined proof to pass or fail only read-game-state\nstdout:\n${combined_output}\nstderr:\n${combined_error}")
+endif()
+foreach(needle
+    "read_game_state.live_counter="
+    "read_units.unit_array=true"
+    "proof.read_units=passed")
+  string(FIND "${combined_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "combined proof output missing '${needle}'\n${combined_output}")
+  endif()
+endforeach()
+
+set(combined_ready_file "${combined_bridge_dir}/ready")
+if(NOT EXISTS "${combined_ready_file}")
+  message(FATAL_ERROR "combined proof did not write ready file")
+endif()
+file(READ "${combined_ready_file}" combined_ready)
+string(FIND "${combined_ready}" "proof.read_units=passed" combined_units_index)
+if(combined_units_index EQUAL -1)
+  message(FATAL_ERROR "combined proof must preserve passing read-units proof\n${combined_ready}")
+endif()
+
 set(active_match_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-active-match-bridge")
 file(REMOVE_RECURSE "${active_match_bridge_dir}")
 
@@ -170,6 +212,23 @@ foreach(needle
     message(FATAL_ERROR "active-match-state rejection output missing '${needle}'\n${active_match_output}")
   endif()
 endforeach()
+set(active_match_ready_file "${active_match_bridge_dir}/ready")
+if(NOT EXISTS "${active_match_ready_file}")
+  message(FATAL_ERROR "failed active-match-state proof must still write partial attach ready file")
+endif()
+file(READ "${active_match_ready_file}" active_match_ready)
+foreach(needle
+    "mode=validated-runtime-adapter"
+    "proof.attach=passed")
+  string(FIND "${active_match_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "partial active-match ready file missing '${needle}'\n${active_match_ready}")
+  endif()
+endforeach()
+string(FIND "${active_match_ready}" "proof.active_match_state=passed" failed_active_match_ready_index)
+if(NOT failed_active_match_ready_index EQUAL -1)
+  message(FATAL_ERROR "failed active-match-state proof must not claim passed behavior\n${active_match_ready}")
+endif()
 
 set(policy_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-bridge")
 set(policy_root "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-root")

@@ -277,7 +277,10 @@ namespace BWAPI::Runtime
         result.missingBehaviorProofs.push_back(proof.readyFileLine);
     }
 
-    bool preflightExecutorBridge(const RuntimeEnvironment& environment, RuntimeExecutorPreflightResult& result)
+    bool preflightExecutorBridge(
+      const RuntimeEnvironment& environment,
+      RuntimeExecutorPreflightResult& result,
+      bool memoryRequired)
     {
       if (environment.executorBridgePath.empty())
         return false;
@@ -342,6 +345,19 @@ namespace BWAPI::Runtime
 
       if (!validateProductionBridgeProof(readyPath, result, false))
         return true;
+
+      if (!result.processIdentified)
+      {
+        result.errors.push_back(
+          "runtime executor bridge is stale because the selected runtime process is not visible");
+        return true;
+      }
+      if (memoryRequired && !result.memoryAccessible)
+      {
+        result.errors.push_back(
+          "runtime executor bridge is unavailable because selected runtime memory access is denied");
+        return true;
+      }
 
       result.executorAvailable = true;
       result.executorName = "filesystem-bridge-validated-runtime-adapter";
@@ -531,7 +547,10 @@ namespace BWAPI::Runtime
       result.memoryAccessReason = memoryAccess.reason;
     }
 
-    if (!preflightExecutorBridge(environment, result))
+    if (!preflightExecutorBridge(
+          environment,
+          result,
+          contractRequiresCapability(proofBackedContract, Capability::SharedMemoryClient)))
       result.warnings.push_back("authorized runtime executor bridge is not configured");
     if (!result.executorAvailable)
       addMissingBehaviorProofsIfEmpty(result);

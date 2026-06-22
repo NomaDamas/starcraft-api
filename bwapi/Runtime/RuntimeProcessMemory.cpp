@@ -4,7 +4,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <sstream>
+#include <unordered_map>
 #include <utility>
 
 #if defined(_WIN32)
@@ -80,11 +82,62 @@ namespace BWAPI::Runtime
 #endif
 
 #if defined(__APPLE__)
+    std::mutex& taskPortCacheMutex()
+    {
+      static std::mutex mutex;
+      return mutex;
+    }
+
+    std::unordered_map<int, mach_port_t>& taskPortCache()
+    {
+      static std::unordered_map<int, mach_port_t> cache;
+      return cache;
+    }
+
     std::string taskForPidFailureMessage(kern_return_t result)
     {
       return "task_for_pid failed: " + std::string(mach_error_string(result))
         + "; macOS denied target task access, so use an authorized debugger-signed helper "
         + "or approved in-process runtime adapter before claiming BWAPI parity";
+    }
+
+    RuntimeMemoryAccessResult cachedTaskForPid(int processId, mach_port_t& task)
+    {
+      task = MACH_PORT_NULL;
+      if (processId == currentProcessId())
+      {
+        task = mach_task_self();
+        RuntimeMemoryAccessResult result;
+        result.accessible = true;
+        return result;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(taskPortCacheMutex());
+        const auto it = taskPortCache().find(processId);
+        if (it != taskPortCache().end() && it->second != MACH_PORT_NULL)
+        {
+          task = it->second;
+          RuntimeMemoryAccessResult result;
+          result.accessible = true;
+          return result;
+        }
+      }
+
+      mach_port_t openedTask = MACH_PORT_NULL;
+      const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &openedTask);
+      if (taskResult != KERN_SUCCESS)
+        return accessFailure(taskForPidFailureMessage(taskResult));
+
+      {
+        std::lock_guard<std::mutex> lock(taskPortCacheMutex());
+        taskPortCache()[processId] = openedTask;
+      }
+
+      task = openedTask;
+      RuntimeMemoryAccessResult result;
+      result.accessible = true;
+      return result;
     }
 #endif
 
@@ -158,23 +211,8 @@ namespace BWAPI::Runtime
     result.accessible = true;
     return result;
 #elif defined(__APPLE__)
-    if (processId == currentProcessId())
-    {
-      RuntimeMemoryAccessResult result;
-      result.accessible = true;
-      return result;
-    }
-
     mach_port_t task = MACH_PORT_NULL;
-    const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
-    if (taskResult != KERN_SUCCESS)
-      return accessFailure(taskForPidFailureMessage(taskResult));
-    if (task != MACH_PORT_NULL)
-      mach_port_deallocate(mach_task_self(), task);
-
-    RuntimeMemoryAccessResult result;
-    result.accessible = true;
-    return result;
+    return cachedTaskForPid(processId, task);
 #elif defined(__linux__)
     if (processId == currentProcessId())
     {
@@ -241,18 +279,11 @@ namespace BWAPI::Runtime
     return result;
 #elif defined(__APPLE__)
     mach_port_t task = MACH_PORT_NULL;
-    if (processId == currentProcessId())
+    RuntimeMemoryAccessResult access = cachedTaskForPid(processId, task);
+    if (!access.accessible)
     {
-      task = mach_task_self();
-    }
-    else
-    {
-      const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
-      if (taskResult != KERN_SUCCESS)
-      {
-        result.reason = taskForPidFailureMessage(taskResult);
-        return result;
-      }
+      result.reason = access.reason;
+      return result;
     }
 
     mach_vm_address_t address = 1;
@@ -298,8 +329,6 @@ namespace BWAPI::Runtime
       address = next;
     }
 
-    if (task != MACH_PORT_NULL && task != mach_task_self())
-      mach_port_deallocate(mach_task_self(), task);
     result.success = true;
     return result;
 #elif defined(__linux__)
@@ -408,16 +437,9 @@ namespace BWAPI::Runtime
     return result;
 #elif defined(__APPLE__)
     mach_port_t task = MACH_PORT_NULL;
-    if (processId == currentProcessId())
-    {
-      task = mach_task_self();
-    }
-    else
-    {
-      const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
-      if (taskResult != KERN_SUCCESS)
-        return failure(taskForPidFailureMessage(taskResult));
-    }
+    RuntimeMemoryAccessResult access = cachedTaskForPid(processId, task);
+    if (!access.accessible)
+      return failure(access.reason);
 
     mach_vm_size_t bytesRead = 0;
     const kern_return_t readResult = mach_vm_read_overwrite(
@@ -426,9 +448,6 @@ namespace BWAPI::Runtime
       static_cast<mach_vm_size_t>(size),
       reinterpret_cast<mach_vm_address_t>(result.bytes.data()),
       &bytesRead);
-
-    if (task != MACH_PORT_NULL && task != mach_task_self())
-      mach_port_deallocate(mach_task_self(), task);
 
     if (readResult != KERN_SUCCESS)
       return failure("mach_vm_read_overwrite failed: " + std::string(mach_error_string(readResult)));
@@ -504,25 +523,15 @@ namespace BWAPI::Runtime
     return result;
 #elif defined(__APPLE__)
     mach_port_t task = MACH_PORT_NULL;
-    if (processId == currentProcessId())
-    {
-      task = mach_task_self();
-    }
-    else
-    {
-      const kern_return_t taskResult = task_for_pid(mach_task_self(), processId, &task);
-      if (taskResult != KERN_SUCCESS)
-        return writeFailure(taskForPidFailureMessage(taskResult));
-    }
+    RuntimeMemoryAccessResult access = cachedTaskForPid(processId, task);
+    if (!access.accessible)
+      return writeFailure(access.reason);
 
     const kern_return_t writeResult = mach_vm_write(
       task,
       static_cast<mach_vm_address_t>(address),
       reinterpret_cast<vm_offset_t>(const_cast<void*>(bytes)),
       static_cast<mach_msg_type_number_t>(size));
-
-    if (task != MACH_PORT_NULL && task != mach_task_self())
-      mach_port_deallocate(mach_task_self(), task);
 
     if (writeResult != KERN_SUCCESS)
       return writeFailure("mach_vm_write failed: " + std::string(mach_error_string(writeResult)));

@@ -93,6 +93,8 @@ foreach(needle
     "command_queue_discovery.ready=true"
     "command_queue_discovery.candidate_count="
     "command_queue_discovery.best.vector_address=0x"
+    "command_queue_discovery.best.kind="
+    "command_queue_discovery.best.bytes_in_queue_address=0x"
     "command_queue_discovery.proof_scope=discovery-only-not-command-behavior"
     "command_queue_discovery.snapshot.success=true"
     "proof.command_queue_discovery=candidate-found")
@@ -112,6 +114,8 @@ foreach(needle
     "proof.command_queue_discovery=candidate-found"
     "proof.command_queue_discovery.snapshot=command_queue.candidates.tsv"
     "proof.command_queue_discovery.proof_scope=discovery-only-not-command-behavior"
+    "proof.command_queue_discovery.best.kind="
+    "proof.command_queue_discovery.best.bytes_in_queue_address=0x"
     "proof.command_queue_discovery.best.vector_address=0x")
   string(FIND "${command_queue_ready}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
@@ -134,7 +138,8 @@ if(NOT EXISTS "${command_queue_snapshot}")
 endif()
 file(READ "${command_queue_snapshot}" command_queue_snapshot_content)
 foreach(needle
-    "vector_address"
+    "kind"
+    "bytes_in_queue_address"
     "buffer_begin"
     "capacity_bytes")
   string(FIND "${command_queue_snapshot_content}" "${needle}" needle_index)
@@ -170,6 +175,7 @@ foreach(needle
     "issue_commands.ready=false"
     "issue_commands.delivery_checked=true"
     "issue_commands.behavior_checked=false"
+    "issue_commands.attempt_count=1"
     "issue_commands.self_fixture=true"
     "issue_commands.reason=self command queue fixture append/readback passed; active StarCraft behavior proof is required"
     "issue_commands.snapshot.success=true")
@@ -204,6 +210,9 @@ file(READ "${issue_commands_snapshot}" issue_commands_snapshot_content)
 foreach(needle
     "delivery_checked\ttrue"
     "behavior_checked\tfalse"
+    "attempt_count\t1"
+    "storage_kind\traw-turn-buffer"
+    "attempt_rank"
     "self_fixture\ttrue")
   string(FIND "${issue_commands_snapshot_content}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
@@ -282,6 +291,90 @@ foreach(forbidden
 endforeach()
 
 file(REMOVE_RECURSE "${issue_commands_explicit_bridge_dir}")
+
+set(overlay_sync_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-overlay-sync-bridge")
+file(REMOVE_RECURSE "${overlay_sync_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${overlay_sync_bridge_dir}"
+    --prove-draw-overlays
+    --prove-multiplayer-sync
+  RESULT_VARIABLE overlay_sync_result
+  OUTPUT_VARIABLE overlay_sync_output
+  ERROR_VARIABLE overlay_sync_error
+)
+if(NOT overlay_sync_result EQUAL 17)
+  message(FATAL_ERROR "expected overlay/sync proof to fail closed with code 17\nstdout:\n${overlay_sync_output}\nstderr:\n${overlay_sync_error}")
+endif()
+foreach(needle
+    "draw_overlays.ready=false"
+    "draw_overlays.render_hook_resolved=false"
+    "draw_overlays.render_behavior_checked=false"
+    "draw_overlays.snapshot.success=true"
+    "multiplayer_sync.ready=false"
+    "multiplayer_sync.snet_receive_resolved=false"
+    "multiplayer_sync.snet_send_turn_resolved=false"
+    "multiplayer_sync.sync_behavior_checked=false"
+    "multiplayer_sync.snapshot.success=true")
+  string(FIND "${overlay_sync_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "overlay/sync fail-closed output missing '${needle}'\n${overlay_sync_output}")
+  endif()
+endforeach()
+
+set(overlay_sync_ready_file "${overlay_sync_bridge_dir}/ready")
+if(NOT EXISTS "${overlay_sync_ready_file}")
+  message(FATAL_ERROR "overlay/sync proof did not write partial ready file")
+endif()
+file(READ "${overlay_sync_ready_file}" overlay_sync_ready)
+foreach(needle
+    "diagnostic.draw_overlays.snapshot=draw_overlays.snapshot.tsv"
+    "diagnostic.multiplayer_sync.snapshot=multiplayer_sync.snapshot.tsv")
+  string(FIND "${overlay_sync_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "overlay/sync ready file missing '${needle}'\n${overlay_sync_ready}")
+  endif()
+endforeach()
+foreach(forbidden
+    "proof.draw_overlays=passed"
+    "proof.multiplayer_sync=passed"
+    "contract.binding.draw-game-layer-hook=hook-point|proof.draw_overlays=passed"
+    "contract.binding.Storm::SNetReceiveMessage=imported-function|proof.multiplayer_sync=passed"
+    "contract.binding.Storm::SNetSendTurn=imported-function|proof.multiplayer_sync=passed")
+  string(FIND "${overlay_sync_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "overlay/sync diagnostics must not claim production behavior '${forbidden}'\n${overlay_sync_ready}")
+  endif()
+endforeach()
+
+file(READ "${overlay_sync_bridge_dir}/draw_overlays.snapshot.tsv" overlay_snapshot)
+foreach(needle
+    "passed\tfalse"
+    "render_hook_resolved\tfalse"
+    "adapter-local draw command logging alone is not production overlay rendering")
+  string(FIND "${overlay_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "overlay diagnostic snapshot missing '${needle}'\n${overlay_snapshot}")
+  endif()
+endforeach()
+
+file(READ "${overlay_sync_bridge_dir}/multiplayer_sync.snapshot.tsv" sync_snapshot)
+foreach(needle
+    "passed\tfalse"
+    "snet_receive_resolved\tfalse"
+    "snet_send_turn_resolved\tfalse"
+    "active replay or local command queue delivery is not multiplayer synchronization proof")
+  string(FIND "${sync_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "multiplayer diagnostic snapshot missing '${needle}'\n${sync_snapshot}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${overlay_sync_bridge_dir}")
 
 set(map_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-map-bridge")
 set(fake_install_root "${STARCRAFT_API_CLI_TEST_DIR}/fake-starcraft-install")
@@ -404,6 +497,10 @@ foreach(needle
     "read_units.scan.field_plausible_records="
     "read_units.scan.pointer_dense_rejected_records="
     "read_units.scan.sprite_rejected_records="
+    "read_units.scan.top_candidate_count="
+    "read_units.unit_node_scan.regions="
+    "read_units.unit_node_scan.bytes="
+    "read_units.unit_node_scan.field_sample_count="
     "read_units.scan.snapshot.success=true"
     "read_units.scan.snapshot.path=${units_bridge_dir}/unit_diagnostics.snapshot.tsv"
     "read_units.scan.best_dump.success=true"
@@ -451,7 +548,11 @@ foreach(needle
     "field\tvalue"
     "read_units_passed\ttrue"
     "scan_pointer_dense_rejected_records\t"
-    "scan_best_active_records\t")
+    "scan_best_active_records\t"
+    "scan_top_candidate_count\t"
+    "unit_node_scan_regions\t"
+    "unit_node_scan_bytes\t"
+    "unit_node_field_sample_count\t")
   string(FIND "${unit_diagnostics_snapshot}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "read-units diagnostics snapshot missing '${needle}'\n${unit_diagnostics_snapshot}")
@@ -509,10 +610,10 @@ foreach(needle
     "proof.read_units.layout=scr-unit-node-object-graph"
     "proof.read_units.derived_snapshot=true"
     "proof.read_units.snapshot=units.snapshot.tsv"
-    "proof.read_units.id_source=secondary+24"
+    "proof.read_units.id_source=stable-node-handle"
     "proof.read_units.position_source=unit-node+36|4"
     "proof.read_units.order_source=unit-node+48|2"
-    "proof.read_units.player_source=secondary+20|1"
+    "proof.read_units.player_source=unit-node+0x50 secondary+0x14|1"
     "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv"
     "proof.read_units=passed")
   string(FIND "${unit_node_ready}" "${needle}" needle_index)
@@ -538,6 +639,10 @@ foreach(needle
     "read_units_passed\ttrue"
     "unit_node_passed\ttrue"
     "scan_pointer_dense_rejected_records\t"
+    "scan_top_candidate_count\t"
+    "unit_node_scan_regions\t"
+    "unit_node_scan_bytes\t"
+    "unit_node_field_sample_count\t"
     "unit_node_active_records\t")
   string(FIND "${unit_node_diagnostics_snapshot}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
@@ -546,6 +651,148 @@ foreach(needle
 endforeach()
 
 file(REMOVE_RECURSE "${unit_node_bridge_dir}")
+
+set(bullet_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-bullet-bridge")
+file(REMOVE_RECURSE "${bullet_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${bullet_bridge_dir}"
+    --prove-read-bullet-data
+    --self-bullet-fixture
+  RESULT_VARIABLE bullet_result
+  OUTPUT_VARIABLE bullet_output
+  ERROR_VARIABLE bullet_error
+)
+if(NOT bullet_result EQUAL 0)
+  message(FATAL_ERROR "expected read-bullet-data proof to pass with self fixture\nstdout:\n${bullet_output}\nstderr:\n${bullet_error}")
+endif()
+foreach(needle
+    "read_bullet_data.ready=true"
+    "read_bullet_data.candidate_address.count=1"
+    "read_bullet_data.record_size=136"
+    "read_bullet_data.layout=scr-x64-packed-cbullet"
+    "read_bullet_data.active_records="
+    "read_bullet_data.snapshot.success=true"
+    "proof.read_bullet_data=passed")
+  string(FIND "${bullet_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "read-bullet-data proof output missing '${needle}'\n${bullet_output}")
+  endif()
+endforeach()
+
+set(bullet_ready_file "${bullet_bridge_dir}/ready")
+if(NOT EXISTS "${bullet_ready_file}")
+  message(FATAL_ERROR "read-bullet-data proof did not write ready file")
+endif()
+file(READ "${bullet_ready_file}" bullet_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_bullet_data.layout=scr-x64-packed-cbullet"
+    "proof.read_bullet_data.snapshot=bullets.snapshot.tsv"
+    "contract.binding.BW::BWDATA::BulletNodeTable=data-address|proof.read_bullet_data=passed"
+    "contract.structure.BW::CBullet=136|proof.read_bullet_data=passed"
+    "contract.field.BW::CBullet.position=64|4|proof.read_bullet_data=passed"
+    "contract.field.BW::CBullet.velocity=88|8|proof.read_bullet_data=passed"
+    "contract.field.BW::CBullet.sourceUnit=120|8|proof.read_bullet_data=passed"
+    "contract.field.BW::CBullet.target=112|8|proof.read_bullet_data=passed"
+    "proof.read_bullet_data=passed")
+  string(FIND "${bullet_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "read-bullet-data ready file missing '${needle}'\n${bullet_ready}")
+  endif()
+endforeach()
+
+if(NOT EXISTS "${bullet_bridge_dir}/bullets.snapshot.tsv")
+  message(FATAL_ERROR "read-bullet-data snapshot was not written")
+endif()
+file(READ "${bullet_bridge_dir}/bullets.snapshot.tsv" bullet_snapshot)
+foreach(needle
+    "address"
+    "sprite"
+    "source_unit"
+    "target_unit")
+  string(FIND "${bullet_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "read-bullet-data snapshot missing '${needle}'\n${bullet_snapshot}")
+  endif()
+endforeach()
+string(FIND "${bullet_ready}" "proof.active_match_state=passed" bullet_active_match_index)
+if(NOT bullet_active_match_index EQUAL -1)
+  message(FATAL_ERROR "self bullet proof must not claim active-match-state behavior\n${bullet_ready}")
+endif()
+
+file(REMOVE_RECURSE "${bullet_bridge_dir}")
+
+set(region_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-region-bridge")
+file(REMOVE_RECURSE "${region_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${region_bridge_dir}"
+    --prove-read-region-data
+    --self-region-fixture
+  RESULT_VARIABLE region_result
+  OUTPUT_VARIABLE region_output
+  ERROR_VARIABLE region_error
+)
+if(NOT region_result EQUAL 0)
+  message(FATAL_ERROR "expected read-region-data proof to pass with self fixture\nstdout:\n${region_output}\nstderr:\n${region_error}")
+endif()
+foreach(needle
+    "read_region_data.ready=true"
+    "read_region_data.source=self-region-fixture"
+    "read_region_data.region_count=2"
+    "read_region_data.observed_units=8"
+    "read_region_data.snapshot.success=true"
+    "proof.read_region_data=passed")
+  string(FIND "${region_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "read-region-data proof output missing '${needle}'\n${region_output}")
+  endif()
+endforeach()
+
+set(region_ready_file "${region_bridge_dir}/ready")
+if(NOT EXISTS "${region_ready_file}")
+  message(FATAL_ERROR "read-region-data proof did not write ready file")
+endif()
+file(READ "${region_ready_file}" region_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_region_data.source=self-region-fixture"
+    "proof.read_region_data.region_count=2"
+    "proof.read_region_data.snapshot=regions.snapshot.tsv"
+    "proof.read_region_data=passed")
+  string(FIND "${region_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "read-region-data ready file missing '${needle}'\n${region_ready}")
+  endif()
+endforeach()
+if(NOT EXISTS "${region_bridge_dir}/regions.snapshot.tsv")
+  message(FATAL_ERROR "read-region-data snapshot was not written")
+endif()
+file(READ "${region_bridge_dir}/regions.snapshot.tsv" region_snapshot)
+foreach(needle
+    "center_x"
+    "observed_units"
+    "accessible")
+  string(FIND "${region_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "read-region-data snapshot missing '${needle}'\n${region_snapshot}")
+  endif()
+endforeach()
+string(FIND "${region_ready}" "proof.active_match_state=passed" region_active_match_index)
+if(NOT region_active_match_index EQUAL -1)
+  message(FATAL_ERROR "self region proof must not claim active-match-state behavior\n${region_ready}")
+endif()
+
+file(REMOVE_RECURSE "${region_bridge_dir}")
 
 set(combined_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-combined-bridge")
 file(REMOVE_RECURSE "${combined_bridge_dir}")
@@ -574,6 +821,7 @@ foreach(needle
     "read_game_state.live_counter="
     "read_game_state.scan.scanned_regions="
     "read_game_state.scan.candidate_counters="
+    "read_game_state.scan.closest_counter.available="
     "read_units.unit_array=true"
     "proof.read_units=passed")
   string(FIND "${combined_output}" "${needle}" needle_index)

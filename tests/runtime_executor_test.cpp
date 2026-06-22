@@ -2,7 +2,9 @@
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
+#include <array>
 #include <cassert>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -30,9 +32,10 @@ namespace
     return environment;
   }
 
-  std::filesystem::path makeBridgePath()
+  std::filesystem::path makeBridgePath(
+    const std::string& name = "starcraft-api-runtime-executor-test")
   {
-    std::filesystem::path path = std::filesystem::temp_directory_path() / "starcraft-api-runtime-executor-test";
+    std::filesystem::path path = std::filesystem::temp_directory_path() / name;
     std::filesystem::remove_all(path);
     std::filesystem::create_directories(path);
     return path;
@@ -98,6 +101,27 @@ namespace
       if (std::string(proof.id) != "multiplayer-sync")
         ready << proof.readyFileLine << '\n';
     }
+  }
+
+  void writeDirectValidatedAdapterReadyFile(
+    const std::filesystem::path& bridgePath,
+    int processId,
+    const std::string& executable,
+    std::uintptr_t bytesInQueueAddress,
+    std::uintptr_t turnBufferAddress)
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, processId, executable);
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test-direct:"
+          << bytesInQueueAddress << '\n';
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test-direct:"
+          << turnBufferAddress << '\n';
+    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+      ready << proof.readyFileLine << '\n';
   }
 
   void writeMismatchedRuntimeIdentityReadyFile(
@@ -255,6 +279,35 @@ int main(int argc, char** argv)
   assert(commandLogContent.str().find("unit-command|Move|5|10,20") != std::string::npos);
   assert(commandLogContent.str().find("game-action|pauseGame|0|") != std::string::npos);
 
+  std::filesystem::path directBridgePath =
+    makeBridgePath("starcraft-api-runtime-executor-direct-test");
+  RuntimeEnvironment directBridgeEnvironment = bridgeEnvironment;
+  directBridgeEnvironment.executorBridgePath = directBridgePath.string();
+  std::uint32_t directBytesInQueue = 0;
+  std::array<unsigned char, 512> directTurnBuffer = {};
+  writeDirectValidatedAdapterReadyFile(
+    directBridgePath,
+    directBridgeEnvironment.processId,
+    directBridgeEnvironment.executablePath,
+    reinterpret_cast<std::uintptr_t>(&directBytesInQueue),
+    reinterpret_cast<std::uintptr_t>(directTurnBuffer.data()));
+  RuntimeExecutorPreflightResult directBridgePreflight =
+    preflightRuntimeExecutor(directBridgeEnvironment, complete.manifest.contract);
+  assert(directBridgePreflight.contractValid);
+  assert(directBridgePreflight.processIdentified);
+  assert(directBridgePreflight.memoryAccessible);
+  assert(directBridgePreflight.executorAvailable);
+  assert(directBridgePreflight.missingBehaviorProofs.empty());
+  RuntimeExecutorSubmitResult directSubmitted =
+    submitRuntimeCommands(directBridgeEnvironment, { gameAction });
+  assert(directSubmitted.submitted);
+  assert(directSubmitted.submittedCommands == 1);
+  assert(directSubmitted.errors.empty());
+  assert(directBytesInQueue == 1);
+  assert(directTurnBuffer[0] == 0x10);
+  assert(std::filesystem::exists(directBridgePath / "commands.applied.tsv"));
+  assert(!std::filesystem::exists(directBridgePath / RuntimeExecutorBridgeCommandFile));
+
   writeMismatchedRuntimeIdentityReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorSubmitResult rejectedMismatchedIdentity =
     submitRuntimeCommands(bridgeEnvironment, { gameAction });
@@ -268,7 +321,7 @@ int main(int argc, char** argv)
   RuntimeExecutorSubmitResult rejectedWithoutManifest =
     submitRuntimeCommands(noManifestEnvironment, { gameAction });
   assert(!rejectedWithoutManifest.submitted);
-  assert(rejectedWithoutManifest.reason.find("runtime manifest is required") != std::string::npos);
+  assert(rejectedWithoutManifest.reason.find("runtime manifest or bridge-proven command surface is required") != std::string::npos);
 
   const std::filesystem::path bootstrapManifest = bridgePath / "bootstrap.manifest";
   {
@@ -301,6 +354,7 @@ int main(int argc, char** argv)
   assert(!mismatchPreflight.errors.empty());
 
   std::filesystem::remove_all(bridgePath);
+  std::filesystem::remove_all(directBridgePath);
 
   return 0;
 }

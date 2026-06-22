@@ -30,6 +30,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
@@ -70,6 +71,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
@@ -105,6 +107,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
@@ -128,6 +131,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
@@ -151,6 +155,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
@@ -205,6 +210,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
@@ -228,6 +234,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
@@ -251,6 +258,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
@@ -258,7 +266,6 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
-  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/tools/runtime_submit_command.cpp" \
   -o "$bin_dir/starcraft-runtime-submit-command"
 
@@ -275,6 +282,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeContract.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeEnvironment.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeExecutor.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \

@@ -24,6 +24,14 @@ namespace
   volatile char selfWritableFindFixture[] = "starcraft-api-memory-probe-self-fixture";
   volatile std::uint32_t selfWritableU32FindFixture = 0x5ca1ab1e;
 
+  struct FindNeedle
+  {
+    std::string kind;
+    std::string printable;
+    std::vector<unsigned char> bytes;
+    std::size_t matchCount = 0;
+  };
+
   void keepSelfWritableFindFixtureAlive()
   {
     const char first = selfWritableFindFixture[0];
@@ -47,6 +55,7 @@ namespace
       << "  --find-ascii <text>      scan readable target memory for an ASCII string\n"
       << "  --find-u32 <value>       scan readable target memory for a 32-bit little-endian value\n"
       << "  --find-u64 <value>       scan readable target memory for a 64-bit little-endian value\n"
+      << "                           repeat --find-* to scan multiple needles in one pass\n"
       << "  --find-max-scan-mb <mb>  maximum readable memory scanned by --find-* (default: 128)\n"
       << "  --find-writable-only     scan only readable+writable memory regions\n"
       << "  --find-non-executable-only\n"
@@ -90,6 +99,14 @@ namespace
       return false;
     output = static_cast<std::uintptr_t>(parsed);
     return static_cast<unsigned long long>(output) == parsed;
+  }
+
+  template <typename T>
+  std::vector<unsigned char> littleEndianBytes(T value)
+  {
+    std::vector<unsigned char> bytes(sizeof(value));
+    std::memcpy(bytes.data(), &value, sizeof(value));
+    return bytes;
   }
 
   std::string hexBytes(const std::vector<unsigned char>& bytes)
@@ -139,8 +156,6 @@ int main(int argc, char** argv)
   bool processStateRequested = false;
   bool regionSummaryRequested = false;
   bool findRequested = false;
-  bool findU32Requested = false;
-  bool findU64Requested = false;
   bool findWritableOnly = false;
   bool findNonExecutableOnly = false;
   bool findTargetExecutableOnly = false;
@@ -148,15 +163,13 @@ int main(int argc, char** argv)
   bool self = false;
   int processIdOverride = 0;
   std::uintptr_t address = 0;
-  std::uint32_t findU32 = 0;
-  std::uint64_t findU64 = 0;
   std::size_t size = 16;
   std::size_t findMaxScanBytes = 128 * 1024 * 1024;
   Product productOverride = Product::Unknown;
   std::string versionOverride;
   std::string executableOverride;
   std::string dumpOut;
-  std::string findAscii;
+  std::vector<FindNeedle> findNeedles;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -251,7 +264,12 @@ int main(int argc, char** argv)
         std::cerr << "--find-ascii requires a value\n";
         return 64;
       }
-      findAscii = argv[++i];
+      std::string value = argv[++i];
+      FindNeedle needle;
+      needle.kind = "ascii";
+      needle.printable = value;
+      needle.bytes.assign(value.begin(), value.end());
+      findNeedles.push_back(std::move(needle));
       findRequested = true;
     }
     else if (arg == "--find-u64")
@@ -262,9 +280,15 @@ int main(int argc, char** argv)
         std::cerr << "--find-u64 requires a positive integer value\n";
         return 64;
       }
-      findU64 = static_cast<std::uint64_t>(parsed);
+      const std::uint64_t value = static_cast<std::uint64_t>(parsed);
+      std::ostringstream printable;
+      printable << "0x" << std::hex << value;
+      FindNeedle needle;
+      needle.kind = "u64";
+      needle.printable = printable.str();
+      needle.bytes = littleEndianBytes(value);
+      findNeedles.push_back(std::move(needle));
       findRequested = true;
-      findU64Requested = true;
     }
     else if (arg == "--find-u32")
     {
@@ -274,9 +298,15 @@ int main(int argc, char** argv)
         std::cerr << "--find-u32 requires a positive 32-bit integer value\n";
         return 64;
       }
-      findU32 = static_cast<std::uint32_t>(parsed);
+      const std::uint32_t value = static_cast<std::uint32_t>(parsed);
+      std::ostringstream printable;
+      printable << "0x" << std::hex << value;
+      FindNeedle needle;
+      needle.kind = "u32";
+      needle.printable = printable.str();
+      needle.bytes = littleEndianBytes(value);
+      findNeedles.push_back(std::move(needle));
       findRequested = true;
-      findU32Requested = true;
     }
     else if (arg == "--find-writable-only")
     {
@@ -462,26 +492,22 @@ int main(int argc, char** argv)
       return requireRead ? 5 : 0;
     }
 
-    std::vector<unsigned char> needle;
-    if (findU64Requested)
-    {
-      needle.resize(sizeof(findU64));
-      std::memcpy(needle.data(), &findU64, sizeof(findU64));
-    }
-    else if (findU32Requested)
-    {
-      needle.resize(sizeof(findU32));
-      std::memcpy(needle.data(), &findU32, sizeof(findU32));
-    }
-    else
-    {
-      needle.assign(findAscii.begin(), findAscii.end());
-    }
-    if (needle.empty())
+    const auto emptyNeedle = std::find_if(
+      findNeedles.begin(),
+      findNeedles.end(),
+      [](const FindNeedle& needle)
+      {
+        return needle.bytes.empty();
+      });
+    if (findNeedles.empty() || emptyNeedle != findNeedles.end())
     {
       std::cerr << "find needle must be non-empty\n";
       return 64;
     }
+    std::size_t minimumNeedleSize = std::numeric_limits<std::size_t>::max();
+    for (const FindNeedle& needle : findNeedles)
+      minimumNeedleSize = std::min(minimumNeedleSize, needle.bytes.size());
+
     constexpr std::size_t maxRegionReadBytes = 32 * 1024 * 1024;
     constexpr std::size_t maxPrintedMatches = 128;
     std::size_t scannedBytes = 0;
@@ -494,7 +520,7 @@ int main(int argc, char** argv)
 
     for (const RuntimeMemoryRegion& region : regions.regions)
     {
-      if (!region.readable || region.size < needle.size() || scannedBytes >= findMaxScanBytes)
+      if (!region.readable || region.size < minimumNeedleSize || scannedBytes >= findMaxScanBytes)
         continue;
       if (findWritableOnly && !region.writable)
       {
@@ -518,47 +544,71 @@ int main(int argc, char** argv)
         region.size,
         std::min(maxRegionReadBytes, findMaxScanBytes - scannedBytes));
       RuntimeMemoryReadResult read = readProcessMemory(environment.processId, region.address, bytesToRead);
-      if (!read.success || read.bytesRead < needle.size())
+      if (!read.success || read.bytesRead < minimumNeedleSize)
         continue;
 
       ++scannedRegions;
       scannedBytes += read.bytesRead;
-      auto begin = read.bytes.begin();
-      while (true)
+      for (std::size_t needleIndex = 0; needleIndex < findNeedles.size(); ++needleIndex)
       {
-        auto match = std::search(begin, read.bytes.end(), needle.begin(), needle.end());
-        if (match == read.bytes.end())
-          break;
+        FindNeedle& needle = findNeedles[needleIndex];
+        if (read.bytes.size() < needle.bytes.size())
+          continue;
 
-        const std::size_t offset = static_cast<std::size_t>(std::distance(read.bytes.begin(), match));
-        if (matchCount < maxPrintedMatches)
+        auto begin = read.bytes.begin();
+        while (true)
         {
-          std::cout << "memory.find.match." << matchCount << ".address=0x"
-                    << std::hex << (region.address + offset) << std::dec << '\n';
-          std::cout << "memory.find.match." << matchCount << ".region.address=0x"
-                    << std::hex << region.address << std::dec << '\n';
-          std::cout << "memory.find.match." << matchCount << ".region.size=" << region.size << '\n';
-          std::cout << "memory.find.match." << matchCount << ".region.readable="
-                    << (region.readable ? "true" : "false") << '\n';
-          std::cout << "memory.find.match." << matchCount << ".region.writable="
-                    << (region.writable ? "true" : "false") << '\n';
-          std::cout << "memory.find.match." << matchCount << ".region.executable="
-                    << (region.executable ? "true" : "false") << '\n';
-          if (!region.mappedPath.empty())
-            std::cout << "memory.find.match." << matchCount << ".region.mapped_path="
-                      << region.mappedPath << '\n';
+          auto match = std::search(begin, read.bytes.end(), needle.bytes.begin(), needle.bytes.end());
+          if (match == read.bytes.end())
+            break;
+
+          const std::size_t offset = static_cast<std::size_t>(std::distance(read.bytes.begin(), match));
+          if (matchCount < maxPrintedMatches)
+          {
+            std::cout << "memory.find.match." << matchCount << ".needle_index=" << needleIndex << '\n';
+            std::cout << "memory.find.match." << matchCount << ".needle_kind=" << needle.kind << '\n';
+            std::cout << "memory.find.match." << matchCount << ".needle=" << needle.printable << '\n';
+            std::cout << "memory.find.match." << matchCount << ".address=0x"
+                      << std::hex << (region.address + offset) << std::dec << '\n';
+            std::cout << "memory.find.match." << matchCount << ".region.address=0x"
+                      << std::hex << region.address << std::dec << '\n';
+            std::cout << "memory.find.match." << matchCount << ".region.size=" << region.size << '\n';
+            std::cout << "memory.find.match." << matchCount << ".region.readable="
+                      << (region.readable ? "true" : "false") << '\n';
+            std::cout << "memory.find.match." << matchCount << ".region.writable="
+                      << (region.writable ? "true" : "false") << '\n';
+            std::cout << "memory.find.match." << matchCount << ".region.executable="
+                      << (region.executable ? "true" : "false") << '\n';
+            if (!region.mappedPath.empty())
+              std::cout << "memory.find.match." << matchCount << ".region.mapped_path="
+                        << region.mappedPath << '\n';
+          }
+          ++needle.matchCount;
+          ++matchCount;
+          begin = match + 1;
         }
-        ++matchCount;
-        begin = match + 1;
       }
     }
 
-    if (findU64Requested)
-      std::cout << "memory.find.needle.u64=0x" << std::hex << findU64 << std::dec << '\n';
-    else if (findU32Requested)
-      std::cout << "memory.find.needle.u32=0x" << std::hex << findU32 << std::dec << '\n';
-    else
-      std::cout << "memory.find.needle=" << findAscii << '\n';
+    std::cout << "memory.find.needle_count=" << findNeedles.size() << '\n';
+    for (std::size_t index = 0; index < findNeedles.size(); ++index)
+    {
+      const FindNeedle& needle = findNeedles[index];
+      std::cout << "memory.find.needle." << index << ".kind=" << needle.kind << '\n';
+      std::cout << "memory.find.needle." << index << ".value=" << needle.printable << '\n';
+      std::cout << "memory.find.needle." << index << ".size=" << needle.bytes.size() << '\n';
+      std::cout << "memory.find.needle." << index << ".match.count=" << needle.matchCount << '\n';
+    }
+    if (findNeedles.size() == 1)
+    {
+      const FindNeedle& needle = findNeedles.front();
+      if (needle.kind == "u64")
+        std::cout << "memory.find.needle.u64=" << needle.printable << '\n';
+      else if (needle.kind == "u32")
+        std::cout << "memory.find.needle.u32=" << needle.printable << '\n';
+      else
+        std::cout << "memory.find.needle=" << needle.printable << '\n';
+    }
     std::cout << "memory.find.filter.writable_only=" << (findWritableOnly ? "true" : "false") << '\n';
     std::cout << "memory.find.filter.non_executable_only=" << (findNonExecutableOnly ? "true" : "false") << '\n';
     std::cout << "memory.find.filter.target_executable_only="

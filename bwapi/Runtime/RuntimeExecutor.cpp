@@ -1,12 +1,15 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
+#include <BWAPI/Runtime/RuntimeCommandEncoder.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace BWAPI::Runtime
@@ -47,6 +50,11 @@ namespace BWAPI::Runtime
     std::filesystem::path commandFilePath(const RuntimeEnvironment& environment)
     {
       return std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeCommandFile;
+    }
+
+    std::filesystem::path directCommandAuditPath(const RuntimeEnvironment& environment)
+    {
+      return std::filesystem::path(environment.executorBridgePath) / "commands.applied.tsv";
     }
 
     bool fileContainsLine(const std::filesystem::path& path, const std::string& expected)
@@ -93,6 +101,71 @@ namespace BWAPI::Runtime
       return !evidence.empty() && evidence.rfind("fixture:", 0) != 0;
     }
 
+    bool parseAddressValue(const std::string& value, std::uintptr_t& parsed)
+    {
+      try
+      {
+        std::size_t consumed = 0;
+        const unsigned long long number = std::stoull(value, &consumed, 0);
+        if (consumed != value.size() || number == 0)
+          return false;
+        parsed = static_cast<std::uintptr_t>(number);
+        return static_cast<unsigned long long>(parsed) == number;
+      }
+      catch (...)
+      {
+        return false;
+      }
+    }
+
+    bool readCommandQueueBindingAddress(
+      const std::filesystem::path& readyPath,
+      const std::string& name,
+      std::uintptr_t& address)
+    {
+      const std::string value = readReadyValue(readyPath, contractBindingReadyKey(name));
+      const std::string prefix = std::string(toString(BindingKind::CommandQueue)) + '|';
+      if (value.rfind(prefix, 0) != 0)
+        return false;
+
+      const std::string evidence = value.substr(prefix.size());
+      if (evidence.empty() || evidence.rfind("fixture:", 0) == 0)
+        return false;
+
+      const std::size_t separator = evidence.rfind(':');
+      if (separator == std::string::npos || separator + 1 >= evidence.size())
+        return false;
+
+      return parseAddressValue(evidence.substr(separator + 1), address);
+    }
+
+    struct DirectRuntimeCommandQueueSink
+    {
+      std::uintptr_t bytesInQueueAddress = 0;
+      std::uintptr_t turnBufferAddress = 0;
+      std::size_t capacityBytes = 512;
+    };
+
+    bool readDirectRuntimeCommandQueueSink(
+      const std::filesystem::path& readyPath,
+      DirectRuntimeCommandQueueSink& sink)
+    {
+      return readCommandQueueBindingAddress(
+          readyPath,
+          "BW::BWDATA::sgdwBytesInCmdQueue",
+          sink.bytesInQueueAddress)
+        && readCommandQueueBindingAddress(
+          readyPath,
+          "BW::BWDATA::TurnBuffer",
+          sink.turnBufferAddress);
+    }
+
+    bool readyFileHasDirectRuntimeCommandQueueSink(const std::filesystem::path& readyPath)
+    {
+      DirectRuntimeCommandQueueSink sink;
+      return readDirectRuntimeCommandQueueSink(readyPath, sink);
+    }
+
     bool readyFileHasActiveRuntimeCommandQueueSink(const std::filesystem::path& readyPath)
     {
       return fileContainsLine(readyPath, RuntimeExecutorBridgeActiveCommandReceiverLine)
@@ -105,6 +178,12 @@ namespace BWAPI::Runtime
           readyPath,
           "BW::BWDATA::TurnBuffer",
           BindingKind::CommandQueue);
+    }
+
+    bool readyFileHasRuntimeCommandQueueSink(const std::filesystem::path& readyPath)
+    {
+      return readyFileHasActiveRuntimeCommandQueueSink(readyPath)
+        || readyFileHasDirectRuntimeCommandQueueSink(readyPath);
     }
 
     std::vector<std::string> splitPipe(const std::string& value)
@@ -288,11 +367,11 @@ namespace BWAPI::Runtime
         }
 
         if (std::string(proof.id) == "issue-commands"
-            && !readyFileHasActiveRuntimeCommandQueueSink(readyPath))
+            && !readyFileHasRuntimeCommandQueueSink(readyPath))
         {
           result.missingBehaviorProofs.push_back(proof.readyFileLine);
           result.errors.push_back(
-            "runtime executor bridge issue-commands proof is missing an active runtime command queue sink");
+            "runtime executor bridge issue-commands proof is missing an active or direct runtime command queue sink");
           continue;
         }
 
@@ -457,6 +536,45 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    bool validateCommandsAgainstBridgeSurface(
+      const RuntimeEnvironment& environment,
+      const std::vector<RuntimeCommandRequest>& commands,
+      RuntimeExecutorSubmitResult& result)
+    {
+      if (environment.executorBridgePath.empty())
+        return false;
+
+      std::error_code error;
+      const std::filesystem::path readyPath = readyFilePath(environment);
+      if (!std::filesystem::exists(readyPath, error) || error)
+        return false;
+      if (!bridgeReadyFileMatchesRuntime(environment, readyPath))
+        return false;
+      if (!validateBridgeRuntimeIdentity(environment, readyPath).empty())
+        return false;
+      if (!fileContainsLine(readyPath, RuntimeExecutorBridgeCommandSurfaceLine))
+        return false;
+
+      const RuntimeCommandSurface surface = makeBWAPICommandSurface();
+      for (const RuntimeCommandRequest& command : commands)
+      {
+        if (command.kind == RuntimeCommandKind::UnitCommand)
+        {
+          if (!containsCommandSurfaceEntry(surface.unitCommands, command.name))
+            return rejectSubmit(result, "runtime bridge command surface does not declare BWAPI unit command: " + command.name);
+        }
+        else if (command.kind == RuntimeCommandKind::GameAction)
+        {
+          if (!containsCommandSurfaceEntry(surface.gameActions, command.name))
+            return rejectSubmit(result, "runtime bridge command surface does not declare BWAPI game action: " + command.name);
+        }
+      }
+
+      result.warnings.push_back(
+        "runtime manifest was not provided; command was validated against the bridge-proven BWAPI command surface");
+      return true;
+    }
+
     bool validateCommandsAgainstManifest(
       const RuntimeEnvironment& environment,
       const std::vector<RuntimeCommandRequest>& commands,
@@ -466,7 +584,13 @@ namespace BWAPI::Runtime
         return true;
 
       if (environment.manifestPath.empty())
-        return rejectSubmit(result, "runtime manifest is required for StarCraft Remastered command submission");
+      {
+        if (validateCommandsAgainstBridgeSurface(environment, commands, result))
+          return true;
+        return rejectSubmit(
+          result,
+          "runtime manifest or bridge-proven command surface is required for StarCraft Remastered command submission");
+      }
 
       RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(environment.manifestPath);
       if (!manifest.loaded)
@@ -512,16 +636,148 @@ namespace BWAPI::Runtime
       const std::filesystem::path& readyPath,
       RuntimeExecutorSubmitResult& result)
     {
-      RuntimeExecutorPreflightResult bridgeProof;
-      if (validateProductionBridgeProof(readyPath, bridgeProof))
+      if (readReadyValue(readyPath, "mode") != RuntimeExecutorBridgeValidatedAdapterMode)
+        return rejectSubmit(result, "runtime executor bridge is not a validated runtime adapter");
+
+      std::vector<std::string> missing;
+      if (!fileContainsLine(readyPath, "proof.attach=passed"))
+        missing.push_back("proof.attach=passed");
+      if (!fileContainsLine(readyPath, "proof.issue_commands=passed"))
+        missing.push_back("proof.issue_commands=passed");
+      if (!readyFileHasRuntimeCommandQueueSink(readyPath))
+        missing.push_back("active or direct runtime command queue sink");
+
+      if (missing.empty())
         return true;
 
-      const std::string reason = bridgeProof.errors.empty()
-        ? "runtime executor bridge is not a validated runtime adapter"
-        : bridgeProof.errors.front();
-      result.reason = reason;
-      result.errors.insert(result.errors.end(), bridgeProof.errors.begin(), bridgeProof.errors.end());
+      result.reason = "runtime executor bridge is missing command submission proof: " + missing.front();
+      for (const std::string& proof : missing)
+        result.errors.push_back("runtime executor bridge is missing command submission proof: " + proof);
       return false;
+    }
+
+    std::uint32_t readU32LE(const std::vector<unsigned char>& bytes)
+    {
+      return static_cast<std::uint32_t>(bytes[0])
+        | (static_cast<std::uint32_t>(bytes[1]) << 8)
+        | (static_cast<std::uint32_t>(bytes[2]) << 16)
+        | (static_cast<std::uint32_t>(bytes[3]) << 24);
+    }
+
+    void appendDirectCommandAudit(
+      const RuntimeEnvironment& environment,
+      std::size_t sequence,
+      const std::string& status,
+      const RuntimeCommandRequest& command,
+      const std::string& encodedBytes,
+      const std::string& detail)
+    {
+      const std::filesystem::path auditPath = directCommandAuditPath(environment);
+      const bool needsHeader = !std::filesystem::exists(auditPath);
+      std::ofstream output(auditPath, std::ios::app);
+      if (!output)
+        return;
+      if (needsHeader)
+        output << "sequence\tstatus\tcommand\tencoded_bytes\tdetail\n";
+      output << sequence << '\t'
+             << status << '\t'
+             << serializeCommand(command) << '\t'
+             << encodedBytes << '\t'
+             << detail << '\n';
+    }
+
+    bool submitDirectRuntimeCommands(
+      const RuntimeEnvironment& environment,
+      const DirectRuntimeCommandQueueSink& sink,
+      const std::vector<RuntimeCommandRequest>& commands,
+      RuntimeExecutorSubmitResult& result)
+    {
+      if (commands.empty())
+      {
+        result.submitted = true;
+        return true;
+      }
+
+      std::vector<std::uint8_t> encodedBytes;
+      std::vector<RuntimeEncodedCommand> encodedCommands;
+      encodedCommands.reserve(commands.size());
+      for (const RuntimeCommandRequest& command : commands)
+      {
+        RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(command);
+        if (!encoded.encoded)
+          return rejectSubmit(result, "runtime command is not directly encodable for the BW turn-buffer: " + encoded.reason);
+        encodedBytes.insert(encodedBytes.end(), encoded.bytes.begin(), encoded.bytes.end());
+        encodedCommands.push_back(std::move(encoded));
+      }
+
+      RuntimeMemoryReadResult usedBytesRead =
+        readProcessMemory(environment.processId, sink.bytesInQueueAddress, sizeof(std::uint32_t));
+      if (!usedBytesRead.success || usedBytesRead.bytesRead != sizeof(std::uint32_t))
+      {
+        const std::string reason = usedBytesRead.reason.empty()
+          ? "unable to read runtime command queue byte count"
+          : usedBytesRead.reason;
+        return rejectSubmit(result, reason);
+      }
+
+      const std::size_t usedBytes = readU32LE(usedBytesRead.bytes);
+      if (usedBytes > sink.capacityBytes)
+        return rejectSubmit(result, "runtime command queue byte count exceeds known turn-buffer capacity");
+      if (encodedBytes.size() > sink.capacityBytes - usedBytes)
+        return rejectSubmit(result, "runtime command queue does not have enough remaining capacity");
+
+      const std::uintptr_t writeAddress = sink.turnBufferAddress + usedBytes;
+      RuntimeMemoryWriteResult writeBytes =
+        writeProcessMemory(environment.processId, writeAddress, encodedBytes.data(), encodedBytes.size());
+      if (!writeBytes.success || writeBytes.bytesWritten != encodedBytes.size())
+      {
+        const std::string reason = writeBytes.reason.empty()
+          ? "unable to write encoded command bytes to runtime command queue"
+          : writeBytes.reason;
+        return rejectSubmit(result, reason);
+      }
+
+      RuntimeMemoryReadResult readback =
+        readProcessMemory(environment.processId, writeAddress, encodedBytes.size());
+      if (!readback.success || readback.bytesRead != encodedBytes.size())
+      {
+        const std::string reason = readback.reason.empty()
+          ? "unable to read back encoded command bytes from runtime command queue"
+          : readback.reason;
+        return rejectSubmit(result, reason);
+      }
+      if (!std::equal(encodedBytes.begin(), encodedBytes.end(), readback.bytes.begin()))
+        return rejectSubmit(result, "encoded command bytes readback did not match runtime command queue write");
+
+      const std::uint32_t newUsedBytes =
+        static_cast<std::uint32_t>(usedBytes + encodedBytes.size());
+      RuntimeMemoryWriteResult writeCount =
+        writeProcessMemory(environment.processId, sink.bytesInQueueAddress, &newUsedBytes, sizeof(newUsedBytes));
+      if (!writeCount.success || writeCount.bytesWritten != sizeof(newUsedBytes))
+      {
+        const std::string reason = writeCount.reason.empty()
+          ? "unable to advance runtime command queue byte count"
+          : writeCount.reason;
+        return rejectSubmit(result, reason);
+      }
+
+      std::size_t byteOffset = 0;
+      for (std::size_t i = 0; i < commands.size(); ++i)
+      {
+        appendDirectCommandAudit(
+          environment,
+          i + 1,
+          "applied",
+          commands[i],
+          formatCommandBytesHex(encodedCommands[i].bytes),
+          "written-to-runtime-command-queue:" + std::to_string(writeAddress + byteOffset));
+        byteOffset += encodedCommands[i].bytes.size();
+      }
+
+      result.submitted = true;
+      result.submittedCommands = commands.size();
+      result.warnings.push_back("runtime commands were submitted directly to the proven runtime command queue");
+      return true;
     }
   }
 
@@ -758,6 +1014,15 @@ namespace BWAPI::Runtime
     if (!validateSubmissionBridgeProof(readyPath, result))
       return result;
 
+    std::vector<RuntimeCommandRequest> drained = queue.drain();
+    DirectRuntimeCommandQueueSink directSink;
+    if (!readyFileHasActiveRuntimeCommandQueueSink(readyPath)
+        && readDirectRuntimeCommandQueueSink(readyPath, directSink))
+    {
+      submitDirectRuntimeCommands(environment, directSink, drained, result);
+      return result;
+    }
+
     std::ofstream output(commandFilePath(environment), std::ios::app);
     if (!output)
     {
@@ -766,7 +1031,6 @@ namespace BWAPI::Runtime
       return result;
     }
 
-    std::vector<RuntimeCommandRequest> drained = queue.drain();
     for (const RuntimeCommandRequest& command : drained)
       output << serializeCommand(command) << '\n';
 

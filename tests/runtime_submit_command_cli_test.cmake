@@ -18,6 +18,7 @@ file(WRITE "${bridge_dir}/ready"
   "process_id=1\n"
   "executable=${STARCRAFT_RUNTIME_SUBMIT_COMMAND}\n"
   "mode=validated-runtime-adapter\n"
+  "proof.command_surface=runtime-command-surface-v1\n"
   "command.receiver=active\n"
   "command.sink=runtime-command-queue-v1\n"
   "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n"
@@ -118,7 +119,7 @@ execute_process(
 if(bootstrap_submit_result EQUAL 0)
   message(FATAL_ERROR "expected bootstrap bridge command submission to fail\nstdout:\n${bootstrap_submit_output}\nstderr:\n${bootstrap_submit_error}")
 endif()
-if(NOT bootstrap_submit_output MATCHES "validated runtime adapter proof is required")
+if(NOT bootstrap_submit_output MATCHES "runtime executor bridge is not a validated runtime adapter")
   message(FATAL_ERROR "expected bootstrap bridge proof failure\nstdout:\n${bootstrap_submit_output}\nstderr:\n${bootstrap_submit_error}")
 endif()
 
@@ -126,17 +127,22 @@ execute_process(
   COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --product starcraft-remastered
     --version test-build
+    --process-id 1
+    --executable "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --bridge "${bridge_dir}"
     --game-action pauseGame
-  RESULT_VARIABLE missing_manifest_result
-  OUTPUT_VARIABLE missing_manifest_output
-  ERROR_VARIABLE missing_manifest_error
+  RESULT_VARIABLE bridge_surface_result
+  OUTPUT_VARIABLE bridge_surface_output
+  ERROR_VARIABLE bridge_surface_error
 )
-if(missing_manifest_result EQUAL 0)
-  message(FATAL_ERROR "expected missing manifest command submission to fail\nstdout:\n${missing_manifest_output}\nstderr:\n${missing_manifest_error}")
+if(NOT bridge_surface_result EQUAL 0)
+  message(FATAL_ERROR "expected bridge-surface command submission to pass without manifest\nstdout:\n${bridge_surface_output}\nstderr:\n${bridge_surface_error}")
 endif()
-if(NOT missing_manifest_output MATCHES "runtime manifest is required")
-  message(FATAL_ERROR "expected missing manifest failure reason\nstdout:\n${missing_manifest_output}\nstderr:\n${missing_manifest_error}")
+if(NOT bridge_surface_output MATCHES "submitted=true")
+  message(FATAL_ERROR "expected submitted=true for bridge-surface submission\nstdout:\n${bridge_surface_output}")
+endif()
+if(NOT bridge_surface_output MATCHES "bridge-proven BWAPI command surface")
+  message(FATAL_ERROR "expected bridge-surface validation warning\nstdout:\n${bridge_surface_output}")
 endif()
 
 file(REMOVE_RECURSE "${bridge_dir}")

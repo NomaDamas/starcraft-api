@@ -82,6 +82,52 @@ endif()
 execute_process(
   COMMAND "${STARCRAFT_RUNTIME_MEMORY_PROBE}"
     --self
+    --find-ascii "${self_needle}"
+    --find-u32 0x5ca1ab1e
+    --find-writable-only
+    --find-non-executable-only
+    --find-max-scan-mb 1024
+    --require-open
+    --require-access
+    --require-find
+  RESULT_VARIABLE find_multi_result
+  OUTPUT_VARIABLE find_multi_output
+  ERROR_VARIABLE find_multi_error
+)
+if(NOT find_multi_result EQUAL 0)
+  message(FATAL_ERROR "expected filtered self multi-needle memory find to pass\nstdout:\n${find_multi_output}\nstderr:\n${find_multi_error}")
+endif()
+foreach(needle
+    "memory.find.requested=true"
+    "memory.find.scan_success=true"
+    "memory.find.success=true"
+    "memory.find.needle_count=2"
+    "memory.find.needle.0.kind=ascii"
+    "memory.find.needle.0.value=${self_needle}"
+    "memory.find.needle.0.match.count="
+    "memory.find.needle.1.kind=u32"
+    "memory.find.needle.1.value=0x5ca1ab1e"
+    "memory.find.needle.1.match.count="
+    "memory.find.match.count=")
+  string(FIND "${find_multi_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "multi-needle memory probe output missing '${needle}'\n${find_multi_output}")
+  endif()
+endforeach()
+
+foreach(unexpected
+    "memory.find.needle.0.match.count=0"
+    "memory.find.needle.1.match.count=0"
+    "memory.find.match.count=0")
+  string(FIND "${find_multi_output}" "${unexpected}" unexpected_index)
+  if(NOT unexpected_index EQUAL -1)
+    message(FATAL_ERROR "multi-needle memory probe did not locate all fixtures: '${unexpected}'\n${find_multi_output}")
+  endif()
+endforeach()
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_MEMORY_PROBE}"
+    --self
     --find-u64 0x7ffafefdfcfbfafa
     --find-writable-only
     --find-non-executable-only

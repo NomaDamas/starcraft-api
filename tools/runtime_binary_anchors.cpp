@@ -61,6 +61,18 @@ namespace
     std::vector<Xref> xrefs;
   };
 
+  struct ItaniumVtableCandidate
+  {
+    std::uint64_t typeInfoVmaddr = 0;
+    std::uint64_t namePointerVmaddr = 0;
+    std::uint64_t typeInfoSlotVmaddr = 0;
+    std::uint64_t vptrCandidateVmaddr = 0;
+    std::uint64_t firstFunctionVmaddr = 0;
+    std::uint64_t offsetToTop = 0;
+    bool hasOffsetToTop = false;
+    bool hasFirstFunction = false;
+  };
+
   struct AnchorOccurrence
   {
     std::uint64_t fileOffset = 0;
@@ -174,6 +186,7 @@ namespace
       << "  --string-match <text>        list printable binary strings containing text; repeatable\n"
       << "  --max-string-matches <count> maximum listed strings per matcher (default: 64)\n"
       << "  --max-xrefs <count>          maximum xrefs printed per anchor (default: 16)\n"
+      << "  --emit-itanium-vtables       emit Itanium ABI typeinfo/vptr candidates for anchor strings\n"
       << "  --require-anchor             return non-zero unless every requested anchor is found\n"
       << "  --help                       show this help\n";
   }
@@ -508,6 +521,45 @@ namespace
     return refs;
   }
 
+  std::vector<ItaniumVtableCandidate> findItaniumVtableCandidatesForNamePointer(
+    const std::vector<unsigned char>& bytes,
+    const MachOInfo& macho,
+    const PointerRef& namePointerRef,
+    std::size_t maxRefs)
+  {
+    std::vector<ItaniumVtableCandidate> candidates;
+    if (!macho.detected || namePointerRef.vmaddr < sizeof(std::uint64_t))
+      return candidates;
+
+    const std::uint64_t typeInfoVmaddr = namePointerRef.vmaddr - sizeof(std::uint64_t);
+    const std::vector<PointerRef> typeInfoRefs =
+      findPointerRefs(bytes, macho, typeInfoVmaddr, maxRefs);
+
+    for (const PointerRef& typeInfoRef : typeInfoRefs)
+    {
+      ItaniumVtableCandidate candidate;
+      candidate.typeInfoVmaddr = typeInfoVmaddr;
+      candidate.namePointerVmaddr = namePointerRef.vmaddr;
+      candidate.typeInfoSlotVmaddr = typeInfoRef.vmaddr;
+      candidate.vptrCandidateVmaddr = typeInfoRef.vmaddr + sizeof(std::uint64_t);
+
+      if (typeInfoRef.fileOffset >= sizeof(std::uint64_t))
+      {
+        candidate.hasOffsetToTop =
+          readU64(bytes, typeInfoRef.fileOffset - sizeof(std::uint64_t), candidate.offsetToTop);
+      }
+
+      candidate.hasFirstFunction =
+        readU64(bytes, typeInfoRef.fileOffset + sizeof(std::uint64_t), candidate.firstFunctionVmaddr);
+
+      candidates.push_back(candidate);
+      if (candidates.size() >= maxRefs)
+        return candidates;
+    }
+
+    return candidates;
+  }
+
   std::vector<std::uint64_t> findAsciiOffsets(
     const std::vector<unsigned char>& bytes,
     const std::string& anchor)
@@ -612,6 +664,17 @@ namespace
       "gGameHeader:",
       "CUnit::sgUnitsMem",
       "Invalid sgUnitsMem array size",
+      "eud_cunit_array_adapter_t",
+      "eud_cobject_array_adapter_tI5CUnit",
+      "eud_cbullet_array_adapter_t",
+      "eud_cobject_array_adapter_tI7CBullet",
+      "eud_playerdata_adapter_t",
+      "CBullet: Damage",
+      "Invalid order for action command",
+      "Net Data:",
+      "Player Data:",
+      "GetTurnPackets",
+      "netmgr_process_messages",
       "PlaySingleOperation",
       "StartGame",
       "LaunchGame",
@@ -723,7 +786,13 @@ namespace
     }
   }
 
-  void printAnchorResult(const AnchorResult& result, std::size_t index)
+  void printAnchorResult(
+    const std::vector<unsigned char>& bytes,
+    const MachOInfo& macho,
+    const AnchorResult& result,
+    std::size_t index,
+    bool emitItaniumVtables,
+    std::size_t maxXrefs)
   {
     std::cout << "anchor." << index << ".name=" << result.anchor << '\n';
     std::cout << "anchor." << index << ".found=" << (result.found ? "true" : "false") << '\n';
@@ -823,6 +892,42 @@ namespace
         std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
                   << ".string_start.pointer_ref." << refIndex
                   << ".vmaddr=" << hexValue(ref.vmaddr) << '\n';
+        if (emitItaniumVtables)
+        {
+          const std::vector<ItaniumVtableCandidate> candidates =
+            findItaniumVtableCandidatesForNamePointer(bytes, macho, ref, maxXrefs);
+          std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
+                    << ".string_start.pointer_ref." << refIndex
+                    << ".itanium_vtable.count=" << candidates.size() << '\n';
+          for (std::size_t candidateIndex = 0; candidateIndex < candidates.size(); ++candidateIndex)
+          {
+            const ItaniumVtableCandidate& candidate = candidates[candidateIndex];
+            std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
+                      << ".string_start.pointer_ref." << refIndex
+                      << ".itanium_vtable." << candidateIndex
+                      << ".typeinfo_vmaddr=" << hexValue(candidate.typeInfoVmaddr) << '\n';
+            std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
+                      << ".string_start.pointer_ref." << refIndex
+                      << ".itanium_vtable." << candidateIndex
+                      << ".typeinfo_slot_vmaddr=" << hexValue(candidate.typeInfoSlotVmaddr) << '\n';
+            std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
+                      << ".string_start.pointer_ref." << refIndex
+                      << ".itanium_vtable." << candidateIndex
+                      << ".vptr_candidate_vmaddr=" << hexValue(candidate.vptrCandidateVmaddr) << '\n';
+            std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
+                      << ".string_start.pointer_ref." << refIndex
+                      << ".itanium_vtable." << candidateIndex
+                      << ".first_function_vmaddr="
+                      << (candidate.hasFirstFunction ? hexValue(candidate.firstFunctionVmaddr) : std::string("unmapped"))
+                      << '\n';
+            std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
+                      << ".string_start.pointer_ref." << refIndex
+                      << ".itanium_vtable." << candidateIndex
+                      << ".offset_to_top="
+                      << (candidate.hasOffsetToTop ? hexValue(candidate.offsetToTop) : std::string("unmapped"))
+                      << '\n';
+          }
+        }
       }
       std::cout << "anchor." << index << ".occurrence." << occurrenceIndex
                 << ".string_start.value=" << occurrence.enclosingString << '\n';
@@ -871,6 +976,7 @@ int main(int argc, char** argv)
   std::vector<std::string> stringMatchers;
   bool requireAnchor = false;
   bool defaultRemasteredAnchors = false;
+  bool emitItaniumVtables = false;
   std::size_t maxXrefs = 16;
   std::size_t maxStringMatches = 64;
 
@@ -935,6 +1041,11 @@ int main(int argc, char** argv)
       }
       continue;
     }
+    if (arg == "--emit-itanium-vtables")
+    {
+      emitItaniumVtables = true;
+      continue;
+    }
     if (arg == "--require-anchor")
     {
       requireAnchor = true;
@@ -977,7 +1088,7 @@ int main(int argc, char** argv)
     const AnchorResult result = analyzeAnchor(bytes, macho, anchors[i], maxXrefs);
     if (result.found)
       ++foundCount;
-    printAnchorResult(result, i);
+    printAnchorResult(bytes, macho, result, i, emitItaniumVtables, maxXrefs);
   }
 
   std::cout << "anchor.requested_count=" << anchors.size() << '\n';

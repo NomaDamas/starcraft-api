@@ -209,12 +209,21 @@ if(TARGET starcraft-runtime-memory-probe)
 endif()
 
 if(TARGET starcraft-runtime-adapter-proof)
+  add_library(starcraft_api_ai_module_smoke SHARED
+    fixtures/ai_module_smoke.cpp
+  )
+  set_target_properties(starcraft_api_ai_module_smoke PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+  )
+
   add_test(NAME runtime_adapter_proof_help COMMAND starcraft-runtime-adapter-proof --help)
   add_test(
     NAME runtime_adapter_proof_cli_test
     COMMAND
       "${CMAKE_COMMAND}"
       -DSTARCRAFT_RUNTIME_ADAPTER_PROOF=$<TARGET_FILE:starcraft-runtime-adapter-proof>
+      -DSTARCRAFT_API_AI_MODULE_SMOKE=$<TARGET_FILE:starcraft_api_ai_module_smoke>
       -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_adapter_proof_cli_test.cmake
   )

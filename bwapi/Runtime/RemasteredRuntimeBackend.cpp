@@ -7,6 +7,8 @@
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <utility>
 
@@ -81,11 +83,43 @@ namespace BWAPI::Runtime
       result.implementedApiSurfaceMethods = contract.requiredApiSurfaceMethods;
     }
 
-    void addValidatedCommandSurface(
-      RuntimeProbeResult& result,
+    std::filesystem::path bridgeReadyFilePath(const RuntimeEnvironment& environment)
+    {
+      return std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
+    }
+
+    bool readyFileContainsLine(const std::filesystem::path& path, const std::string& expected)
+    {
+      std::ifstream input(path);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line == expected)
+          return true;
+      }
+      return false;
+    }
+
+    bool hasValidatedCommandSurfaceProof(
+      const RuntimeEnvironment& environment,
       const RuntimeExecutorPreflightResult& preflight)
     {
-      if (!preflightHasCapability(preflight, Capability::IssueCommands))
+      if (preflight.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode)
+        return false;
+      if (environment.executorBridgePath.empty())
+        return false;
+      return readyFileContainsLine(
+        bridgeReadyFilePath(environment),
+        RuntimeExecutorBridgeCommandSurfaceLine);
+    }
+
+    void addValidatedCommandSurface(
+      RuntimeProbeResult& result,
+      const RuntimeEnvironment& environment,
+      const RuntimeExecutorPreflightResult& preflight)
+    {
+      if (!preflightHasCapability(preflight, Capability::IssueCommands)
+          && !hasValidatedCommandSurfaceProof(environment, preflight))
         return;
 
       const RuntimeCommandSurface surface = makeBWAPICommandSurface();
@@ -140,7 +174,7 @@ namespace BWAPI::Runtime
     RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment_, contract);
     addValidatedBridgeCapabilities(result, preflight);
     if (!manifestLoaded)
-      addValidatedCommandSurface(result, preflight);
+      addValidatedCommandSurface(result, environment_, preflight);
 
     result.supported = true;
     result.supported = canClaimProductionSupport(result, contract)

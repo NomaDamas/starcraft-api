@@ -89,6 +89,24 @@ int main()
     ready << "process_id=" << currentProcessId() << '\n';
     ready << "executor=unit-test\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << "proof.attach=passed\n";
+    ready << RuntimeExecutorBridgeCommandSurfaceLine << '\n';
+  }
+
+  RuntimeProbeResult commandSurfaceOnlyProbe = proofBackedRemasteredBackend->probe();
+  assert(!hasCapability(commandSurfaceOnlyProbe, Capability::IssueCommands));
+  assert(commandSurfaceOnlyProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
+  assert(commandSurfaceOnlyProbe.implementedUnitCommands == remasteredSurface.unitCommands);
+  assert(commandSurfaceOnlyProbe.implementedGameActions == remasteredSurface.gameActions);
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=unit-test\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";

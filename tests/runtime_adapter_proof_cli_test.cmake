@@ -24,6 +24,8 @@ endif()
 foreach(needle
     "attach.opened=true"
     "attach.memory_accessible=true"
+    "command_surface.ready=true"
+    "command_surface.entries=72"
     "proof.attach=passed")
   string(FIND "${proof_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
@@ -43,6 +45,8 @@ foreach(needle
     "executor=starcraft-api-attach-proof"
     "mode=validated-runtime-adapter"
     "contract.binding.shared-memory-client-transport=transport|proof.attach=passed"
+    "proof.command_surface=runtime-command-surface-v1"
+    "command_surface.entries=72"
     "proof.attach=passed")
   string(FIND "${ready}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
@@ -209,6 +213,76 @@ endforeach()
 
 file(REMOVE_RECURSE "${issue_commands_bridge_dir}")
 
+set(issue_commands_explicit_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-issue-commands-explicit-bridge")
+file(REMOVE_RECURSE "${issue_commands_explicit_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${issue_commands_explicit_bridge_dir}"
+    --prove-issue-commands
+    --self-command-queue-fixture
+    --command-queue-vector-address 0x1
+    --unit-max-scan-mb 128
+    --unit-scan-timeout-ms 5000
+  RESULT_VARIABLE issue_commands_explicit_result
+  OUTPUT_VARIABLE issue_commands_explicit_output
+  ERROR_VARIABLE issue_commands_explicit_error
+)
+if(NOT issue_commands_explicit_result EQUAL 12)
+  message(FATAL_ERROR "expected invalid explicit issue-commands proof to fail closed with code 12\nstdout:\n${issue_commands_explicit_output}\nstderr:\n${issue_commands_explicit_error}")
+endif()
+foreach(needle
+    "command_queue_discovery.ready=true"
+    "issue_commands.ready=false"
+    "issue_commands.delivery_checked=false"
+    "issue_commands.behavior_checked=false"
+    "issue_commands.self_fixture=true"
+    "issue_commands.reason=issue-commands proof requires the explicit command queue vector to be readable; refusing to fall back to discovery-only candidates"
+    "issue_commands.snapshot.success=true")
+  string(FIND "${issue_commands_explicit_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "invalid explicit issue-commands output missing '${needle}'\n${issue_commands_explicit_output}")
+  endif()
+endforeach()
+
+set(issue_commands_explicit_snapshot "${issue_commands_explicit_bridge_dir}/issue_commands.snapshot.tsv")
+if(NOT EXISTS "${issue_commands_explicit_snapshot}")
+  message(FATAL_ERROR "invalid explicit issue-commands snapshot was not written")
+endif()
+file(READ "${issue_commands_explicit_snapshot}" issue_commands_explicit_snapshot_content)
+foreach(needle
+    "delivery_checked\tfalse"
+    "behavior_checked\tfalse"
+    "self_fixture\ttrue"
+    "reason\tissue-commands proof requires the explicit command queue vector to be readable; refusing to fall back to discovery-only candidates")
+  string(FIND "${issue_commands_explicit_snapshot_content}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "invalid explicit issue-commands snapshot missing '${needle}'\n${issue_commands_explicit_snapshot_content}")
+  endif()
+endforeach()
+
+set(issue_commands_explicit_ready_file "${issue_commands_explicit_bridge_dir}/ready")
+if(NOT EXISTS "${issue_commands_explicit_ready_file}")
+  message(FATAL_ERROR "invalid explicit issue-commands proof did not write partial ready file")
+endif()
+file(READ "${issue_commands_explicit_ready_file}" issue_commands_explicit_ready)
+foreach(forbidden
+    "proof.issue_commands=passed"
+    "command.receiver=active"
+    "command.sink=runtime-command-queue-v1"
+    "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue"
+    "contract.binding.BW::BWDATA::TurnBuffer=command-queue")
+  string(FIND "${issue_commands_explicit_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "invalid explicit issue-commands proof must not claim production command path '${forbidden}'\n${issue_commands_explicit_ready}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${issue_commands_explicit_bridge_dir}")
+
 set(map_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-map-bridge")
 set(fake_install_root "${STARCRAFT_API_CLI_TEST_DIR}/fake-starcraft-install")
 set(fake_replay_root "${STARCRAFT_API_CLI_TEST_DIR}/fake-starcraft-replays")
@@ -328,7 +402,10 @@ foreach(needle
     "read_units.scan.skipped_image_mapped_regions="
     "read_units.scan.window_candidate_arrays_scored="
     "read_units.scan.field_plausible_records="
+    "read_units.scan.pointer_dense_rejected_records="
     "read_units.scan.sprite_rejected_records="
+    "read_units.scan.snapshot.success=true"
+    "read_units.scan.snapshot.path=${units_bridge_dir}/unit_diagnostics.snapshot.tsv"
     "read_units.scan.best_dump.success=true"
     "read_units.scan.best_dump.path=${units_best_dump}"
     "proof.read_units=passed")
@@ -339,6 +416,9 @@ foreach(needle
 endforeach()
 if(NOT EXISTS "${units_best_dump}")
   message(FATAL_ERROR "read-units best candidate dump was not written")
+endif()
+if(NOT EXISTS "${units_bridge_dir}/unit_diagnostics.snapshot.tsv")
+  message(FATAL_ERROR "read-units diagnostics snapshot was not written")
 endif()
 
 set(units_ready_file "${units_bridge_dir}/ready")
@@ -358,10 +438,23 @@ foreach(needle
     "contract.field.BW::CUnit.position=40|4|proof.read_units=passed"
     "contract.field.BW::CUnit.hitPoints=8|4|proof.read_units=passed"
     "contract.field.BW::CUnit.player=76|1|proof.read_units=passed"
+    "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv"
     "proof.read_units=passed")
   string(FIND "${units_ready}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "read-units ready file missing '${needle}'\n${units_ready}")
+  endif()
+endforeach()
+
+file(READ "${units_bridge_dir}/unit_diagnostics.snapshot.tsv" unit_diagnostics_snapshot)
+foreach(needle
+    "field\tvalue"
+    "read_units_passed\ttrue"
+    "scan_pointer_dense_rejected_records\t"
+    "scan_best_active_records\t")
+  string(FIND "${unit_diagnostics_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "read-units diagnostics snapshot missing '${needle}'\n${unit_diagnostics_snapshot}")
   endif()
 endforeach()
 
@@ -371,6 +464,88 @@ if(NOT fixture_active_match_index EQUAL -1)
 endif()
 
 file(REMOVE_RECURSE "${units_bridge_dir}")
+
+set(unit_node_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-unit-node-bridge")
+file(REMOVE_RECURSE "${unit_node_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${unit_node_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --self-unit-node-fixture
+  RESULT_VARIABLE unit_node_result
+  OUTPUT_VARIABLE unit_node_output
+  ERROR_VARIABLE unit_node_error
+)
+if(NOT unit_node_result EQUAL 0)
+  message(FATAL_ERROR "expected SC:R unit-node read-units proof to pass with self fixture\nstdout:\n${unit_node_output}\nstderr:\n${unit_node_error}")
+endif()
+foreach(needle
+    "read_units.unit_node_candidate_address.count=1"
+    "read_units.unit_array=true"
+    "read_units.layout=scr-unit-node-object-graph"
+    "read_units.derived_snapshot=true"
+    "read_units.hit_points_resolved=false"
+    "read_units.snapshot.success=true"
+    "read_units.scan.snapshot.success=true"
+    "proof.read_units=passed")
+  string(FIND "${unit_node_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "SC:R unit-node proof output missing '${needle}'\n${unit_node_output}")
+  endif()
+endforeach()
+
+set(unit_node_ready_file "${unit_node_bridge_dir}/ready")
+if(NOT EXISTS "${unit_node_ready_file}")
+  message(FATAL_ERROR "SC:R unit-node proof did not write ready file")
+endif()
+file(READ "${unit_node_ready_file}" unit_node_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_units.layout=scr-unit-node-object-graph"
+    "proof.read_units.derived_snapshot=true"
+    "proof.read_units.snapshot=units.snapshot.tsv"
+    "proof.read_units.id_source=secondary+24"
+    "proof.read_units.position_source=unit-node+36|4"
+    "proof.read_units.order_source=unit-node+48|2"
+    "proof.read_units.player_source=secondary+20|1"
+    "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv"
+    "proof.read_units=passed")
+  string(FIND "${unit_node_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "SC:R unit-node ready file missing '${needle}'\n${unit_node_ready}")
+  endif()
+endforeach()
+
+string(FIND "${unit_node_ready}" "proof.active_match_state=passed" unit_node_active_match_index)
+if(NOT unit_node_active_match_index EQUAL -1)
+  message(FATAL_ERROR "self unit-node fixture read-units proof must not claim active-match-state behavior\n${unit_node_ready}")
+endif()
+
+foreach(path
+    "${unit_node_bridge_dir}/units.snapshot.tsv"
+    "${unit_node_bridge_dir}/unit_diagnostics.snapshot.tsv")
+  if(NOT EXISTS "${path}")
+    message(FATAL_ERROR "SC:R unit-node proof expected snapshot is missing: ${path}")
+  endif()
+endforeach()
+file(READ "${unit_node_bridge_dir}/unit_diagnostics.snapshot.tsv" unit_node_diagnostics_snapshot)
+foreach(needle
+    "read_units_passed\ttrue"
+    "unit_node_passed\ttrue"
+    "scan_pointer_dense_rejected_records\t"
+    "unit_node_active_records\t")
+  string(FIND "${unit_node_diagnostics_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "SC:R unit-node diagnostics snapshot missing '${needle}'\n${unit_node_diagnostics_snapshot}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${unit_node_bridge_dir}")
 
 set(combined_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-combined-bridge")
 file(REMOVE_RECURSE "${combined_bridge_dir}")
@@ -629,3 +804,66 @@ foreach(needle
 endforeach()
 
 file(REMOVE_RECURSE "${ai_module_bridge_dir}")
+
+if(NOT DEFINED STARCRAFT_API_AI_MODULE_SMOKE)
+  message(FATAL_ERROR "STARCRAFT_API_AI_MODULE_SMOKE is required")
+endif()
+
+set(ai_module_file_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-ai-module-file-bridge")
+file(REMOVE_RECURSE "${ai_module_file_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${ai_module_file_bridge_dir}"
+    --prove-load-ai-modules
+    --ai-module-path "${STARCRAFT_API_AI_MODULE_SMOKE}"
+  RESULT_VARIABLE ai_module_file_result
+  OUTPUT_VARIABLE ai_module_file_output
+  ERROR_VARIABLE ai_module_file_error
+)
+if(NOT ai_module_file_result EQUAL 0)
+  message(FATAL_ERROR "expected AI module file proof to pass\nstdout:\n${ai_module_file_output}\nstderr:\n${ai_module_file_error}")
+endif()
+foreach(needle
+    "load_ai_modules.ready=true"
+    "load_ai_modules.loader="
+    "load_ai_modules.module_path=${STARCRAFT_API_AI_MODULE_SMOKE}"
+    "load_ai_modules.self_process_smoke=false"
+    "proof.load_ai_modules=passed")
+  string(FIND "${ai_module_file_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "AI module file proof output missing '${needle}'\n${ai_module_file_output}")
+  endif()
+endforeach()
+
+set(ai_module_file_ready_file "${ai_module_file_bridge_dir}/ready")
+if(NOT EXISTS "${ai_module_file_ready_file}")
+  message(FATAL_ERROR "AI module file proof did not write ready file")
+endif()
+file(READ "${ai_module_file_ready_file}" ai_module_file_ready)
+foreach(needle
+    "proof.load_ai_modules.module_path=${STARCRAFT_API_AI_MODULE_SMOKE}"
+    "proof.load_ai_modules.self_process_smoke=false"
+    "contract.binding.ai-module-loader=transport|proof.load_ai_modules=passed"
+    "proof.load_ai_modules=passed")
+  string(FIND "${ai_module_file_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "AI module file ready missing '${needle}'\n${ai_module_file_ready}")
+  endif()
+endforeach()
+
+file(READ "${ai_module_file_bridge_dir}/ai_module_load.snapshot.tsv" ai_module_file_snapshot)
+foreach(needle
+    "passed\ttrue"
+    "self_process_smoke\tfalse"
+    "module_path\t${STARCRAFT_API_AI_MODULE_SMOKE}")
+  string(FIND "${ai_module_file_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "AI module file snapshot missing '${needle}'\n${ai_module_file_snapshot}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${ai_module_file_bridge_dir}")

@@ -1,5 +1,6 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 #include <BWAPI/Runtime/RuntimeCommandEncoder.h>
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
@@ -51,6 +52,7 @@ namespace
       << "                           prove the target is in an active match/replay, not menu/login\n"
       << "  --prove-read-units       prove live unit reads by finding a BWAPI-compatible CUnit array\n"
       << "  --self-unit-fixture      allocate a self-test CUnit array before --prove-read-units\n"
+      << "  --self-unit-node-fixture allocate a self-test SC:R unit-node graph before --prove-read-units\n"
       << "  --prove-dispatch-events  prove BWAPI event dispatch from live frame/unit snapshots\n"
       << "  --prove-read-map-data    prove live map metadata by matching the active map to an installed map file\n"
       << "  --prove-read-player-data prove live player ids from unit snapshots\n"
@@ -68,7 +70,7 @@ namespace
       << "  --serve-command-bridge\n"
       << "                           keep running after proof and consume commands.log into the proven live command queue\n"
       << "  --command-queue-vector-address <address>\n"
-      << "                           explicit command queue vector for manual command append diagnostics\n"
+      << "                           explicit command queue vector for manual command append diagnostics and live issue-command proof\n"
       << "  --append-game-action <name>\n"
       << "                           append one encoded game action to the explicit command queue vector, then exit\n"
       << "  --state-sample-delay-ms <ms>\n"
@@ -316,6 +318,7 @@ namespace
     std::size_t candidateArraysScored = 0;
     std::size_t windowCandidateArraysScored = 0;
     std::size_t fieldPlausibleRecords = 0;
+    std::size_t pointerDenseRejectedRecords = 0;
     std::size_t spriteRejectedRecords = 0;
     std::size_t plausibleRecords = 0;
     std::size_t bestActiveRecords = 0;
@@ -990,6 +993,39 @@ namespace
     return readableAddress(regions, static_cast<std::uintptr_t>(address), size);
   }
 
+  bool readableDynamicPointerValue(
+    const std::vector<RuntimeMemoryRegion>& regions,
+    std::uint64_t address,
+    std::size_t size)
+  {
+    if (address == 0 || !addressFits(address))
+      return false;
+    const RuntimeMemoryRegion* region =
+      findReadableRegion(regions, static_cast<std::uintptr_t>(address), size);
+    return region != nullptr && !region->executable && region->mappedPath.empty();
+  }
+
+  std::size_t countReadableDynamicPointers(
+    const std::vector<unsigned char>& bytes,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    std::size_t requiredCount,
+    std::size_t maxPointersToCheck)
+  {
+    std::size_t readablePointers = 0;
+    const std::size_t pointerSlots =
+      std::min(maxPointersToCheck, bytes.size() / sizeof(std::uint64_t));
+    for (std::size_t i = 0; i < pointerSlots; ++i)
+    {
+      if (readableDynamicPointerValue(regions, readU64(bytes, i * sizeof(std::uint64_t)), 0x58))
+      {
+        ++readablePointers;
+        if (readablePointers >= requiredCount)
+          break;
+      }
+    }
+    return readablePointers;
+  }
+
   std::string normalizedPathForCompare(const std::string& path)
   {
     if (path.empty())
@@ -1148,6 +1184,37 @@ namespace
     return false;
   }
 
+  bool pointerDenseUnitRecord(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t recordSize,
+    const std::vector<RuntimeMemoryRegion>& regions)
+  {
+    if (offset + recordSize > bytes.size())
+      return false;
+
+    const std::size_t bytesToInspect = std::min<std::size_t>(recordSize, 192);
+    const std::size_t slots = bytesToInspect / sizeof(std::uint64_t);
+    if (slots < 8)
+      return false;
+
+    std::size_t nonZeroSlots = 0;
+    std::size_t readablePointerSlots = 0;
+    for (std::size_t slot = 0; slot < slots; ++slot)
+    {
+      const std::uint64_t value = readU64(bytes, offset + slot * sizeof(std::uint64_t));
+      if (value == 0)
+        continue;
+      ++nonZeroSlots;
+      if (readablePointerValue(regions, value, 8))
+        ++readablePointerSlots;
+    }
+
+    return readablePointerSlots >= 12
+      && readablePointerSlots * 2 >= nonZeroSlots
+      && readablePointerSlots * 3 >= slots * 2;
+  }
+
   bool plausibleUnitRecordFields(
     const std::vector<unsigned char>& bytes,
     std::size_t offset,
@@ -1195,6 +1262,7 @@ namespace
     bool requireReadableSprite)
   {
     return plausibleUnitRecordFields(bytes, offset, recordSize, layout)
+      && !pointerDenseUnitRecord(bytes, offset, recordSize, regions)
       && plausibleSpritePointer(bytes, offset, layout.spriteOffset, regions, requireReadableSprite);
   }
 
@@ -1212,6 +1280,13 @@ namespace
 
     if (diagnostics != nullptr)
       ++diagnostics->fieldPlausibleRecords;
+
+    if (pointerDenseUnitRecord(bytes, offset, recordSize, regions))
+    {
+      if (diagnostics != nullptr)
+        ++diagnostics->pointerDenseRejectedRecords;
+      return false;
+    }
 
     if (!plausibleSpritePointer(bytes, offset, layout.spriteOffset, regions, requireReadableSprite))
     {
@@ -1383,6 +1458,13 @@ namespace
     return {};
   }
 
+  LiveUnitNodeProof proveUnitNodePointerGraphsInBytes(
+    int processId,
+    const std::vector<unsigned char>& bytes,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut);
+
   LiveUnitNodeProof proveUnitNodeVectorsInBytes(
     int processId,
     const std::vector<unsigned char>& bytes,
@@ -1393,8 +1475,14 @@ namespace
   {
     constexpr std::size_t recordSize = 0x58;
     constexpr std::size_t maxUnitNodeRecords = 4096;
+    constexpr std::size_t maxVectorCandidatesToRead = 128;
+    constexpr std::size_t maxVectorOffsetsToInspect = 65536;
+    std::size_t vectorCandidatesRead = 0;
+    std::size_t vectorOffsetsInspected = 0;
     for (std::size_t offset = 0; offset + sizeof(std::uint64_t) * 3 <= bytes.size(); offset += 8)
     {
+      if (++vectorOffsetsInspected > maxVectorOffsetsToInspect)
+        return {};
       if ((offset % (4 * 1024)) == 0 && timedOut(deadline))
       {
         scanTimedOut = true;
@@ -1408,15 +1496,63 @@ namespace
         continue;
 
       const std::size_t usedBytes = static_cast<std::size_t>(end - begin);
-      if (usedBytes < recordSize * minActiveUnitRecords || (usedBytes % recordSize) != 0)
-        continue;
-      const std::size_t recordCount = usedBytes / recordSize;
-      if (recordCount > maxUnitNodeRecords)
-        continue;
-      if (!readableAddress(regions, begin, std::min<std::size_t>(usedBytes, recordSize * minActiveUnitRecords)))
+      const bool nodeRecordVector =
+        usedBytes >= recordSize * minActiveUnitRecords
+        && (usedBytes % recordSize) == 0;
+      const bool nodePointerVector =
+        usedBytes >= sizeof(std::uint64_t) * minActiveUnitRecords
+        && (usedBytes % sizeof(std::uint64_t)) == 0;
+      if (!nodeRecordVector && !nodePointerVector)
         continue;
 
-      RuntimeMemoryReadResult read = readProcessMemory(processId, begin, usedBytes);
+      const std::size_t recordCount = nodeRecordVector ? usedBytes / recordSize : 0;
+      const std::size_t pointerCount = nodePointerVector ? usedBytes / sizeof(std::uint64_t) : 0;
+      if (recordCount > maxUnitNodeRecords || pointerCount > maxUnitNodeRecords)
+        continue;
+      const std::size_t readablePrecheckBytes = nodeRecordVector
+        ? recordSize * minActiveUnitRecords
+        : sizeof(std::uint64_t) * minActiveUnitRecords;
+      if (!readableAddress(regions, begin, std::min<std::size_t>(usedBytes, readablePrecheckBytes)))
+        continue;
+      if (++vectorCandidatesRead > maxVectorCandidatesToRead)
+        return {};
+
+      if (nodePointerVector)
+      {
+        const std::size_t pointerBytesToRead =
+          std::min<std::size_t>(usedBytes, sizeof(std::uint64_t) * 4096);
+        RuntimeMemoryReadResult pointerRead = readProcessMemory(processId, begin, pointerBytesToRead);
+        if (pointerRead.success && pointerRead.bytesRead >= sizeof(std::uint64_t) * minActiveUnitRecords)
+        {
+          if (countReadableDynamicPointers(
+                pointerRead.bytes,
+                regions,
+                minActiveUnitRecords,
+                256) < minActiveUnitRecords)
+            continue;
+
+          LiveUnitNodeProof pointerProof = proveUnitNodePointerGraphsInBytes(
+            processId,
+            pointerRead.bytes,
+            regions,
+            deadline,
+            scanTimedOut);
+          if (scanTimedOut)
+            return {};
+          if (pointerProof.passed)
+          {
+            pointerProof.vectorAddress = baseAddress + offset;
+            pointerProof.sampledRecords = pointerCount;
+            return pointerProof;
+          }
+        }
+      }
+
+      if (!nodeRecordVector)
+        continue;
+
+      const std::size_t bytesToRead = std::min<std::size_t>(usedBytes, recordSize * 256);
+      RuntimeMemoryReadResult read = readProcessMemory(processId, begin, bytesToRead);
       if (!read.success || read.bytesRead < recordSize * minActiveUnitRecords)
         continue;
 
@@ -2021,6 +2157,28 @@ namespace
     return failedUnitsProof("no active in-game BWAPI-compatible CUnit array candidate found");
   }
 
+  LiveUnitNodeProof scoreLinkedUnitNodeGraph(
+    int processId,
+    std::uintptr_t seedAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut);
+
+  LiveUnitNodeProof proveUnitNodePointerGraphsInBytes(
+    int processId,
+    const std::vector<unsigned char>& bytes,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut);
+
+  LiveUnitNodeProof proveUnitNodeGraphsInBytes(
+    int processId,
+    const std::vector<unsigned char>& bytes,
+    std::uintptr_t baseAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut);
+
   LiveUnitNodeProof proveLiveUnitNodeAnchors(
     int processId,
     const std::string& executablePath,
@@ -2072,7 +2230,7 @@ namespace
         continue;
 
       bool scanTimedOut = false;
-      LiveUnitNodeProof vectorProof = proveUnitNodeVectorsInBytes(
+      LiveUnitNodeProof graphProof = proveUnitNodeGraphsInBytes(
         processId,
         read.bytes,
         section.first,
@@ -2080,9 +2238,9 @@ namespace
         deadline,
         scanTimedOut);
       if (scanTimedOut)
-        return failedUnitNodeProof("SC:R unit-node vector section scan timed out before proof");
-      if (vectorProof.passed)
-        return vectorProof;
+        return failedUnitNodeProof("SC:R unit-node linked graph section scan timed out before proof");
+      if (graphProof.passed)
+        return graphProof;
 
       LiveUnitNodeProof proof = proveUnitNodeAnchorsInBytes(
         read.bytes,
@@ -2094,6 +2252,18 @@ namespace
         return failedUnitNodeProof("SC:R unit-node anchor section scan timed out before proof");
       if (proof.passed)
         return proof;
+
+      LiveUnitNodeProof vectorProof = proveUnitNodeVectorsInBytes(
+        processId,
+        read.bytes,
+        section.first,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("SC:R unit-node vector section scan timed out before proof");
+      if (vectorProof.passed)
+        return vectorProof;
     }
 
     for (const RuntimeMemoryRegion& region : scanRegions)
@@ -2114,7 +2284,7 @@ namespace
         continue;
 
       bool scanTimedOut = false;
-      LiveUnitNodeProof vectorProof = proveUnitNodeVectorsInBytes(
+      LiveUnitNodeProof graphProof = proveUnitNodeGraphsInBytes(
         processId,
         read.bytes,
         region.address,
@@ -2122,9 +2292,9 @@ namespace
         deadline,
         scanTimedOut);
       if (scanTimedOut)
-        return failedUnitNodeProof("SC:R unit-node vector scan timed out before proof");
-      if (vectorProof.passed)
-        return vectorProof;
+        return failedUnitNodeProof("SC:R unit-node linked graph scan timed out before proof");
+      if (graphProof.passed)
+        return graphProof;
 
       LiveUnitNodeProof proof = proveUnitNodeAnchorsInBytes(
         read.bytes,
@@ -2136,6 +2306,18 @@ namespace
         return failedUnitNodeProof("SC:R unit-node anchor scan timed out before proof");
       if (proof.passed)
         return proof;
+
+      LiveUnitNodeProof vectorProof = proveUnitNodeVectorsInBytes(
+        processId,
+        read.bytes,
+        region.address,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("SC:R unit-node vector scan timed out before proof");
+      if (vectorProof.passed)
+        return vectorProof;
 
       scanned += read.bytesRead;
     }
@@ -2182,6 +2364,17 @@ namespace
         continue;
 
       bool scanTimedOut = false;
+      LiveUnitNodeProof graphProof = scoreLinkedUnitNodeGraph(
+        processId,
+        candidateAddress,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("explicit SC:R unit-node graph candidate scan timed out before proof");
+      if (graphProof.passed)
+        return graphProof;
+
       LiveUnitNodeProof proof = scoreUnitNodeAnchorArray(
         read.bytes,
         candidateAddress,
@@ -2241,6 +2434,181 @@ namespace
     return record.id != 0;
   }
 
+  LiveUnitNodeProof scoreLinkedUnitNodeGraph(
+    int processId,
+    std::uintptr_t seedAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut)
+  {
+    constexpr std::size_t recordSize = 0x58;
+    constexpr std::size_t maxGraphRecords = 256;
+
+    LiveUnitNodeProof proof;
+    proof.address = seedAddress;
+    proof.recordSize = recordSize;
+    if (!readableAddress(regions, seedAddress, recordSize))
+    {
+      proof.reason = "SC:R unit-node graph seed is not readable";
+      return proof;
+    }
+
+    std::vector<std::uintptr_t> pending;
+    std::unordered_set<std::uintptr_t> queued;
+    std::unordered_set<std::uintptr_t> accepted;
+    pending.push_back(seedAddress);
+    queued.insert(seedAddress);
+
+    for (std::size_t index = 0; index < pending.size() && accepted.size() < maxGraphRecords; ++index)
+    {
+      if ((index % 16) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
+
+      const std::uintptr_t nodeAddress = pending[index];
+      if (!readableAddress(regions, nodeAddress, recordSize))
+        continue;
+
+      RuntimeMemoryReadResult read = readProcessMemory(processId, nodeAddress, recordSize);
+      if (!read.success || read.bytesRead < recordSize)
+        continue;
+
+      RemasteredUnitSnapshotRecord record;
+      record.index = proof.records.size();
+      if (!parseRemasteredUnitSnapshotRecord(
+            processId,
+            read.bytes,
+            0,
+            nodeAddress,
+            regions,
+            record))
+        continue;
+
+      if (!accepted.insert(nodeAddress).second)
+        continue;
+
+      record.index = proof.records.size();
+      proof.records.push_back(record);
+      proof.activeRecords = proof.records.size();
+      proof.sampledRecords = accepted.size();
+
+      const std::array<std::uint64_t, 2> links = {
+        readU64(read.bytes, 0),
+        readU64(read.bytes, 0x08)
+      };
+      for (std::uint64_t link : links)
+      {
+        if (!addressFits(link))
+          continue;
+        const auto linkedAddress = static_cast<std::uintptr_t>(link);
+        if (linkedAddress == 0 || !readableAddress(regions, linkedAddress, recordSize))
+          continue;
+        if (queued.insert(linkedAddress).second)
+          pending.push_back(linkedAddress);
+      }
+
+      if (proof.activeRecords >= minActiveUnitRecords)
+      {
+        proof.passed = true;
+        return proof;
+      }
+    }
+
+    proof.reason = "candidate SC:R unit-node graph did not contain enough linked active records";
+    return proof;
+  }
+
+  LiveUnitNodeProof proveUnitNodePointerGraphsInBytes(
+    int processId,
+    const std::vector<unsigned char>& bytes,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut)
+  {
+    constexpr std::size_t recordSize = 0x58;
+    constexpr std::size_t maxGraphSeedsToScore = 16;
+    std::size_t graphSeedsScored = 0;
+    std::unordered_set<std::uintptr_t> scoredSeeds;
+
+    for (std::size_t offset = 0; offset + sizeof(std::uint64_t) <= bytes.size(); offset += 8)
+    {
+      if ((offset % (16 * 1024)) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
+
+      const std::uint64_t seed64 = readU64(bytes, offset);
+      if (!addressFits(seed64))
+        continue;
+      const auto seedAddress = static_cast<std::uintptr_t>(seed64);
+      if (seedAddress == 0)
+        continue;
+      if (!readableDynamicPointerValue(regions, seedAddress, recordSize))
+        continue;
+      if (!scoredSeeds.insert(seedAddress).second)
+        continue;
+      if (++graphSeedsScored > maxGraphSeedsToScore)
+        return {};
+
+      RuntimeMemoryReadResult precheck = readProcessMemory(processId, seedAddress, recordSize);
+      if (!precheck.success
+          || precheck.bytesRead < recordSize
+          || !plausibleUnitNodeAnchorFields(precheck.bytes, 0))
+        continue;
+
+      LiveUnitNodeProof proof = scoreLinkedUnitNodeGraph(
+        processId,
+        seedAddress,
+        regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut || proof.passed)
+        return proof;
+    }
+
+    return {};
+  }
+
+  LiveUnitNodeProof proveUnitNodeGraphsInBytes(
+    int processId,
+    const std::vector<unsigned char>& bytes,
+    std::uintptr_t baseAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut)
+  {
+    constexpr std::size_t recordSize = 0x58;
+    constexpr std::size_t maxGraphSeedsToScore = 512;
+    std::size_t graphSeedsScored = 0;
+
+    for (std::size_t offset = 0; offset + recordSize <= bytes.size(); offset += 8)
+    {
+      if ((offset % (16 * 1024)) == 0 && timedOut(deadline))
+      {
+        scanTimedOut = true;
+        return {};
+      }
+      if (!plausibleUnitNodeAnchorFields(bytes, offset))
+        continue;
+      if (++graphSeedsScored > maxGraphSeedsToScore)
+        return {};
+
+      LiveUnitNodeProof proof = scoreLinkedUnitNodeGraph(
+        processId,
+        baseAddress + offset,
+        regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut || proof.passed)
+        return proof;
+    }
+
+    return {};
+  }
+
   LiveUnitsProof proveRemasteredUnitNodeSnapshot(
     int processId,
     const std::string& executablePath,
@@ -2261,53 +2629,63 @@ namespace
     if (!regions.success)
       return failedUnitsProof(regions.reason);
 
-    const RuntimeMemoryRegion* containingRegion =
-      findReadableRegion(regions.regions, nodeProof.address, nodeProof.recordSize * minActiveUnitRecords);
-    if (containingRegion == nullptr)
-      return failedUnitsProof("active SC:R unit-node address is no longer readable");
-
-    constexpr std::size_t maxSnapshotRecords = 256;
-    const std::uintptr_t regionEnd = containingRegion->address + containingRegion->size;
-    const std::size_t regionBytes =
-      regionEnd > nodeProof.address
-        ? static_cast<std::size_t>(regionEnd - nodeProof.address)
-        : 0;
-    const std::size_t bytesToRead = std::min(
-      regionBytes,
-      nodeProof.recordSize * maxSnapshotRecords);
-    if (bytesToRead < nodeProof.recordSize * minActiveUnitRecords)
-      return failedUnitsProof("active SC:R unit-node region is too small for a unit snapshot");
-
-    RuntimeMemoryReadResult read =
-      readProcessMemory(processId, nodeProof.address, bytesToRead);
-    if (!read.success || read.bytesRead < nodeProof.recordSize * minActiveUnitRecords)
-      return failedUnitsProof(read.reason.empty()
-        ? "unable to read active SC:R unit-node snapshot"
-        : read.reason);
-
-    std::vector<RemasteredUnitSnapshotRecord> records;
-    std::size_t invalidAfterFirstRecord = 0;
-    const std::size_t availableRecords = read.bytesRead / nodeProof.recordSize;
-    for (std::size_t i = 0; i < availableRecords; ++i)
+    std::vector<RemasteredUnitSnapshotRecord> records = nodeProof.records;
+    std::size_t availableRecords = nodeProof.sampledRecords;
+    if (records.size() >= minActiveUnitRecords)
     {
-      RemasteredUnitSnapshotRecord record;
-      record.index = i;
-      const std::size_t offset = i * nodeProof.recordSize;
-      if (parseRemasteredUnitSnapshotRecord(
-            processId,
-            read.bytes,
-            offset,
-            nodeProof.address + offset,
-            regions.regions,
-            record))
-      {
-        records.push_back(record);
-        invalidAfterFirstRecord = 0;
-        continue;
-      }
+      nodeProof.activeRecords = records.size();
+      if (availableRecords < records.size())
+        availableRecords = records.size();
+    }
+    else
+    {
+      const RuntimeMemoryRegion* containingRegion =
+        findReadableRegion(regions.regions, nodeProof.address, nodeProof.recordSize * minActiveUnitRecords);
+      if (containingRegion == nullptr)
+        return failedUnitsProof("active SC:R unit-node address is no longer readable");
 
-      if (!records.empty() && ++invalidAfterFirstRecord >= 8)
-        break;
+      constexpr std::size_t maxSnapshotRecords = 256;
+      const std::uintptr_t regionEnd = containingRegion->address + containingRegion->size;
+      const std::size_t regionBytes =
+        regionEnd > nodeProof.address
+          ? static_cast<std::size_t>(regionEnd - nodeProof.address)
+          : 0;
+      const std::size_t bytesToRead = std::min(
+        regionBytes,
+        nodeProof.recordSize * maxSnapshotRecords);
+      if (bytesToRead < nodeProof.recordSize * minActiveUnitRecords)
+        return failedUnitsProof("active SC:R unit-node region is too small for a unit snapshot");
+
+      RuntimeMemoryReadResult read =
+        readProcessMemory(processId, nodeProof.address, bytesToRead);
+      if (!read.success || read.bytesRead < nodeProof.recordSize * minActiveUnitRecords)
+        return failedUnitsProof(read.reason.empty()
+          ? "unable to read active SC:R unit-node snapshot"
+          : read.reason);
+
+      std::size_t invalidAfterFirstRecord = 0;
+      availableRecords = read.bytesRead / nodeProof.recordSize;
+      for (std::size_t i = 0; i < availableRecords; ++i)
+      {
+        RemasteredUnitSnapshotRecord record;
+        record.index = i;
+        const std::size_t offset = i * nodeProof.recordSize;
+        if (parseRemasteredUnitSnapshotRecord(
+              processId,
+              read.bytes,
+              offset,
+              nodeProof.address + offset,
+              regions.regions,
+              record))
+        {
+          records.push_back(record);
+          invalidAfterFirstRecord = 0;
+          continue;
+        }
+
+        if (!records.empty() && ++invalidAfterFirstRecord >= 8)
+          break;
+      }
     }
 
     if (records.size() < minActiveUnitRecords)
@@ -3100,6 +3478,7 @@ namespace
     const CommandQueueDiscoveryProof& discoveryProof,
     bool self,
     bool serveCommandBridge,
+    std::uintptr_t explicitCommandQueueVectorAddress,
     std::size_t stateMaxScanBytes,
     int stateScanTimeoutMs)
   {
@@ -3124,9 +3503,35 @@ namespace
     }
     proof.encodedBytes = formatCommandBytesHex(pause.bytes) + " / " + formatCommandBytesHex(resume.bytes);
 
-    const CommandQueueCandidate* candidate = &discoveryProof.candidates.front();
-    if (self)
+    const CommandQueueCandidate* candidate = nullptr;
+    if (explicitCommandQueueVectorAddress != 0)
     {
+      auto explicitCandidate = std::find_if(
+        discoveryProof.candidates.begin(),
+        discoveryProof.candidates.end(),
+        [&](const CommandQueueCandidate& value)
+        {
+          return value.vectorAddress == explicitCommandQueueVectorAddress;
+        });
+      if (explicitCandidate == discoveryProof.candidates.end())
+      {
+        proof.reason =
+          "issue-commands proof requires the explicit command queue vector to be readable; "
+          "refusing to fall back to discovery-only candidates";
+        return proof;
+      }
+      candidate = &*explicitCandidate;
+    }
+    else if (!self)
+    {
+      proof.reason =
+        "live issue-commands proof requires --command-queue-vector-address; "
+        "refusing to write discovery-only command queue candidates";
+      return proof;
+    }
+    else
+    {
+      candidate = &discoveryProof.candidates.front();
       auto selfFixtureCandidate = std::find_if(
         discoveryProof.candidates.begin(),
         discoveryProof.candidates.end(),
@@ -3136,6 +3541,11 @@ namespace
         });
       if (selfFixtureCandidate != discoveryProof.candidates.end())
         candidate = &*selfFixtureCandidate;
+    }
+    if (candidate == nullptr)
+    {
+      proof.reason = "issue-commands proof requires a selected command queue candidate";
+      return proof;
     }
     if (!self)
     {
@@ -3213,90 +3623,84 @@ namespace
     }
 
     const std::uint32_t pausedThreshold = std::max<std::uint32_t>(1, baselineDelta / 8);
-    std::string lastFailure;
-    for (const CommandQueueCandidate& liveCandidate : discoveryProof.candidates)
+    CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
+      processId,
+      *candidate,
+      pause.bytes,
+      false);
+    if (!append.passed)
     {
-      CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
-        processId,
-        liveCandidate,
-        pause.bytes,
-        false);
-      if (!append.passed)
-      {
-        lastFailure = append.reason;
-        continue;
-      }
-
-      proof.deliveryChecked = true;
-      proof.commandQueue = append.candidate;
-      proof.vectorAddress = append.candidate.vectorAddress;
-      proof.bufferBegin = append.candidate.bufferBegin;
-      proof.originalUsedBytes = append.candidate.usedBytes;
-      proof.appendedBytes = append.appendedBytes;
-
-      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-      const bool pausedSampled = sampleFrameCounterDelta(
-        processId,
-        commandCounterProof.address,
-        frameSampleMs,
-        proof.pausedStart,
-        proof.pausedEnd);
-      if (!pausedSampled)
-      {
-        restoreCommandQueueAppendIfStillPresent(processId, append);
-        proof.reason = "unable to sample live frame counter after pause command";
-        return proof;
-      }
-
-      const std::uint32_t pausedDelta = counterDelta(proof.pausedStart, proof.pausedEnd);
-      if (pausedDelta > pausedThreshold)
-      {
-        restoreCommandQueueAppendIfStillPresent(processId, append);
-        lastFailure = "pause command did not stop live frame progression";
-        continue;
-      }
-
-      CommandQueueAppendResult resumeAppend = appendEncodedCommandToQueueCandidate(
-        processId,
-        liveCandidate,
-        resume.bytes,
-        false);
-      if (!resumeAppend.passed)
-      {
-        proof.reason = "pause command delivery passed but resume delivery failed: " + resumeAppend.reason;
-        return proof;
-      }
-
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      if (!sampleProgressingFrameCounter(
-            processId,
-            commandCounterProof.address,
-            frameSampleMs,
-            5,
-            2,
-            proof.resumedStart,
-            proof.resumedEnd))
-      {
-        proof.reason = "unable to sample live frame counter after resume command";
-        return proof;
-      }
-
-      const std::uint32_t resumedDelta = counterDelta(proof.resumedStart, proof.resumedEnd);
-      if (resumedDelta < 2)
-      {
-        proof.reason = "resume command did not restore live frame progression";
-        return proof;
-      }
-
-      proof.behaviorChecked = true;
-      proof.receiverActive = serveCommandBridge;
-      proof.passed = true;
+      proof.reason = append.reason;
       return proof;
     }
 
-    proof.reason = lastFailure.empty()
-      ? "no command queue candidate delivered observable pause/resume behavior"
-      : lastFailure;
+    proof.deliveryChecked = true;
+    proof.commandQueue = append.candidate;
+    proof.vectorAddress = append.candidate.vectorAddress;
+    proof.bufferBegin = append.candidate.bufferBegin;
+    proof.originalUsedBytes = append.candidate.usedBytes;
+    proof.appendedBytes = append.appendedBytes;
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    const bool pausedSampled = sampleFrameCounterDelta(
+      processId,
+      commandCounterProof.address,
+      frameSampleMs,
+      proof.pausedStart,
+      proof.pausedEnd);
+    if (!pausedSampled)
+    {
+      restoreCommandQueueAppendIfStillPresent(processId, append);
+      proof.reason = "unable to sample live frame counter after pause command";
+      return proof;
+    }
+
+    const std::uint32_t pausedDelta = counterDelta(proof.pausedStart, proof.pausedEnd);
+    if (pausedDelta > pausedThreshold)
+    {
+      restoreCommandQueueAppendIfStillPresent(processId, append);
+      proof.reason = "pause command did not stop live frame progression";
+      return proof;
+    }
+
+    CommandQueueAppendResult resumeAppend = appendEncodedCommandToQueueCandidate(
+      processId,
+      *candidate,
+      resume.bytes,
+      false);
+    if (!resumeAppend.passed)
+    {
+      restoreCommandQueueAppendIfStillPresent(processId, append);
+      proof.reason = "pause command delivery passed but resume delivery failed: " + resumeAppend.reason;
+      return proof;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    if (!sampleProgressingFrameCounter(
+          processId,
+          commandCounterProof.address,
+          frameSampleMs,
+          5,
+          2,
+          proof.resumedStart,
+          proof.resumedEnd))
+    {
+      restoreCommandQueueAppendIfStillPresent(processId, resumeAppend);
+      proof.reason = "unable to sample live frame counter after resume command";
+      return proof;
+    }
+
+    const std::uint32_t resumedDelta = counterDelta(proof.resumedStart, proof.resumedEnd);
+    if (resumedDelta < 2)
+    {
+      restoreCommandQueueAppendIfStillPresent(processId, resumeAppend);
+      proof.reason = "resume command did not restore live frame progression";
+      return proof;
+    }
+
+    proof.behaviorChecked = true;
+    proof.receiverActive = serveCommandBridge;
+    proof.passed = true;
     return proof;
   }
 
@@ -3607,6 +4011,70 @@ namespace
     if (!output)
     {
       reason = "unable to write unit snapshot output";
+      return false;
+    }
+    return true;
+  }
+
+  bool writeUnitScanDiagnosticsSnapshot(
+    const std::filesystem::path& path,
+    const UnitScanDiagnostics& diagnostics,
+    const LiveUnitsProof& proof,
+    const LiveUnitNodeProof& nodeProof,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open unit diagnostics snapshot output";
+      return false;
+    }
+
+    output << "field\tvalue\n";
+    output << "read_units_passed\t" << (proof.passed ? "true" : "false") << '\n';
+    output << "read_units_reason\t" << proof.reason << '\n';
+    output << "read_units_address\t" << hexAddress(proof.address) << '\n';
+    output << "read_units_record_size\t" << proof.recordSize << '\n';
+    output << "read_units_layout\t" << proof.layoutName << '\n';
+    output << "read_units_active_records\t" << proof.activeRecords << '\n';
+    output << "unit_node_passed\t" << (nodeProof.passed ? "true" : "false") << '\n';
+    output << "unit_node_reason\t" << nodeProof.reason << '\n';
+    output << "unit_node_address\t" << hexAddress(nodeProof.address) << '\n';
+    output << "unit_node_vector_address\t" << hexAddress(nodeProof.vectorAddress) << '\n';
+    output << "unit_node_record_size\t" << nodeProof.recordSize << '\n';
+    output << "unit_node_active_records\t" << nodeProof.activeRecords << '\n';
+    output << "scan_readable_writable_regions\t" << diagnostics.readableWritableRegions << '\n';
+    output << "scan_readable_only_regions\t" << diagnostics.readableOnlyRegions << '\n';
+    output << "scan_scanned_readable_only_regions\t" << diagnostics.scannedReadableOnlyRegions << '\n';
+    output << "scan_executable_readable_regions\t" << diagnostics.executableReadableRegions << '\n';
+    output << "scan_image_mapped_regions\t" << diagnostics.imageMappedRegions << '\n';
+    output << "scan_skipped_image_mapped_regions\t" << diagnostics.skippedImageMappedRegions << '\n';
+    output << "scan_scanned_regions\t" << diagnostics.scannedRegions << '\n';
+    output << "scan_scanned_bytes\t" << diagnostics.scannedBytes << '\n';
+    output << "scan_vector_candidates\t" << diagnostics.vectorCandidates << '\n';
+    output << "scan_vector_duplicate_begins\t" << diagnostics.vectorDuplicateBegins << '\n';
+    output << "scan_vector_rejected_target_regions\t" << diagnostics.vectorRejectedTargetRegions << '\n';
+    output << "scan_pointer_array_candidates\t" << diagnostics.pointerArrayCandidates << '\n';
+    output << "scan_pointer_arrays_scored\t" << diagnostics.pointerArraysScored << '\n';
+    output << "scan_pointer_array_readable_pointer_hits\t" << diagnostics.pointerArrayReadablePointerHits << '\n';
+    output << "scan_strided_candidates\t" << diagnostics.stridedCandidates << '\n';
+    output << "scan_candidate_arrays_scored\t" << diagnostics.candidateArraysScored << '\n';
+    output << "scan_window_candidate_arrays_scored\t" << diagnostics.windowCandidateArraysScored << '\n';
+    output << "scan_field_plausible_records\t" << diagnostics.fieldPlausibleRecords << '\n';
+    output << "scan_pointer_dense_rejected_records\t" << diagnostics.pointerDenseRejectedRecords << '\n';
+    output << "scan_sprite_rejected_records\t" << diagnostics.spriteRejectedRecords << '\n';
+    output << "scan_plausible_records\t" << diagnostics.plausibleRecords << '\n';
+    output << "scan_timed_out\t" << (diagnostics.timedOut ? "true" : "false") << '\n';
+    output << "scan_byte_limit_reached\t" << (diagnostics.byteLimitReached ? "true" : "false") << '\n';
+    output << "scan_best_active_records\t" << diagnostics.bestActiveRecords << '\n';
+    output << "scan_best_address\t" << hexAddress(diagnostics.bestAddress) << '\n';
+    output << "scan_best_record_size\t" << diagnostics.bestRecordSize << '\n';
+    output << "scan_best_layout\t" << diagnostics.bestLayoutName << '\n';
+    output << "scan_best_snapshot_bytes\t" << diagnostics.bestBytes.size() << '\n';
+
+    if (!output)
+    {
+      reason = "unable to write unit diagnostics snapshot output";
       return false;
     }
     return true;
@@ -4193,22 +4661,33 @@ namespace
     std::vector<std::array<unsigned char, 64>> sprites;
   };
 
-  void writeU32(std::array<unsigned char, 336>& bytes, std::size_t offset, std::uint32_t value)
+  struct SelfUnitNodeFixture
+  {
+    std::array<std::array<unsigned char, 0x58>, 8> nodes;
+    std::array<std::array<unsigned char, 0x48>, 8> secondaryObjects;
+    std::array<std::array<unsigned char, 64>, 8> sprites;
+  };
+
+  template <std::size_t Size>
+  void writeU32(std::array<unsigned char, Size>& bytes, std::size_t offset, std::uint32_t value)
   {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
   }
 
-  void writeU64(std::array<unsigned char, 336>& bytes, std::size_t offset, std::uint64_t value)
+  template <std::size_t Size>
+  void writeU64(std::array<unsigned char, Size>& bytes, std::size_t offset, std::uint64_t value)
   {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
   }
 
-  void writeU16(std::array<unsigned char, 336>& bytes, std::size_t offset, std::uint16_t value)
+  template <std::size_t Size>
+  void writeU16(std::array<unsigned char, Size>& bytes, std::size_t offset, std::uint16_t value)
   {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
   }
 
-  void writeS16(std::array<unsigned char, 336>& bytes, std::size_t offset, std::int16_t value)
+  template <std::size_t Size>
+  void writeS16(std::array<unsigned char, Size>& bytes, std::size_t offset, std::int16_t value)
   {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
   }
@@ -4235,6 +4714,45 @@ namespace
       writeU16(record, 0x64, static_cast<std::uint16_t>(i % 228));
     }
     return fixture;
+  }
+
+  void initializeSelfUnitNodeFixture(SelfUnitNodeFixture& fixture)
+  {
+    for (std::size_t i = 0; i < fixture.nodes.size(); ++i)
+    {
+      auto& node = fixture.nodes[i];
+      auto& secondary = fixture.secondaryObjects[i];
+      node.fill(0);
+      secondary.fill(0);
+      fixture.sprites[i].fill(static_cast<unsigned char>(0x70 + i));
+
+      const std::uintptr_t previous = i == 0
+        ? 0
+        : reinterpret_cast<std::uintptr_t>(fixture.nodes[i - 1].data());
+      const std::uintptr_t next = i + 1 >= fixture.nodes.size()
+        ? 0
+        : reinterpret_cast<std::uintptr_t>(fixture.nodes[i + 1].data());
+      writeU64(node, 0, static_cast<std::uint64_t>(previous));
+      writeU64(node, 0x08, static_cast<std::uint64_t>(next));
+      writeS16(node, 0x24, static_cast<std::int16_t>(160 + i * 24));
+      writeS16(node, 0x26, static_cast<std::int16_t>(128 + i * 16));
+      writeS16(node, 0x28, static_cast<std::int16_t>(192 + i * 24));
+      writeS16(node, 0x2a, static_cast<std::int16_t>(160 + i * 16));
+      writeU16(node, 0x30, static_cast<std::uint16_t>(5 + i));
+      writeU16(node, 0x32, static_cast<std::uint16_t>(1 + i));
+      writeU64(
+        node,
+        0x38,
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(fixture.sprites[i].data())));
+      writeU64(
+        node,
+        0x50,
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(secondary.data())));
+
+      secondary[0x14] = static_cast<unsigned char>(i % 4);
+      writeU16(secondary, 0x18, static_cast<std::uint16_t>(100 + i));
+      writeU16(secondary, 0x20, static_cast<std::uint16_t>(i % 228));
+    }
   }
 
   void initializeSelfCommandQueueFixture(SelfCommandQueueFixture& fixture)
@@ -4311,6 +4829,7 @@ int main(int argc, char** argv)
   bool proveActiveMatchState = false;
   bool proveReadUnits = false;
   bool selfUnitFixture = false;
+  bool selfUnitNodeFixture = false;
   bool proveDispatchEvents = false;
   bool proveReadMapData = false;
   bool proveReadPlayerData = false;
@@ -4372,6 +4891,11 @@ int main(int argc, char** argv)
     if (arg == "--self-unit-fixture")
     {
       selfUnitFixture = true;
+      continue;
+    }
+    if (arg == "--self-unit-node-fixture")
+    {
+      selfUnitNodeFixture = true;
       continue;
     }
     if (arg == "--prove-dispatch-events")
@@ -4712,6 +5236,12 @@ int main(int argc, char** argv)
   if (!memoryAccess.accessible)
     return 3;
 
+  const RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
+  std::cout << "command_surface.ready=true\n";
+  std::cout << "command_surface.unit_commands=" << commandSurface.unitCommands.size() << '\n';
+  std::cout << "command_surface.game_actions=" << commandSurface.gameActions.size() << '\n';
+  std::cout << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
+
   if (!appendGameAction.empty())
   {
     if (commandQueueVectorAddress == 0)
@@ -4772,6 +5302,7 @@ int main(int argc, char** argv)
   CommandQueueDiscoveryProof commandQueueDiscoveryProof;
   IssueCommandsProof issueCommandsProof;
   bool unitSnapshotWritten = false;
+  bool unitScanDiagnosticsSnapshotWritten = false;
   bool dispatchEventsSnapshotWritten = false;
   bool mapDataSnapshotWritten = false;
   bool playerDataSnapshotWritten = false;
@@ -4780,6 +5311,7 @@ int main(int argc, char** argv)
   bool commandQueueDiscoverySnapshotWritten = false;
   bool issueCommandsSnapshotWritten = false;
   SelfUnitFixture unitFixture;
+  SelfUnitNodeFixture unitNodeFixture;
   SelfCommandQueueFixture commandQueueFixture;
   int proofFailureCode = 0;
   bool readGameStateUsedExplicitAddress = false;
@@ -4787,6 +5319,12 @@ int main(int argc, char** argv)
   std::string explicitFrameCounterFailure;
   if (self && selfUnitFixture)
     unitFixture = makeSelfUnitFixture();
+  if (self && selfUnitNodeFixture)
+  {
+    initializeSelfUnitNodeFixture(unitNodeFixture);
+    unitNodeCandidateAddresses.push_back(
+      reinterpret_cast<std::uintptr_t>(unitNodeFixture.nodes.front().data()));
+  }
   if (self && selfCommandQueueFixture)
   {
     initializeSelfCommandQueueFixture(commandQueueFixture);
@@ -4919,7 +5457,7 @@ int main(int argc, char** argv)
       ++unitScanAttempts;
       unitScanDiagnostics = {};
       if (!unitNodeCandidateAddresses.empty()
-          && !self
+          && (!self || selfUnitNodeFixture)
           && (proveActiveMatchState
               || (proveReadUnits && environment.product == Product::StarCraftRemastered)))
       {
@@ -4947,7 +5485,7 @@ int main(int argc, char** argv)
       }
       if (proveReadUnits
           && !readUnitsProof.passed
-          && !self
+          && (!self || selfUnitNodeFixture)
           && environment.product == Product::StarCraftRemastered)
       {
         readUnitsProof = proveRemasteredUnitNodeSnapshot(
@@ -5076,6 +5614,8 @@ int main(int argc, char** argv)
                 << unitScanDiagnostics.windowCandidateArraysScored << '\n';
       std::cout << "read_units.scan.field_plausible_records="
                 << unitScanDiagnostics.fieldPlausibleRecords << '\n';
+      std::cout << "read_units.scan.pointer_dense_rejected_records="
+                << unitScanDiagnostics.pointerDenseRejectedRecords << '\n';
       std::cout << "read_units.scan.sprite_rejected_records="
                 << unitScanDiagnostics.spriteRejectedRecords << '\n';
       std::cout << "read_units.scan.plausible_records=" << unitScanDiagnostics.plausibleRecords << '\n';
@@ -5345,6 +5885,7 @@ int main(int argc, char** argv)
       commandQueueDiscoveryProof,
       self,
       serveCommandBridge,
+      commandQueueVectorAddress,
       stateMaxScanBytes,
       stateScanTimeoutMs);
     std::cout << "issue_commands.ready=" << (issueCommandsProof.passed ? "true" : "false") << '\n';
@@ -5461,6 +6002,27 @@ int main(int argc, char** argv)
       std::cout << "read_units.snapshot.reason=" << snapshotReason << '\n';
     if (!snapshotWritten)
       proofFailureCode = proofFailureCode == 0 ? 6 : proofFailureCode;
+  }
+
+  const std::filesystem::path unitDiagnosticsPath =
+    std::filesystem::path(environment.executorBridgePath) / "unit_diagnostics.snapshot.tsv";
+  if (proveReadUnits && unitScanDiagnosticsFlag)
+  {
+    std::string unitDiagnosticsReason;
+    const bool diagnosticsWritten = writeUnitScanDiagnosticsSnapshot(
+      unitDiagnosticsPath,
+      unitScanDiagnostics,
+      readUnitsProof,
+      activeUnitNodeProof,
+      unitDiagnosticsReason);
+    unitScanDiagnosticsSnapshotWritten = diagnosticsWritten;
+    std::cout << "read_units.scan.snapshot.success="
+              << (diagnosticsWritten ? "true" : "false") << '\n';
+    if (diagnosticsWritten)
+      std::cout << "read_units.scan.snapshot.path="
+                << unitDiagnosticsPath.string() << '\n';
+    if (!unitDiagnosticsReason.empty())
+      std::cout << "read_units.scan.snapshot.reason=" << unitDiagnosticsReason << '\n';
   }
 
   const std::filesystem::path dispatchEventsPath =
@@ -5606,6 +6168,10 @@ int main(int argc, char** argv)
   ready << "executable=" << environment.executablePath << '\n';
   ready << "contract.binding.shared-memory-client-transport=transport|proof.attach=passed\n";
   ready << attachProof->readyFileLine << '\n';
+  ready << RuntimeExecutorBridgeCommandSurfaceLine << '\n';
+  ready << "command_surface.unit_commands=" << commandSurface.unitCommands.size() << '\n';
+  ready << "command_surface.game_actions=" << commandSurface.gameActions.size() << '\n';
+  ready << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
   if (proveReadGameState && readGameStateProof.passed)
   {
     ready << "proof.read_game_state.address=0x" << std::hex << readGameStateProof.address << std::dec << '\n';
@@ -5687,6 +6253,8 @@ int main(int argc, char** argv)
     }
     ready << readUnitsBehaviorProof->readyFileLine << '\n';
   }
+  if (unitScanDiagnosticsSnapshotWritten)
+    ready << "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv\n";
   if (proveIssueCommands
       && issueCommandsProof.passed
       && issueCommandsSnapshotWritten

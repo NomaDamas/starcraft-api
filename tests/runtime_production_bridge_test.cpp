@@ -41,6 +41,21 @@ namespace
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
   }
 
+  void writeLiveContractProofs(std::ofstream& ready)
+  {
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
+    ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:players\n";
+    ready << "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.read_units=passed:unit-node-table\n";
+    ready << "contract.binding.BW::BWDATA::BulletNodeTable=data-address|proof.read_bullet_data=passed:bullet-node-table\n";
+    ready << "contract.binding.BW::BWDATA::MapTileArray=data-address|proof.read_map_data=passed:map-tile-array\n";
+    ready << "contract.binding.BW::BWFXN_ExecuteGameTriggers=function-address|proof.dispatch_events=passed:execute-game-triggers\n";
+    ready << "contract.binding.Storm::SNetReceiveMessage=imported-function|proof.multiplayer_sync=passed:snet-receive-message\n";
+    ready << "contract.binding.Storm::SNetSendTurn=imported-function|proof.multiplayer_sync=passed:snet-send-turn\n";
+    ready << "contract.binding.draw-game-layer-hook=hook-point|proof.draw_overlays=passed:draw-game-layer-hook\n";
+    ready << "contract.binding.ai-module-loader=transport|proof.load_ai_modules=passed:ai-module-loader\n";
+    ready << "contract.binding.shared-memory-client-transport=transport|proof.attach=passed:shared-memory-client\n";
+  }
+
   void writeBootstrapReadyFile(
     const std::filesystem::path& bridgePath,
     int processId,
@@ -57,7 +72,8 @@ namespace
   void writeValidatedAdapterReadyFile(
     const std::filesystem::path& bridgePath,
     int processId,
-    const std::string& executable)
+    const std::string& executable,
+    bool includeLiveContractProofs = false)
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
@@ -66,6 +82,8 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
+    if (includeLiveContractProofs)
+      writeLiveContractProofs(ready);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -153,6 +171,29 @@ int main(int argc, char** argv)
   assert(!opened.opened);
   assert(opened.state == RuntimeSessionState::Failed);
   assert(backend->state() == RuntimeSessionState::Failed);
+
+  writeValidatedAdapterReadyFile(
+    bridgePath,
+    environment.processId,
+    environment.executablePath,
+    true);
+  backend = createRuntimeBackend(environment);
+  probe = backend->probe();
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
+
+  assert(probe.supported);
+  assert(preflight.executorAvailable);
+  assert(preflight.errors.empty());
+  assert(readiness.productionReady);
+  assert(blockingReadinessGaps(readiness).empty());
+
+  opened = backend->open();
+  assert(opened.opened);
+  assert(opened.state == RuntimeSessionState::Open);
+  assert(backend->state() == RuntimeSessionState::Open);
+  backend->close();
+  assert(backend->state() == RuntimeSessionState::Closed);
 
   std::filesystem::remove_all(bridgePath);
   return 0;

@@ -85,8 +85,7 @@ namespace BWAPI::Runtime
       RuntimeProbeResult& result,
       const RuntimeExecutorPreflightResult& preflight)
     {
-      if (!preflightHasCapability(preflight, Capability::IssueCommands)
-          || !preflightHasCapability(preflight, Capability::DrawOverlays))
+      if (!preflightHasCapability(preflight, Capability::IssueCommands))
         return;
 
       const RuntimeCommandSurface surface = makeBWAPICommandSurface();

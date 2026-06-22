@@ -146,6 +146,7 @@ if(STARCRAFT_API_BUILD_TOOLS)
   target_link_libraries(starcraft-runtime-adapter-proof
     PRIVATE
       StarCraftAPI::runtime
+      ${CMAKE_DL_LIBS}
   )
 
   add_executable(starcraft-runtime-binary-anchors

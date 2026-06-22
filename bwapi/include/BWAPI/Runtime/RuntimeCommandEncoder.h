@@ -16,6 +16,7 @@ namespace BWAPI::Runtime
     std::vector<std::string> warnings;
   };
 
+  bool isRuntimeAdapterLocalGameAction(const std::string& name);
   RuntimeEncodedCommand encodeRuntimeCommandRequest(const RuntimeCommandRequest& request);
   RuntimeEncodedCommand encodeRuntimeSelectCommand(
     const std::vector<int>& unitTargetIds,

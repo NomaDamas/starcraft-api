@@ -562,3 +562,70 @@ foreach(needle
 endforeach()
 
 file(REMOVE_RECURSE "${policy_bridge_dir}" "${policy_root}")
+
+set(ai_module_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-ai-module-bridge")
+file(REMOVE_RECURSE "${ai_module_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${ai_module_bridge_dir}"
+    --prove-load-ai-modules
+  RESULT_VARIABLE ai_module_result
+  OUTPUT_VARIABLE ai_module_output
+  ERROR_VARIABLE ai_module_error
+)
+if(NOT ai_module_result EQUAL 0)
+  message(FATAL_ERROR "expected self AI module loader proof to pass\nstdout:\n${ai_module_output}\nstderr:\n${ai_module_error}")
+endif()
+foreach(needle
+    "load_ai_modules.ready=true"
+    "load_ai_modules.loader="
+    "load_ai_modules.module_extension="
+    "load_ai_modules.self_process_smoke=true"
+    "load_ai_modules.snapshot.success=true"
+    "proof.load_ai_modules=passed")
+  string(FIND "${ai_module_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "AI module proof output missing '${needle}'\n${ai_module_output}")
+  endif()
+endforeach()
+
+set(ai_module_ready_file "${ai_module_bridge_dir}/ready")
+if(NOT EXISTS "${ai_module_ready_file}")
+  message(FATAL_ERROR "AI module proof did not write ready file")
+endif()
+file(READ "${ai_module_ready_file}" ai_module_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.load_ai_modules.snapshot=ai_module_load.snapshot.tsv"
+    "contract.binding.ai-module-loader=transport|proof.load_ai_modules=passed"
+    "proof.load_ai_modules=passed")
+  string(FIND "${ai_module_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "AI module ready file missing '${needle}'\n${ai_module_ready}")
+  endif()
+endforeach()
+foreach(forbidden
+    "proof.active_match_state=passed"
+    "proof.issue_commands=passed"
+    "proof.draw_overlays=passed")
+  string(FIND "${ai_module_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "AI module proof must not claim unrelated in-game behavior '${forbidden}'\n${ai_module_ready}")
+  endif()
+endforeach()
+
+file(READ "${ai_module_bridge_dir}/ai_module_load.snapshot.tsv" ai_module_snapshot)
+foreach(needle
+    "passed\ttrue"
+    "self_process_smoke\ttrue")
+  string(FIND "${ai_module_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "AI module snapshot missing '${needle}'\n${ai_module_snapshot}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${ai_module_bridge_dir}")

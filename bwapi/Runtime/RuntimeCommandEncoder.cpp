@@ -721,6 +721,36 @@ namespace BWAPI::Runtime
     return reject("unit command requires live unit state or a dedicated adapter implementation: " + request.name);
   }
 
+  bool isRuntimeAdapterLocalGameAction(const std::string& name)
+  {
+    static const std::vector<std::string> adapterLocalActions = {
+      "setScreenPosition",
+      "enableFlag",
+      "setLastError",
+      "vPrintf",
+      "vSendTextEx",
+      "leaveGame",
+      "setLocalSpeed",
+      "issueCommand",
+      "setTextSize",
+      "vDrawText",
+      "drawBox",
+      "drawTriangle",
+      "drawCircle",
+      "drawEllipse",
+      "drawDot",
+      "drawLine",
+      "setLatCom",
+      "setGUI",
+      "setMap",
+      "setFrameSkip",
+      "setCommandOptimizationLevel",
+      "setRevealAll"
+    };
+    return std::find(adapterLocalActions.begin(), adapterLocalActions.end(), name)
+      != adapterLocalActions.end();
+  }
+
   RuntimeEncodedCommand encodeRuntimeSelectCommand(
     const std::vector<int>& unitTargetIds,
     bool addToSelection)

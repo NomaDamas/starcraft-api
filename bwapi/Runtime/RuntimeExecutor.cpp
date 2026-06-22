@@ -302,6 +302,12 @@ namespace BWAPI::Runtime
         addCapabilityIfMissing(result.provenCapabilities, Capability::ReadMapData);
       if (fileContainsLine(readyPath, "proof.read_player_data=passed"))
         addCapabilityIfMissing(result.provenCapabilities, Capability::ReadPlayerData);
+      if (fileContainsLine(readyPath, "proof.read_bullet_data=passed"))
+        addCapabilityIfMissing(result.provenCapabilities, Capability::ReadBulletData);
+      if (fileContainsLine(readyPath, "proof.read_region_data=passed"))
+        addCapabilityIfMissing(result.provenCapabilities, Capability::ReadRegionData);
+      if (fileContainsLine(readyPath, "proof.load_ai_modules=passed"))
+        addCapabilityIfMissing(result.provenCapabilities, Capability::LoadAIModules);
 
       if (result.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode)
       {

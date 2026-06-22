@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeCommandEncoder.h>
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 
 #include <BWAPI/Order.h>
 #include <BWAPI/TechType.h>
@@ -47,6 +48,54 @@ namespace
     assert(encoded.encoded);
     assert(encoded.reason.empty());
     assert(formatCommandBytesHex(encoded.bytes) == expected);
+  }
+
+  RuntimeCommandRequest sampleUnitCommand(const std::string& name)
+  {
+    if (name == "Move" || name == "Attack_Move" || name == "Patrol" || name == "Unload_All_Position")
+      return unitCommand(name, { 32, 64, 0 });
+    if (name == "Set_Rally_Position")
+      return unitCommand(name, { 32, 64 });
+    if (name == "Attack_Unit" || name == "Follow" || name == "Gather" || name == "Repair")
+      return targetUnitCommand(name, 0x0801, { 0 });
+    if (name == "Set_Rally_Unit" || name == "Right_Click_Unit" || name == "Unload")
+      return targetUnitCommand(name, 0x0801);
+    if (name == "Right_Click_Position")
+      return unitCommand(name, { 32, 64, 0 });
+    if (name == "Build")
+      return unitCommand(name, { 1, 2, 106, 30 });
+    if (name == "Build_Addon" || name == "Land" || name == "Place_COP")
+      return unitCommand(name, { 1, 2, 106 });
+    if (name == "Train")
+      return unitCommand(name, { 0 });
+    if (name == "Morph")
+      return unitCommand(name, { 37 });
+    if (name == "Research")
+      return unitCommand(name, { 7 });
+    if (name == "Upgrade")
+      return unitCommand(name, { 9 });
+    if (name == "Cancel_Train_Slot")
+      return unitCommand(name, { 2 });
+    if (name == "Load")
+      return targetUnitCommand(name, 0x0801, { BWAPI::Orders::Enum::PickupTransport, 0 });
+    if (name == "Use_Tech")
+      return unitCommand(name, { BWAPI::TechTypes::Enum::Stim_Packs });
+    if (name == "Use_Tech_Position")
+      return unitCommand(name, { 32, 64, BWAPI::Orders::Enum::CastScannerSweep });
+    if (name == "Use_Tech_Unit")
+      return targetUnitCommand(name, 0x0801, { BWAPI::Orders::Enum::CastInfestation });
+    return unitCommand(name);
+  }
+
+  RuntimeCommandRequest sampleGameAction(const std::string& name)
+  {
+    if (name == "pingMinimap")
+      return gameAction(name, { 12, 34 });
+    if (name == "setAlliance")
+      return gameAction(name, { 5 });
+    if (name == "setVision")
+      return gameAction(name, { 3 });
+    return gameAction(name);
   }
 }
 
@@ -173,6 +222,31 @@ int main()
   RuntimeEncodedCommand emptySelection = encodeRuntimeSelectCommand({});
   assert(!emptySelection.encoded);
   assert(!emptySelection.reason.empty());
+
+  RuntimeCommandSurface surface = makeBWAPICommandSurface();
+  for (const std::string& name : surface.unitCommands)
+  {
+    RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(sampleUnitCommand(name));
+    assert(encoded.encoded);
+    assert(!encoded.bytes.empty());
+  }
+
+  int encodedGameActions = 0;
+  int adapterLocalGameActions = 0;
+  for (const std::string& name : surface.gameActions)
+  {
+    RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(sampleGameAction(name));
+    if (encoded.encoded)
+    {
+      ++encodedGameActions;
+      assert(!encoded.bytes.empty());
+      continue;
+    }
+    assert(isRuntimeAdapterLocalGameAction(name));
+    ++adapterLocalGameActions;
+  }
+  assert(encodedGameActions == 6);
+  assert(adapterLocalGameActions == 22);
 
   return 0;
 }

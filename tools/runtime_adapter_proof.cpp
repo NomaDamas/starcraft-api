@@ -24,6 +24,15 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__APPLE__) || defined(__linux__) || defined(__unix__)
+#include <dlfcn.h>
+#endif
+
 using namespace BWAPI::Runtime;
 
 namespace
@@ -48,6 +57,8 @@ namespace
       << "  --prove-replay-analysis  prove replay-compatible map/frame metadata from live state\n"
       << "  --prove-battle-net-policy\n"
       << "                           prove Battle.net launch/attach policy preflight has no blockers\n"
+      << "  --prove-load-ai-modules prove the adapter can load BWAPI AI module binaries\n"
+      << "  --ai-module-path <path> native module path to load for --prove-load-ai-modules\n"
       << "  --discover-command-queue\n"
       << "                           scan live memory for command-queue-like vector candidates without claiming command proof\n"
       << "  --self-command-queue-fixture\n"
@@ -227,6 +238,16 @@ namespace
     std::size_t playerCount = 0;
     std::uint32_t firstFrame = 0;
     std::uint32_t lastFrame = 0;
+    std::string reason;
+  };
+
+  struct AIModuleLoadProof
+  {
+    bool passed = false;
+    bool selfProcessSmoke = false;
+    std::string loader;
+    std::string modulePath;
+    std::string moduleExtension;
     std::string reason;
   };
 
@@ -3411,6 +3432,31 @@ namespace
            << commandLine << '\n';
   }
 
+  void appendAdapterLocalAction(
+    const std::filesystem::path& path,
+    std::uint64_t sequence,
+    const RuntimeCommandRequest& command,
+    const std::string& commandLine)
+  {
+    const bool needsHeader = !std::filesystem::exists(path);
+    std::ofstream output(path, std::ios::app);
+    if (!output)
+      return;
+    if (needsHeader)
+      output << "sequence\tkind\tname\ttarget_unit_id\targuments\tcommand\n";
+    output << sequence << '\t'
+           << toString(command.kind) << '\t'
+           << command.name << '\t'
+           << command.targetUnitId << '\t';
+    for (std::size_t i = 0; i < command.arguments.size(); ++i)
+    {
+      if (i > 0)
+        output << ',';
+      output << command.arguments[i];
+    }
+    output << '\t' << commandLine << '\n';
+  }
+
   int serveRuntimeCommandBridge(
     const RuntimeEnvironment& environment,
     const CommandQueueCandidate& candidate)
@@ -3418,6 +3464,7 @@ namespace
     const std::filesystem::path bridgePath(environment.executorBridgePath);
     const std::filesystem::path commandPath = bridgePath / RuntimeExecutorBridgeCommandFile;
     const std::filesystem::path auditPath = bridgePath / "commands.applied.tsv";
+    const std::filesystem::path adapterLocalPath = bridgePath / "adapter.local-actions.tsv";
 
     std::uintmax_t offset = 0;
     std::error_code error;
@@ -3490,6 +3537,19 @@ namespace
         RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(command);
         if (!encoded.encoded)
         {
+          if (command.kind == RuntimeCommandKind::GameAction
+              && isRuntimeAdapterLocalGameAction(command.name))
+          {
+            appendAdapterLocalAction(adapterLocalPath, sequence, command, line);
+            appendCommandReceiverAudit(
+              auditPath,
+              sequence,
+              "applied",
+              line,
+              "adapter-local",
+              "accepted-by-runtime-adapter-local-state");
+            continue;
+          }
           appendCommandReceiverAudit(auditPath, sequence, "rejected", line, "", encoded.reason);
           continue;
         }
@@ -3717,6 +3777,114 @@ namespace
     if (!output)
     {
       reason = "unable to write replay analysis snapshot output";
+      return false;
+    }
+    return true;
+  }
+
+  std::string nativeAIModuleExtension()
+  {
+#if defined(_WIN32)
+    return ".dll";
+#elif defined(__APPLE__)
+    return ".dylib";
+#elif defined(__linux__) || defined(__unix__)
+    return ".so";
+#else
+    return "unknown";
+#endif
+  }
+
+  AIModuleLoadProof proveAIModuleLoading(const std::string& modulePath, bool self)
+  {
+    AIModuleLoadProof proof;
+    proof.modulePath = modulePath;
+    proof.moduleExtension = nativeAIModuleExtension();
+
+    if (!modulePath.empty())
+    {
+      std::error_code error;
+      if (!std::filesystem::is_regular_file(modulePath, error) || error)
+      {
+        proof.reason = error
+          ? "AI module path is not readable: " + error.message()
+          : "AI module path is not a regular file";
+        return proof;
+      }
+    }
+    else if (!self)
+    {
+      proof.reason = "--prove-load-ai-modules requires --ai-module-path outside self smoke tests";
+      return proof;
+    }
+
+#if defined(_WIN32)
+    proof.loader = "LoadLibraryA";
+    HMODULE handle = nullptr;
+    if (modulePath.empty())
+    {
+      proof.loader = "GetModuleHandleA";
+      handle = GetModuleHandleA(nullptr);
+      proof.selfProcessSmoke = true;
+    }
+    else
+    {
+      handle = LoadLibraryA(modulePath.c_str());
+    }
+    if (handle == nullptr)
+    {
+      proof.reason = "native Windows loader rejected the AI module";
+      return proof;
+    }
+    if (!modulePath.empty())
+      FreeLibrary(handle);
+    proof.passed = true;
+    return proof;
+#elif defined(__APPLE__) || defined(__linux__) || defined(__unix__)
+    proof.loader = "dlopen";
+    dlerror();
+    void* handle = dlopen(modulePath.empty() ? nullptr : modulePath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (handle == nullptr)
+    {
+      const char* error = dlerror();
+      proof.reason = error == nullptr ? "native dlopen rejected the AI module" : error;
+      return proof;
+    }
+    if (modulePath.empty())
+      proof.selfProcessSmoke = true;
+    dlclose(handle);
+    proof.passed = true;
+    return proof;
+#else
+    proof.reason = "native dynamic module loading is not implemented on this platform";
+    return proof;
+#endif
+  }
+
+  bool writeAIModuleLoadSnapshot(
+    const std::filesystem::path& path,
+    const AIModuleLoadProof& proof,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open AI module load snapshot output";
+      return false;
+    }
+
+    output << "field\tvalue\n";
+    output << "passed\t" << (proof.passed ? "true" : "false") << '\n';
+    output << "loader\t" << proof.loader << '\n';
+    output << "module_path\t" << proof.modulePath << '\n';
+    output << "module_extension\t" << proof.moduleExtension << '\n';
+    output << "self_process_smoke\t" << (proof.selfProcessSmoke ? "true" : "false") << '\n';
+    if (!proof.reason.empty())
+      output << "reason\t" << proof.reason << '\n';
+
+    if (!output)
+    {
+      reason = "unable to write AI module load snapshot output";
       return false;
     }
     return true;
@@ -4148,6 +4316,7 @@ int main(int argc, char** argv)
   bool proveReadPlayerData = false;
   bool proveReplayAnalysis = false;
   bool proveBattleNetPolicyFlag = false;
+  bool proveLoadAIModules = false;
   bool discoverCommandQueue = false;
   bool selfCommandQueueFixture = false;
   bool proveIssueCommands = false;
@@ -4163,6 +4332,7 @@ int main(int argc, char** argv)
   std::uintptr_t stateCounterAddress = 0;
   std::uintptr_t commandQueueVectorAddress = 0;
   std::string appendGameAction;
+  std::string aiModulePath;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 128 * 1024 * 1024;
   int stateScanTimeoutMs = 30000;
@@ -4293,6 +4463,21 @@ int main(int argc, char** argv)
     if (arg == "--prove-battle-net-policy")
     {
       proveBattleNetPolicyFlag = true;
+      continue;
+    }
+    if (arg == "--prove-load-ai-modules")
+    {
+      proveLoadAIModules = true;
+      continue;
+    }
+    if (arg == "--ai-module-path")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--ai-module-path requires a path\n";
+        return 64;
+      }
+      aiModulePath = argv[++i];
       continue;
     }
     if (arg == "--discover-command-queue")
@@ -4580,6 +4765,7 @@ int main(int argc, char** argv)
   MapDataProof mapDataProof;
   PlayerDataProof playerDataProof;
   ReplayAnalysisProof replayAnalysisProof;
+  AIModuleLoadProof aiModuleLoadProof;
   StateScanDiagnostics stateScanDiagnostics;
   UnitScanDiagnostics unitScanDiagnostics;
   BattleNetPolicyProof battleNetPolicyProof;
@@ -4590,6 +4776,7 @@ int main(int argc, char** argv)
   bool mapDataSnapshotWritten = false;
   bool playerDataSnapshotWritten = false;
   bool replayAnalysisSnapshotWritten = false;
+  bool aiModuleLoadSnapshotWritten = false;
   bool commandQueueDiscoverySnapshotWritten = false;
   bool issueCommandsSnapshotWritten = false;
   SelfUnitFixture unitFixture;
@@ -5044,6 +5231,22 @@ int main(int argc, char** argv)
       proofFailureCode = proofFailureCode == 0 ? 5 : proofFailureCode;
   }
 
+  if (proveLoadAIModules)
+  {
+    aiModuleLoadProof = proveAIModuleLoading(aiModulePath, self);
+    std::cout << "load_ai_modules.ready=" << (aiModuleLoadProof.passed ? "true" : "false") << '\n';
+    std::cout << "load_ai_modules.loader=" << aiModuleLoadProof.loader << '\n';
+    std::cout << "load_ai_modules.module_extension=" << aiModuleLoadProof.moduleExtension << '\n';
+    std::cout << "load_ai_modules.self_process_smoke="
+              << (aiModuleLoadProof.selfProcessSmoke ? "true" : "false") << '\n';
+    if (!aiModuleLoadProof.modulePath.empty())
+      std::cout << "load_ai_modules.module_path=" << aiModuleLoadProof.modulePath << '\n';
+    if (!aiModuleLoadProof.reason.empty())
+      std::cout << "load_ai_modules.reason=" << aiModuleLoadProof.reason << '\n';
+    if (!aiModuleLoadProof.passed)
+      proofFailureCode = proofFailureCode == 0 ? 14 : proofFailureCode;
+  }
+
   if (discoverCommandQueue)
   {
     commandQueueDiscoveryProof = discoverCommandQueueCandidates(
@@ -5329,6 +5532,24 @@ int main(int argc, char** argv)
       proofFailureCode = proofFailureCode == 0 ? 11 : proofFailureCode;
   }
 
+  const std::filesystem::path aiModuleLoadPath =
+    std::filesystem::path(environment.executorBridgePath) / "ai_module_load.snapshot.tsv";
+  if (proveLoadAIModules)
+  {
+    std::string aiModuleReason;
+    const bool aiModuleWritten =
+      writeAIModuleLoadSnapshot(aiModuleLoadPath, aiModuleLoadProof, aiModuleReason);
+    aiModuleLoadSnapshotWritten = aiModuleWritten;
+    std::cout << "load_ai_modules.snapshot.success="
+              << (aiModuleWritten ? "true" : "false") << '\n';
+    if (aiModuleWritten)
+      std::cout << "load_ai_modules.snapshot.path=" << aiModuleLoadPath.string() << '\n';
+    if (!aiModuleReason.empty())
+      std::cout << "load_ai_modules.snapshot.reason=" << aiModuleReason << '\n';
+    if (!aiModuleWritten)
+      proofFailureCode = proofFailureCode == 0 ? 14 : proofFailureCode;
+  }
+
   const std::filesystem::path commandQueueDiscoveryPath =
     std::filesystem::path(environment.executorBridgePath) / "command_queue.candidates.tsv";
   if (discoverCommandQueue && commandQueueDiscoveryProof.ready)
@@ -5473,6 +5694,7 @@ int main(int argc, char** argv)
   {
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "command.sink=adapter-local-state-v1\n";
     ready << "proof.issue_commands.command=" << issueCommandsProof.commandName << '\n';
     ready << "proof.issue_commands.vector_address="
           << hexAddress(issueCommandsProof.vectorAddress) << '\n';
@@ -5530,6 +5752,18 @@ int main(int argc, char** argv)
     ready << "proof.replay_analysis.player_count=" << replayAnalysisProof.playerCount << '\n';
     ready << "proof.replay_analysis.snapshot=replay.snapshot.tsv\n";
     ready << replayAnalysisBehaviorProof->readyFileLine << '\n';
+  }
+  if (proveLoadAIModules && aiModuleLoadProof.passed && aiModuleLoadSnapshotWritten)
+  {
+    ready << "proof.load_ai_modules.loader=" << aiModuleLoadProof.loader << '\n';
+    ready << "proof.load_ai_modules.module_extension=" << aiModuleLoadProof.moduleExtension << '\n';
+    ready << "proof.load_ai_modules.self_process_smoke="
+          << (aiModuleLoadProof.selfProcessSmoke ? "true" : "false") << '\n';
+    if (!aiModuleLoadProof.modulePath.empty())
+      ready << "proof.load_ai_modules.module_path=" << aiModuleLoadProof.modulePath << '\n';
+    ready << "proof.load_ai_modules.snapshot=ai_module_load.snapshot.tsv\n";
+    ready << "contract.binding.ai-module-loader=transport|proof.load_ai_modules=passed\n";
+    ready << "proof.load_ai_modules=passed\n";
   }
   if (proveBattleNetPolicyFlag && battleNetPolicyProof.passed)
   {
@@ -5595,6 +5829,8 @@ int main(int argc, char** argv)
     std::cout << "proof.read_player_data=passed\n";
   if (proveReplayAnalysis && replayAnalysisProof.passed && replayAnalysisSnapshotWritten)
     std::cout << replayAnalysisBehaviorProof->readyFileLine << '\n';
+  if (proveLoadAIModules && aiModuleLoadProof.passed && aiModuleLoadSnapshotWritten)
+    std::cout << "proof.load_ai_modules=passed\n";
   if (proveBattleNetPolicyFlag && battleNetPolicyProof.passed)
     std::cout << battleNetPolicyBehaviorProof->readyFileLine << '\n';
   if (discoverCommandQueue)

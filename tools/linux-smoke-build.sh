@@ -258,6 +258,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/tools/runtime_submit_command.cpp" \
   -o "$bin_dir/starcraft-runtime-submit-command"
 
@@ -305,7 +306,9 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeReadiness.cpp" \
   "$repo_root/bwapi/Runtime/UnsupportedRuntimeBackend.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/tools/runtime_adapter_proof.cpp" \
+  -ldl \
   -o "$bin_dir/starcraft-runtime-adapter-proof"
 
 "$bin_dir/starcraft-runtime-adapter-proof" --help >/dev/null

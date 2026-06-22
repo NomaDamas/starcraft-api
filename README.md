@@ -9,7 +9,7 @@ The goal is to preserve the BWAPI programming surface while moving the runtime i
 - macOS, Linux, and Windows CMake targets are supported.
 - The public BWAPI-compatible API surface is audited at 385 abstract methods.
 - The command surface is audited at 44 unit commands and 28 game actions.
-- StarCraft: Remastered runtime contracts fail closed until version-specific game-state bindings, command execution, events, overlays, replay behavior, and multiplayer synchronization are validated. The command/action names are known to the portable queue and encoder, but the Remastered backend only advertises them as implemented after live command and overlay proofs pass.
+- StarCraft: Remastered runtime contracts fail closed until version-specific game-state bindings, command execution, events, overlays, replay behavior, and multiplayer synchronization are validated. The command/action names are known to the portable queue and encoder, and the Remastered backend advertises the full command/action facade only after live command receiver proof passes. Overlay rendering remains a separate production proof.
 - macOS Battle.net installations can be discovered and launch/attach bootstrap files can be generated with `starcraft-runtime-launch`.
 
 ## macOS Battle.net Bootstrap
@@ -94,6 +94,8 @@ build/starcraft-runtime-submit-command \
   --bridge /path/to/authorized-runtime-bridge \
   --game-action pauseGame
 ```
+
+When a live command receiver is serving a validated adapter bridge, turn-buffer-backed commands are encoded and appended to the proven runtime command queue. Adapter-local BWAPI actions such as `drawBox`, `vDrawText`, `setGUI`, `setFrameSkip`, and `setCommandOptimizationLevel` are not written into the StarCraft turn buffer; the receiver records them in `adapter.local-actions.tsv` and audits them as `adapter-local` in `commands.applied.tsv`. This prevents command queue corruption while keeping the BWAPI facade command stream complete. It is still not overlay-rendering evidence by itself; `proof.draw_overlays=passed` remains required before production readiness can pass.
 
 The bridge written by `starcraft-runtime-launch --bridge` is `mode=launch-attach-bootstrap` and includes the selected `process_id` and `executable`. It is only bootstrap/plumbing evidence and cannot satisfy production readiness. `starcraft-runtime-adapter-proof` writes `proof.attach=passed` only after both process identity and actual process-memory access are available, and it may preserve partial passing proofs when later in-game checks fail. A production executor must publish matching runtime identity, `mode=validated-runtime-adapter`, and behavior proof lines for attach, active match/replay state, game-state reads, unit reads, command issue, overlay drawing, event dispatch, replay analysis, multiplayer sync, and Battle.net policy validation.
 

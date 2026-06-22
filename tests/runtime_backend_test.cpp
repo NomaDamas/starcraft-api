@@ -93,13 +93,46 @@ int main()
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
+    ready << "proof.attach=passed\n";
+    ready << "proof.issue_commands=passed\n";
+  }
+
+  RuntimeProbeResult issueCommandOnlyProbe = proofBackedRemasteredBackend->probe();
+  assert(hasCapability(issueCommandOnlyProbe, Capability::IssueCommands));
+  assert(!hasCapability(issueCommandOnlyProbe, Capability::DrawOverlays));
+  assert(issueCommandOnlyProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
+  assert(issueCommandOnlyProbe.implementedUnitCommands == remasteredSurface.unitCommands);
+  assert(issueCommandOnlyProbe.implementedGameActions == remasteredSurface.gameActions);
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=unit-test\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
+    ready << "proof.read_map_data=passed\n";
+    ready << "proof.read_player_data=passed\n";
+    ready << "proof.read_bullet_data=passed\n";
+    ready << "proof.read_region_data=passed\n";
+    ready << "proof.load_ai_modules=passed\n";
   }
 
   RuntimeProbeResult commandProofRemasteredProbe = proofBackedRemasteredBackend->probe();
   assert(hasCapability(commandProofRemasteredProbe, Capability::IssueCommands));
   assert(hasCapability(commandProofRemasteredProbe, Capability::DrawOverlays));
+  assert(hasCapability(commandProofRemasteredProbe, Capability::ReadMapData));
+  assert(hasCapability(commandProofRemasteredProbe, Capability::ReadPlayerData));
+  assert(hasCapability(commandProofRemasteredProbe, Capability::ReadBulletData));
+  assert(hasCapability(commandProofRemasteredProbe, Capability::ReadRegionData));
+  assert(hasCapability(commandProofRemasteredProbe, Capability::LoadAIModules));
   assert(commandProofRemasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(commandProofRemasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
   assert(commandProofRemasteredProbe.implementedGameActions == remasteredSurface.gameActions);

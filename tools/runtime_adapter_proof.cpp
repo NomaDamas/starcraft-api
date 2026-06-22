@@ -1,4 +1,5 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
+#include <BWAPI/Runtime/RuntimeCommandEncoder.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
@@ -51,8 +52,18 @@ namespace
       << "                           scan live memory for command-queue-like vector candidates without claiming command proof\n"
       << "  --self-command-queue-fixture\n"
       << "                           allocate a self-test command queue candidate before --discover-command-queue\n"
+      << "  --prove-issue-commands\n"
+      << "                           prove encoded BWAPI turn-buffer commands are delivered to a live runtime command path\n"
+      << "  --serve-command-bridge\n"
+      << "                           keep running after proof and consume commands.log into the proven live command queue\n"
+      << "  --command-queue-vector-address <address>\n"
+      << "                           explicit command queue vector for manual command append diagnostics\n"
+      << "  --append-game-action <name>\n"
+      << "                           append one encoded game action to the explicit command queue vector, then exit\n"
       << "  --state-sample-delay-ms <ms>\n"
       << "                           delay between live state samples (default: 250)\n"
+      << "  --state-counter-address <address>\n"
+      << "                           validate an explicit live frame counter address before broad scans\n"
       << "  --state-scan-timeout-ms <ms>\n"
       << "                           maximum time for --prove-read-game-state scan (default: 30000)\n"
       << "  --state-max-scan-mb <mb> maximum readable writable memory to sample (default: 128)\n"
@@ -69,6 +80,8 @@ namespace
       << "                           include regions mapped from the target executable in unit scans\n"
       << "  --unit-candidate-address <address>\n"
       << "                           validate an explicit CUnit array candidate before broad scans\n"
+      << "  --unit-node-candidate-address <address>\n"
+      << "                           validate an explicit SC:R unit-node graph candidate before broad scans\n"
       << "  --unit-best-dump-out <path>\n"
       << "                           dump bytes from the best CUnit candidate for offline analysis\n"
       << "  --state-scan-diagnostics\n"
@@ -235,6 +248,30 @@ namespace
     std::size_t scannedRegions = 0;
     std::size_t scannedBytes = 0;
     std::vector<CommandQueueCandidate> candidates;
+    std::string reason;
+  };
+
+  struct IssueCommandsProof
+  {
+    bool passed = false;
+    bool deliveryChecked = false;
+    bool behaviorChecked = false;
+    bool selfFixture = false;
+    bool receiverActive = false;
+    CommandQueueCandidate commandQueue;
+    std::uintptr_t vectorAddress = 0;
+    std::uintptr_t bufferBegin = 0;
+    std::uintptr_t frameCounterAddress = 0;
+    std::size_t originalUsedBytes = 0;
+    std::size_t appendedBytes = 0;
+    std::uint32_t baselineStart = 0;
+    std::uint32_t baselineEnd = 0;
+    std::uint32_t pausedStart = 0;
+    std::uint32_t pausedEnd = 0;
+    std::uint32_t resumedStart = 0;
+    std::uint32_t resumedEnd = 0;
+    std::string commandName;
+    std::string encodedBytes;
     std::string reason;
   };
 
@@ -2085,6 +2122,61 @@ namespace
     return failedUnitNodeProof("no active SC:R unit-node anchor found");
   }
 
+  LiveUnitNodeProof proveExplicitUnitNodeCandidateAddresses(
+    int processId,
+    const std::vector<std::uintptr_t>& candidateAddresses,
+    int scanTimeoutMs)
+  {
+    if (candidateAddresses.empty())
+      return failedUnitNodeProof("no explicit SC:R unit-node candidate addresses were provided");
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+      return failedUnitNodeProof(regions.reason);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
+    constexpr std::size_t recordSize = 0x58;
+    constexpr std::size_t maxSnapshotRecords = 256;
+    for (std::uintptr_t candidateAddress : candidateAddresses)
+    {
+      if (timedOut(deadline))
+        return failedUnitNodeProof("explicit SC:R unit-node candidate scan timed out before proof");
+
+      const RuntimeMemoryRegion* containingRegion =
+        findReadableRegion(regions.regions, candidateAddress, recordSize * minActiveUnitRecords);
+      if (containingRegion == nullptr)
+        continue;
+
+      const std::uintptr_t regionEnd = containingRegion->address + containingRegion->size;
+      const std::size_t regionBytes =
+        regionEnd > candidateAddress
+          ? static_cast<std::size_t>(regionEnd - candidateAddress)
+          : 0;
+      const std::size_t bytesToRead = std::min(regionBytes, recordSize * maxSnapshotRecords);
+      if (bytesToRead < recordSize * minActiveUnitRecords)
+        continue;
+
+      RuntimeMemoryReadResult read = readProcessMemory(processId, candidateAddress, bytesToRead);
+      if (!read.success || read.bytesRead < recordSize * minActiveUnitRecords)
+        continue;
+
+      bool scanTimedOut = false;
+      LiveUnitNodeProof proof = scoreUnitNodeAnchorArray(
+        read.bytes,
+        candidateAddress,
+        0,
+        regions.regions,
+        deadline,
+        scanTimedOut);
+      if (scanTimedOut)
+        return failedUnitNodeProof("explicit SC:R unit-node candidate scan timed out before proof");
+      if (proof.passed)
+        return proof;
+    }
+
+    return failedUnitNodeProof("no explicit SC:R unit-node candidate address contained enough active records");
+  }
+
   bool parseRemasteredUnitSnapshotRecord(
     int processId,
     const std::vector<unsigned char>& bytes,
@@ -2572,6 +2664,17 @@ namespace
           hints,
           usedBytes,
           capacityBytes);
+        if (usedBytes == 4 && capacityBytes == 4096)
+        {
+          RuntimeMemoryReadResult marker = readProcessMemory(processId, begin, 4);
+          if (marker.success
+              && marker.bytesRead == 4
+              && marker.bytes[0] == 0x14
+              && marker.bytes[1] == 0x00
+              && marker.bytes[2] == 0x34
+              && marker.bytes[3] == 0x12)
+            candidate.score += 1000;
+        }
         candidate.regionPath = region.mappedPath;
         proof.candidates.push_back(std::move(candidate));
       }
@@ -2633,6 +2736,781 @@ namespace
       return false;
     }
     return true;
+  }
+
+  RuntimeCommandRequest gameActionRequest(std::string name)
+  {
+    RuntimeCommandRequest request;
+    request.kind = RuntimeCommandKind::GameAction;
+    request.name = std::move(name);
+    return request;
+  }
+
+  LiveCounterProof proveLiveCounterRead(
+    int processId,
+    const std::string& executablePath,
+    int sampleDelayMs,
+    std::size_t maxScanBytes,
+    int scanTimeoutMs,
+    StateScanDiagnostics* diagnostics);
+
+  bool readCommandQueueCandidate(
+    int processId,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    std::uintptr_t vectorAddress,
+    CommandQueueCandidate& candidate,
+    std::string& reason)
+  {
+    RuntimeMemoryReadResult vectorRead =
+      readProcessMemory(processId, vectorAddress, sizeof(std::uint64_t) * 3);
+    if (!vectorRead.success || vectorRead.bytesRead < sizeof(std::uint64_t) * 3)
+    {
+      reason = vectorRead.reason.empty()
+        ? "unable to read command queue vector"
+        : vectorRead.reason;
+      return false;
+    }
+
+    const auto begin = static_cast<std::uintptr_t>(readU64(vectorRead.bytes, 0));
+    const auto end = static_cast<std::uintptr_t>(readU64(vectorRead.bytes, 8));
+    const auto capacity = static_cast<std::uintptr_t>(readU64(vectorRead.bytes, 16));
+    std::size_t usedBytes = 0;
+    std::size_t capacityBytes = 0;
+    if (!plausibleCommandQueueVector(regions, begin, end, capacity, usedBytes, capacityBytes))
+    {
+      reason = "command queue vector is no longer plausible";
+      return false;
+    }
+
+    candidate.vectorAddress = vectorAddress;
+    candidate.bufferBegin = begin;
+    candidate.bufferEnd = end;
+    candidate.bufferCapacity = capacity;
+    candidate.usedBytes = usedBytes;
+    candidate.capacityBytes = capacityBytes;
+    return true;
+  }
+
+  struct CommandQueueAppendResult
+  {
+    bool passed = false;
+    CommandQueueCandidate candidate;
+    std::uintptr_t tailAddress = 0;
+    std::uintptr_t expectedEnd = 0;
+    std::vector<unsigned char> originalTail;
+    std::size_t appendedBytes = 0;
+    std::string reason;
+  };
+
+  CommandQueueAppendResult appendEncodedCommandToQueueCandidate(
+    int processId,
+    const CommandQueueCandidate& selectedCandidate,
+    const std::vector<std::uint8_t>& encodedBytes,
+    bool restoreAfterReadback)
+  {
+    CommandQueueAppendResult result;
+    if (encodedBytes.empty())
+    {
+      result.reason = "encoded command is empty";
+      return result;
+    }
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+    {
+      result.reason = regions.reason;
+      return result;
+    }
+
+    std::string reason;
+    CommandQueueCandidate current;
+    if (!readCommandQueueCandidate(
+          processId,
+          regions.regions,
+          selectedCandidate.vectorAddress,
+          current,
+          reason))
+    {
+      result.reason = reason;
+      return result;
+    }
+
+    const std::size_t availableBytes = current.capacityBytes - current.usedBytes;
+    if (availableBytes < encodedBytes.size())
+    {
+      result.reason = "command queue candidate does not have enough remaining capacity";
+      return result;
+    }
+
+    RuntimeMemoryReadResult originalTail =
+      readProcessMemory(processId, current.bufferEnd, encodedBytes.size());
+    if (!originalTail.success || originalTail.bytesRead != encodedBytes.size())
+    {
+      result.reason = originalTail.reason.empty()
+        ? "unable to snapshot command queue tail before write"
+        : originalTail.reason;
+      return result;
+    }
+
+    RuntimeMemoryWriteResult writeBytes = writeProcessMemory(
+      processId,
+      current.bufferEnd,
+      encodedBytes.data(),
+      encodedBytes.size());
+    if (!writeBytes.success || writeBytes.bytesWritten != encodedBytes.size())
+    {
+      result.reason = writeBytes.reason.empty()
+        ? "unable to write encoded command bytes"
+        : writeBytes.reason;
+      return result;
+    }
+
+    const std::uint64_t newEnd64 =
+      static_cast<std::uint64_t>(current.bufferEnd + encodedBytes.size());
+    RuntimeMemoryWriteResult writeEnd = writeProcessMemory(
+      processId,
+      current.vectorAddress + sizeof(std::uint64_t),
+      &newEnd64,
+      sizeof(newEnd64));
+    if (!writeEnd.success || writeEnd.bytesWritten != sizeof(newEnd64))
+    {
+      result.reason = writeEnd.reason.empty()
+        ? "unable to advance command queue end pointer"
+        : writeEnd.reason;
+      return result;
+    }
+
+    RuntimeMemoryReadResult readback =
+      readProcessMemory(processId, current.bufferEnd, encodedBytes.size());
+    if (!readback.success || readback.bytesRead != encodedBytes.size())
+    {
+      result.reason = readback.reason.empty()
+        ? "unable to read back encoded command bytes"
+        : readback.reason;
+      return result;
+    }
+    if (!std::equal(encodedBytes.begin(), encodedBytes.end(), readback.bytes.begin()))
+    {
+      result.reason = "encoded command readback did not match written bytes";
+      return result;
+    }
+
+    CommandQueueCandidate afterWrite;
+    if (!readCommandQueueCandidate(
+          processId,
+          regions.regions,
+          current.vectorAddress,
+          afterWrite,
+          reason))
+    {
+      result.reason = reason;
+      return result;
+    }
+    if (afterWrite.bufferEnd != current.bufferEnd + encodedBytes.size())
+    {
+      result.reason = "command queue end pointer did not advance by encoded command size";
+      return result;
+    }
+
+    if (restoreAfterReadback)
+    {
+      const std::uint64_t originalEnd64 = static_cast<std::uint64_t>(current.bufferEnd);
+      RuntimeMemoryWriteResult restoreTail = writeProcessMemory(
+        processId,
+        current.bufferEnd,
+        originalTail.bytes.data(),
+        originalTail.bytes.size());
+      RuntimeMemoryWriteResult restoreEnd = writeProcessMemory(
+        processId,
+        current.vectorAddress + sizeof(std::uint64_t),
+        &originalEnd64,
+        sizeof(originalEnd64));
+      if (!restoreTail.success || !restoreEnd.success)
+      {
+        result.reason = "command queue self-fixture write passed but restore failed";
+        return result;
+      }
+    }
+
+    result.passed = true;
+    result.candidate = current;
+    result.tailAddress = current.bufferEnd;
+    result.expectedEnd = current.bufferEnd + encodedBytes.size();
+    result.originalTail = std::move(originalTail.bytes);
+    result.appendedBytes = encodedBytes.size();
+    return result;
+  }
+
+  bool restoreCommandQueueAppendIfStillPresent(
+    int processId,
+    const CommandQueueAppendResult& append)
+  {
+    if (!append.passed || append.tailAddress == 0 || append.originalTail.empty())
+      return false;
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+      return false;
+
+    std::string reason;
+    CommandQueueCandidate current;
+    if (!readCommandQueueCandidate(
+          processId,
+          regions.regions,
+          append.candidate.vectorAddress,
+          current,
+          reason))
+      return false;
+    if (current.bufferEnd != append.expectedEnd)
+      return false;
+
+    RuntimeMemoryReadResult tailRead =
+      readProcessMemory(processId, append.tailAddress, append.appendedBytes);
+    if (!tailRead.success || tailRead.bytesRead != append.appendedBytes)
+      return false;
+
+    const std::uint64_t originalEnd64 = static_cast<std::uint64_t>(append.tailAddress);
+    RuntimeMemoryWriteResult restoreTail = writeProcessMemory(
+      processId,
+      append.tailAddress,
+      append.originalTail.data(),
+      append.originalTail.size());
+    RuntimeMemoryWriteResult restoreEnd = writeProcessMemory(
+      processId,
+      append.candidate.vectorAddress + sizeof(std::uint64_t),
+      &originalEnd64,
+      sizeof(originalEnd64));
+    return restoreTail.success && restoreEnd.success;
+  }
+
+  bool readFrameCounterAt(int processId, std::uintptr_t address, std::uint32_t& value)
+  {
+    RuntimeMemoryReadResult read = readProcessMemory(processId, address, sizeof(std::uint32_t));
+    if (!read.success || read.bytesRead != sizeof(std::uint32_t))
+      return false;
+    value = readU32(read.bytes, 0);
+    return true;
+  }
+
+  bool sampleFrameCounterDelta(
+    int processId,
+    std::uintptr_t address,
+    int delayMs,
+    std::uint32_t& first,
+    std::uint32_t& second)
+  {
+    if (!readFrameCounterAt(processId, address, first))
+      return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+    return readFrameCounterAt(processId, address, second);
+  }
+
+  std::uint32_t counterDelta(std::uint32_t first, std::uint32_t second)
+  {
+    return second >= first ? second - first : 0;
+  }
+
+  bool sampleProgressingFrameCounter(
+    int processId,
+    std::uintptr_t address,
+    int delayMs,
+    int attempts,
+    std::uint32_t minDelta,
+    std::uint32_t& first,
+    std::uint32_t& second)
+  {
+    for (int attempt = 0; attempt < attempts; ++attempt)
+    {
+      if (!sampleFrameCounterDelta(processId, address, delayMs, first, second))
+        return false;
+      if (counterDelta(first, second) >= minDelta)
+        return true;
+    }
+    return true;
+  }
+
+  LiveCounterProof proveExplicitLiveCounterRead(
+    int processId,
+    std::uintptr_t address,
+    int sampleDelayMs)
+  {
+    LiveCounterProof proof;
+    proof.address = address;
+    if (address == 0)
+    {
+      proof.reason = "explicit frame counter address is zero";
+      return proof;
+    }
+
+    constexpr int maxAttempts = 5;
+    for (int attempt = 0; attempt < maxAttempts; ++attempt)
+    {
+      if (!readFrameCounterAt(processId, address, proof.first))
+      {
+        proof.reason = "unable to read explicit frame counter first sample";
+        return proof;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(sampleDelayMs));
+      if (!readFrameCounterAt(processId, address, proof.second))
+      {
+        proof.reason = "unable to read explicit frame counter second sample";
+        return proof;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(sampleDelayMs));
+      if (!readFrameCounterAt(processId, address, proof.third))
+      {
+        proof.reason = "unable to read explicit frame counter third sample";
+        return proof;
+      }
+      if (frameCounterConfidencePassed(proof.first, proof.second, proof.third, sampleDelayMs))
+      {
+        proof.passed = true;
+        return proof;
+      }
+    }
+    proof.reason = "explicit frame counter samples did not pass frame-counter confidence checks";
+    return proof;
+  }
+
+  IssueCommandsProof proveIssueCommandsWithPauseResume(
+    int processId,
+    const std::string& executablePath,
+    const LiveCounterProof& gameStateProof,
+    const CommandQueueDiscoveryProof& discoveryProof,
+    bool self,
+    bool serveCommandBridge,
+    std::size_t stateMaxScanBytes,
+    int stateScanTimeoutMs)
+  {
+    IssueCommandsProof proof;
+    proof.selfFixture = self;
+    proof.commandName = "pauseGame/resumeGame";
+
+    if (!discoveryProof.ready || discoveryProof.candidates.empty())
+    {
+      proof.reason = discoveryProof.reason.empty()
+        ? "issue-commands proof requires a discovered command queue candidate"
+        : discoveryProof.reason;
+      return proof;
+    }
+
+    RuntimeEncodedCommand pause = encodeRuntimeCommandRequest(gameActionRequest("pauseGame"));
+    RuntimeEncodedCommand resume = encodeRuntimeCommandRequest(gameActionRequest("resumeGame"));
+    if (!pause.encoded || !resume.encoded)
+    {
+      proof.reason = !pause.reason.empty() ? pause.reason : resume.reason;
+      return proof;
+    }
+    proof.encodedBytes = formatCommandBytesHex(pause.bytes) + " / " + formatCommandBytesHex(resume.bytes);
+
+    const CommandQueueCandidate* candidate = &discoveryProof.candidates.front();
+    if (self)
+    {
+      auto selfFixtureCandidate = std::find_if(
+        discoveryProof.candidates.begin(),
+        discoveryProof.candidates.end(),
+        [](const CommandQueueCandidate& value)
+        {
+          return value.usedBytes == 4 && value.capacityBytes == 4096;
+        });
+      if (selfFixtureCandidate != discoveryProof.candidates.end())
+        candidate = &*selfFixtureCandidate;
+    }
+    if (!self)
+    {
+      if (!gameStateProof.passed || gameStateProof.address == 0)
+      {
+        proof.reason = "issue-commands proof requires a passing live frame counter proof";
+        return proof;
+      }
+    }
+
+    constexpr int frameSampleMs = 500;
+    std::uint32_t baselineDelta = 0;
+    LiveCounterProof commandCounterProof = gameStateProof;
+    if (!self)
+    {
+      constexpr int maxCounterRefreshAttempts = 3;
+      for (int attempt = 0; attempt < maxCounterRefreshAttempts; ++attempt)
+      {
+        if (!sampleProgressingFrameCounter(
+              processId,
+              commandCounterProof.address,
+              frameSampleMs,
+              5,
+              2,
+              proof.baselineStart,
+              proof.baselineEnd))
+        {
+          proof.reason = "unable to sample live frame counter before command proof";
+          return proof;
+        }
+        baselineDelta = counterDelta(proof.baselineStart, proof.baselineEnd);
+        if (baselineDelta >= 2)
+          break;
+
+        LiveCounterProof refreshedCounter = proveLiveCounterRead(
+          processId,
+          executablePath,
+          frameSampleMs,
+          stateMaxScanBytes,
+          stateScanTimeoutMs,
+          nullptr);
+        if (!refreshedCounter.passed)
+          break;
+        commandCounterProof = refreshedCounter;
+      }
+      if (baselineDelta < 2)
+      {
+        proof.reason = "live frame counter was not progressing before command proof";
+        return proof;
+      }
+      proof.frameCounterAddress = commandCounterProof.address;
+    }
+
+    if (self)
+    {
+      CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
+        processId,
+        *candidate,
+        pause.bytes,
+        true);
+      if (!append.passed)
+      {
+        proof.reason = append.reason;
+        return proof;
+      }
+
+      proof.deliveryChecked = true;
+      proof.commandQueue = append.candidate;
+      proof.vectorAddress = append.candidate.vectorAddress;
+      proof.bufferBegin = append.candidate.bufferBegin;
+      proof.originalUsedBytes = append.candidate.usedBytes;
+      proof.appendedBytes = append.appendedBytes;
+      proof.reason = "self command queue fixture append/readback passed; active StarCraft behavior proof is required";
+      return proof;
+    }
+
+    const std::uint32_t pausedThreshold = std::max<std::uint32_t>(1, baselineDelta / 8);
+    std::string lastFailure;
+    for (const CommandQueueCandidate& liveCandidate : discoveryProof.candidates)
+    {
+      CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
+        processId,
+        liveCandidate,
+        pause.bytes,
+        false);
+      if (!append.passed)
+      {
+        lastFailure = append.reason;
+        continue;
+      }
+
+      proof.deliveryChecked = true;
+      proof.commandQueue = append.candidate;
+      proof.vectorAddress = append.candidate.vectorAddress;
+      proof.bufferBegin = append.candidate.bufferBegin;
+      proof.originalUsedBytes = append.candidate.usedBytes;
+      proof.appendedBytes = append.appendedBytes;
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      const bool pausedSampled = sampleFrameCounterDelta(
+        processId,
+        commandCounterProof.address,
+        frameSampleMs,
+        proof.pausedStart,
+        proof.pausedEnd);
+      if (!pausedSampled)
+      {
+        restoreCommandQueueAppendIfStillPresent(processId, append);
+        proof.reason = "unable to sample live frame counter after pause command";
+        return proof;
+      }
+
+      const std::uint32_t pausedDelta = counterDelta(proof.pausedStart, proof.pausedEnd);
+      if (pausedDelta > pausedThreshold)
+      {
+        restoreCommandQueueAppendIfStillPresent(processId, append);
+        lastFailure = "pause command did not stop live frame progression";
+        continue;
+      }
+
+      CommandQueueAppendResult resumeAppend = appendEncodedCommandToQueueCandidate(
+        processId,
+        liveCandidate,
+        resume.bytes,
+        false);
+      if (!resumeAppend.passed)
+      {
+        proof.reason = "pause command delivery passed but resume delivery failed: " + resumeAppend.reason;
+        return proof;
+      }
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      if (!sampleProgressingFrameCounter(
+            processId,
+            commandCounterProof.address,
+            frameSampleMs,
+            5,
+            2,
+            proof.resumedStart,
+            proof.resumedEnd))
+      {
+        proof.reason = "unable to sample live frame counter after resume command";
+        return proof;
+      }
+
+      const std::uint32_t resumedDelta = counterDelta(proof.resumedStart, proof.resumedEnd);
+      if (resumedDelta < 2)
+      {
+        proof.reason = "resume command did not restore live frame progression";
+        return proof;
+      }
+
+      proof.behaviorChecked = true;
+      proof.receiverActive = serveCommandBridge;
+      proof.passed = true;
+      return proof;
+    }
+
+    proof.reason = lastFailure.empty()
+      ? "no command queue candidate delivered observable pause/resume behavior"
+      : lastFailure;
+    return proof;
+  }
+
+  bool writeIssueCommandsSnapshot(
+    const std::filesystem::path& path,
+    const IssueCommandsProof& proof,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open issue-commands snapshot output";
+      return false;
+    }
+
+    output << "field\tvalue\n";
+    output << "passed\t" << (proof.passed ? "true" : "false") << '\n';
+    output << "delivery_checked\t" << (proof.deliveryChecked ? "true" : "false") << '\n';
+    output << "behavior_checked\t" << (proof.behaviorChecked ? "true" : "false") << '\n';
+    output << "self_fixture\t" << (proof.selfFixture ? "true" : "false") << '\n';
+    output << "receiver_active\t" << (proof.receiverActive ? "true" : "false") << '\n';
+    output << "command\t" << proof.commandName << '\n';
+    output << "encoded_bytes\t" << proof.encodedBytes << '\n';
+    output << "vector_address\t" << hexAddress(proof.vectorAddress) << '\n';
+    output << "buffer_begin\t" << hexAddress(proof.bufferBegin) << '\n';
+    output << "frame_counter_address\t" << hexAddress(proof.frameCounterAddress) << '\n';
+    output << "original_used_bytes\t" << proof.originalUsedBytes << '\n';
+    output << "appended_bytes\t" << proof.appendedBytes << '\n';
+    output << "baseline_delta\t" << counterDelta(proof.baselineStart, proof.baselineEnd) << '\n';
+    output << "paused_delta\t" << counterDelta(proof.pausedStart, proof.pausedEnd) << '\n';
+    output << "resumed_delta\t" << counterDelta(proof.resumedStart, proof.resumedEnd) << '\n';
+    if (!proof.reason.empty())
+      output << "reason\t" << proof.reason << '\n';
+
+    if (!output)
+    {
+      reason = "unable to write issue-commands snapshot output";
+      return false;
+    }
+    return true;
+  }
+
+  std::vector<std::string> splitString(const std::string& value, char delimiter)
+  {
+    std::vector<std::string> parts;
+    std::string part;
+    std::istringstream input(value);
+    while (std::getline(input, part, delimiter))
+      parts.push_back(part);
+    if (!value.empty() && value.back() == delimiter)
+      parts.emplace_back();
+    return parts;
+  }
+
+  bool parseIntStrict(const std::string& value, int& parsed)
+  {
+    char* end = nullptr;
+    const long result = std::strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0'
+        || result < std::numeric_limits<int>::min()
+        || result > std::numeric_limits<int>::max())
+      return false;
+    parsed = static_cast<int>(result);
+    return true;
+  }
+
+  bool parseSerializedRuntimeCommand(
+    const std::string& line,
+    RuntimeCommandRequest& command,
+    std::string& reason)
+  {
+    const std::vector<std::string> parts = splitString(line, '|');
+    if (parts.size() != 4)
+    {
+      reason = "serialized command must have four pipe-delimited fields";
+      return false;
+    }
+
+    if (parts[0] == toString(RuntimeCommandKind::UnitCommand))
+      command.kind = RuntimeCommandKind::UnitCommand;
+    else if (parts[0] == toString(RuntimeCommandKind::GameAction))
+      command.kind = RuntimeCommandKind::GameAction;
+    else
+    {
+      reason = "serialized command has unknown kind";
+      return false;
+    }
+
+    command.name = parts[1];
+    if (!parseIntStrict(parts[2], command.targetUnitId))
+    {
+      reason = "serialized command target unit id is invalid";
+      return false;
+    }
+
+    command.arguments.clear();
+    if (!parts[3].empty())
+    {
+      const std::vector<std::string> args = splitString(parts[3], ',');
+      for (const std::string& arg : args)
+      {
+        int parsed = 0;
+        if (!parseIntStrict(arg, parsed))
+        {
+          reason = "serialized command argument is invalid";
+          return false;
+        }
+        command.arguments.push_back(parsed);
+      }
+    }
+
+    return true;
+  }
+
+  void appendCommandReceiverAudit(
+    const std::filesystem::path& path,
+    std::uint64_t sequence,
+    const std::string& status,
+    const std::string& commandLine,
+    const std::string& encodedBytes,
+    const std::string& detail)
+  {
+    const bool needsHeader = !std::filesystem::exists(path);
+    std::ofstream output(path, std::ios::app);
+    if (!output)
+      return;
+    if (needsHeader)
+      output << "sequence\tstatus\tencoded_bytes\tdetail\tcommand\n";
+    output << sequence << '\t'
+           << status << '\t'
+           << encodedBytes << '\t'
+           << detail << '\t'
+           << commandLine << '\n';
+  }
+
+  int serveRuntimeCommandBridge(
+    const RuntimeEnvironment& environment,
+    const CommandQueueCandidate& candidate)
+  {
+    const std::filesystem::path bridgePath(environment.executorBridgePath);
+    const std::filesystem::path commandPath = bridgePath / RuntimeExecutorBridgeCommandFile;
+    const std::filesystem::path auditPath = bridgePath / "commands.applied.tsv";
+
+    std::uintmax_t offset = 0;
+    std::error_code error;
+    if (std::filesystem::exists(commandPath, error) && !error)
+      offset = std::filesystem::file_size(commandPath, error);
+    if (error)
+      offset = 0;
+
+    std::uint64_t sequence = 0;
+    std::cout << "command_receiver.active=true\n";
+    std::cout << "command_receiver.command_file=" << commandPath.string() << '\n';
+    std::cout << "command_receiver.audit_file=" << auditPath.string() << '\n';
+
+    while (true)
+    {
+      RuntimeProcessOpenResult process = openRuntimeProcess(environment);
+      if (!process.opened)
+      {
+        std::cout << "command_receiver.active=false\n";
+        std::cout << "command_receiver.reason="
+                  << (process.reason.empty() ? "target runtime process is no longer visible" : process.reason)
+                  << '\n';
+        return 13;
+      }
+
+      error.clear();
+      if (!std::filesystem::exists(commandPath, error) || error)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        continue;
+      }
+
+      const std::uintmax_t size = std::filesystem::file_size(commandPath, error);
+      if (error)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        continue;
+      }
+      if (size < offset)
+        offset = 0;
+      if (size == offset)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        continue;
+      }
+
+      std::ifstream input(commandPath);
+      if (!input)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        continue;
+      }
+      input.seekg(static_cast<std::streamoff>(offset));
+
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line.empty())
+          continue;
+
+        ++sequence;
+        RuntimeCommandRequest command;
+        std::string reason;
+        if (!parseSerializedRuntimeCommand(line, command, reason))
+        {
+          appendCommandReceiverAudit(auditPath, sequence, "rejected", line, "", reason);
+          continue;
+        }
+
+        RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(command);
+        if (!encoded.encoded)
+        {
+          appendCommandReceiverAudit(auditPath, sequence, "rejected", line, "", encoded.reason);
+          continue;
+        }
+
+        CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
+          environment.processId,
+          candidate,
+          encoded.bytes,
+          false);
+        appendCommandReceiverAudit(
+          auditPath,
+          sequence,
+          append.passed ? "applied" : "failed",
+          line,
+          formatCommandBytesHex(encoded.bytes),
+          append.passed ? "written-to-runtime-command-queue" : append.reason);
+      }
+
+      const std::streampos position = input.tellg();
+      offset = position >= 0 ? static_cast<std::uintmax_t>(position) : size;
+    }
   }
 
   bool writeRemasteredUnitSnapshot(
@@ -3272,6 +4150,8 @@ int main(int argc, char** argv)
   bool proveBattleNetPolicyFlag = false;
   bool discoverCommandQueue = false;
   bool selfCommandQueueFixture = false;
+  bool proveIssueCommands = false;
+  bool serveCommandBridge = false;
   bool unitScanDiagnosticsFlag = false;
   bool unitScanReadableOnlyFlag = false;
   bool unitScanVectorsFlag = false;
@@ -3279,6 +4159,10 @@ int main(int argc, char** argv)
   bool stateScanDiagnosticsFlag = false;
   std::string unitBestDumpOut;
   std::vector<std::uintptr_t> unitCandidateAddresses;
+  std::vector<std::uintptr_t> unitNodeCandidateAddresses;
+  std::uintptr_t stateCounterAddress = 0;
+  std::uintptr_t commandQueueVectorAddress = 0;
+  std::string appendGameAction;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 128 * 1024 * 1024;
   int stateScanTimeoutMs = 30000;
@@ -3365,6 +4249,15 @@ int main(int argc, char** argv)
       stateScanDiagnosticsFlag = true;
       continue;
     }
+    if (arg == "--state-counter-address")
+    {
+      if (i + 1 >= argc || !parseAddress(argv[++i], stateCounterAddress))
+      {
+        std::cerr << "--state-counter-address requires a positive integer address\n";
+        return 64;
+      }
+      continue;
+    }
     if (arg == "--unit-candidate-address")
     {
       std::uintptr_t address = 0;
@@ -3374,6 +4267,17 @@ int main(int argc, char** argv)
         return 64;
       }
       unitCandidateAddresses.push_back(address);
+      continue;
+    }
+    if (arg == "--unit-node-candidate-address")
+    {
+      std::uintptr_t address = 0;
+      if (i + 1 >= argc || !parseAddress(argv[++i], address))
+      {
+        std::cerr << "--unit-node-candidate-address requires a positive integer address\n";
+        return 64;
+      }
+      unitNodeCandidateAddresses.push_back(address);
       continue;
     }
     if (arg == "--unit-best-dump-out")
@@ -3399,6 +4303,35 @@ int main(int argc, char** argv)
     if (arg == "--self-command-queue-fixture")
     {
       selfCommandQueueFixture = true;
+      continue;
+    }
+    if (arg == "--prove-issue-commands")
+    {
+      proveIssueCommands = true;
+      continue;
+    }
+    if (arg == "--serve-command-bridge")
+    {
+      serveCommandBridge = true;
+      continue;
+    }
+    if (arg == "--command-queue-vector-address")
+    {
+      if (i + 1 >= argc || !parseAddress(argv[++i], commandQueueVectorAddress))
+      {
+        std::cerr << "--command-queue-vector-address requires a positive integer address\n";
+        return 64;
+      }
+      continue;
+    }
+    if (arg == "--append-game-action")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--append-game-action requires a name\n";
+        return 64;
+      }
+      appendGameAction = argv[++i];
       continue;
     }
     if (arg == "--state-sample-delay-ms")
@@ -3571,6 +4504,14 @@ int main(int argc, char** argv)
     proveReadMapData = true;
     proveReadPlayerData = true;
   }
+  if (serveCommandBridge)
+    proveIssueCommands = true;
+  if (proveIssueCommands)
+  {
+    discoverCommandQueue = true;
+    if (!self)
+      proveReadGameState = true;
+  }
 
   const RuntimeProcessOpenResult attach = openRuntimeProcess(environment);
   std::cout << "attach.opened=" << (attach.opened ? "true" : "false") << '\n';
@@ -3586,6 +4527,52 @@ int main(int argc, char** argv)
   if (!memoryAccess.accessible)
     return 3;
 
+  if (!appendGameAction.empty())
+  {
+    if (commandQueueVectorAddress == 0)
+    {
+      std::cerr << "--append-game-action requires --command-queue-vector-address\n";
+      return 64;
+    }
+
+    RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(gameActionRequest(appendGameAction));
+    std::cout << "manual_command_append.requested=true\n";
+    std::cout << "manual_command_append.game_action=" << appendGameAction << '\n';
+    if (!encoded.encoded)
+    {
+      std::cout << "manual_command_append.encoded=false\n";
+      std::cout << "manual_command_append.reason=" << encoded.reason << '\n';
+      return 12;
+    }
+
+    CommandQueueCandidate candidate;
+    candidate.vectorAddress = commandQueueVectorAddress;
+    CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
+      environment.processId,
+      candidate,
+      encoded.bytes,
+      false);
+    std::cout << "manual_command_append.encoded=true\n";
+    std::cout << "manual_command_append.encoded_bytes="
+              << formatCommandBytesHex(encoded.bytes) << '\n';
+    std::cout << "manual_command_append.vector_address="
+              << hexAddress(commandQueueVectorAddress) << '\n';
+    std::cout << "manual_command_append.written="
+              << (append.passed ? "true" : "false") << '\n';
+    if (append.passed)
+    {
+      std::cout << "manual_command_append.buffer_begin="
+                << hexAddress(append.candidate.bufferBegin) << '\n';
+      std::cout << "manual_command_append.tail_address="
+                << hexAddress(append.tailAddress) << '\n';
+      std::cout << "manual_command_append.appended_bytes="
+                << append.appendedBytes << '\n';
+      return 0;
+    }
+    std::cout << "manual_command_append.reason=" << append.reason << '\n';
+    return 12;
+  }
+
   LiveCounterProof readGameStateProof;
   LiveUnitsProof readUnitsProof;
   LiveUnitNodeProof activeUnitNodeProof;
@@ -3597,15 +4584,20 @@ int main(int argc, char** argv)
   UnitScanDiagnostics unitScanDiagnostics;
   BattleNetPolicyProof battleNetPolicyProof;
   CommandQueueDiscoveryProof commandQueueDiscoveryProof;
+  IssueCommandsProof issueCommandsProof;
   bool unitSnapshotWritten = false;
   bool dispatchEventsSnapshotWritten = false;
   bool mapDataSnapshotWritten = false;
   bool playerDataSnapshotWritten = false;
   bool replayAnalysisSnapshotWritten = false;
   bool commandQueueDiscoverySnapshotWritten = false;
+  bool issueCommandsSnapshotWritten = false;
   SelfUnitFixture unitFixture;
   SelfCommandQueueFixture commandQueueFixture;
   int proofFailureCode = 0;
+  bool readGameStateUsedExplicitAddress = false;
+  bool readGameStateUsedFallbackScan = false;
+  std::string explicitFrameCounterFailure;
   if (self && selfUnitFixture)
     unitFixture = makeSelfUnitFixture();
   if (self && selfCommandQueueFixture)
@@ -3616,13 +4608,36 @@ int main(int argc, char** argv)
 
   if (proveReadGameState)
   {
-    readGameStateProof = proveLiveCounterRead(
-      environment.processId,
-      environment.executablePath,
-      stateSampleDelayMs,
-      stateMaxScanBytes,
-      stateScanTimeoutMs,
-      stateScanDiagnosticsFlag ? &stateScanDiagnostics : nullptr);
+    if (stateCounterAddress != 0)
+    {
+      readGameStateProof = proveExplicitLiveCounterRead(
+        environment.processId,
+        stateCounterAddress,
+        stateSampleDelayMs);
+      readGameStateUsedExplicitAddress = readGameStateProof.passed;
+      if (!readGameStateProof.passed)
+      {
+        explicitFrameCounterFailure = readGameStateProof.reason;
+        readGameStateProof = proveLiveCounterRead(
+          environment.processId,
+          environment.executablePath,
+          stateSampleDelayMs,
+          stateMaxScanBytes,
+          stateScanTimeoutMs,
+          stateScanDiagnosticsFlag ? &stateScanDiagnostics : nullptr);
+        readGameStateUsedFallbackScan = readGameStateProof.passed;
+      }
+    }
+    else
+    {
+      readGameStateProof = proveLiveCounterRead(
+        environment.processId,
+        environment.executablePath,
+        stateSampleDelayMs,
+        stateMaxScanBytes,
+        stateScanTimeoutMs,
+        stateScanDiagnosticsFlag ? &stateScanDiagnostics : nullptr);
+    }
     std::cout << "read_game_state.live_counter=" << (readGameStateProof.passed ? "true" : "false") << '\n';
     if (readGameStateProof.passed)
     {
@@ -3635,7 +4650,14 @@ int main(int argc, char** argv)
       std::cout << "read_game_state.delta.1="
                 << (readGameStateProof.third - readGameStateProof.second) << '\n';
       std::cout << "read_game_state.confidence=frame-like\n";
+      if (readGameStateUsedExplicitAddress)
+        std::cout << "read_game_state.source=explicit-address\n";
+      else if (readGameStateUsedFallbackScan)
+        std::cout << "read_game_state.source=fallback-scan\n";
     }
+    if (!explicitFrameCounterFailure.empty())
+      std::cout << "read_game_state.explicit_address.reason="
+                << explicitFrameCounterFailure << '\n';
     if (!readGameStateProof.reason.empty())
       std::cout << "read_game_state.reason=" << readGameStateProof.reason << '\n';
     if (stateScanDiagnosticsFlag)
@@ -3709,7 +4731,17 @@ int main(int argc, char** argv)
     {
       ++unitScanAttempts;
       unitScanDiagnostics = {};
-      if (proveActiveMatchState && !self)
+      if (!unitNodeCandidateAddresses.empty()
+          && !self
+          && (proveActiveMatchState
+              || (proveReadUnits && environment.product == Product::StarCraftRemastered)))
+      {
+        activeUnitNodeProof = proveExplicitUnitNodeCandidateAddresses(
+          environment.processId,
+          unitNodeCandidateAddresses,
+          unitScanTimeoutMs);
+      }
+      if (proveActiveMatchState && !self && !activeUnitNodeProof.passed)
       {
         activeUnitNodeProof = proveLiveUnitNodeAnchors(
           environment.processId,
@@ -3767,6 +4799,9 @@ int main(int argc, char** argv)
     {
       if (!unitCandidateAddresses.empty())
         std::cout << "read_units.candidate_address.count=" << unitCandidateAddresses.size() << '\n';
+      if (!unitNodeCandidateAddresses.empty())
+        std::cout << "read_units.unit_node_candidate_address.count="
+                  << unitNodeCandidateAddresses.size() << '\n';
       std::cout << "read_units.unit_array=" << (readUnitsProof.passed ? "true" : "false") << '\n';
       if (readUnitsProof.passed)
       {
@@ -4016,6 +5051,61 @@ int main(int argc, char** argv)
       environment.executablePath,
       unitMaxScanBytes,
       unitScanTimeoutMs);
+    if (self && selfCommandQueueFixture)
+    {
+      CommandQueueCandidate fixtureCandidate;
+      fixtureCandidate.vectorAddress =
+        reinterpret_cast<std::uintptr_t>(&commandQueueFixture.begin);
+      fixtureCandidate.bufferBegin = commandQueueFixture.begin;
+      fixtureCandidate.bufferEnd = commandQueueFixture.end;
+      fixtureCandidate.bufferCapacity = commandQueueFixture.capacity;
+      fixtureCandidate.usedBytes =
+        static_cast<std::size_t>(commandQueueFixture.end - commandQueueFixture.begin);
+      fixtureCandidate.capacityBytes =
+        static_cast<std::size_t>(commandQueueFixture.capacity - commandQueueFixture.begin);
+      fixtureCandidate.score = 1000;
+      fixtureCandidate.regionPath = "self-command-queue-fixture";
+      commandQueueDiscoveryProof.candidates.insert(
+        commandQueueDiscoveryProof.candidates.begin(),
+        fixtureCandidate);
+      commandQueueDiscoveryProof.ready = true;
+    }
+    if (commandQueueVectorAddress != 0)
+    {
+      RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(environment.processId);
+      CommandQueueCandidate explicitCandidate;
+      std::string explicitReason;
+      if (regions.success
+          && readCommandQueueCandidate(
+            environment.processId,
+            regions.regions,
+            commandQueueVectorAddress,
+            explicitCandidate,
+            explicitReason))
+      {
+        explicitCandidate.score = 10000;
+        explicitCandidate.regionPath = "explicit-command-queue-vector";
+        commandQueueDiscoveryProof.candidates.erase(
+          std::remove_if(
+            commandQueueDiscoveryProof.candidates.begin(),
+            commandQueueDiscoveryProof.candidates.end(),
+            [&](const CommandQueueCandidate& candidate)
+            {
+              return candidate.vectorAddress == explicitCandidate.vectorAddress;
+            }),
+          commandQueueDiscoveryProof.candidates.end());
+        commandQueueDiscoveryProof.candidates.insert(
+          commandQueueDiscoveryProof.candidates.begin(),
+          explicitCandidate);
+        commandQueueDiscoveryProof.ready = true;
+      }
+      else if (!commandQueueDiscoveryProof.ready)
+      {
+        commandQueueDiscoveryProof.reason = explicitReason.empty()
+          ? "explicit command queue vector is not readable as a live vector"
+          : explicitReason;
+      }
+    }
     std::cout << "command_queue_discovery.ready="
               << (commandQueueDiscoveryProof.ready ? "true" : "false") << '\n';
     std::cout << "command_queue_discovery.scanned_regions="
@@ -4041,6 +5131,50 @@ int main(int argc, char** argv)
     if (!commandQueueDiscoveryProof.reason.empty())
       std::cout << "command_queue_discovery.reason=" << commandQueueDiscoveryProof.reason << '\n';
     std::cout << "command_queue_discovery.proof_scope=discovery-only-not-command-behavior\n";
+  }
+
+  if (proveIssueCommands)
+  {
+    issueCommandsProof = proveIssueCommandsWithPauseResume(
+      environment.processId,
+      environment.executablePath,
+      readGameStateProof,
+      commandQueueDiscoveryProof,
+      self,
+      serveCommandBridge,
+      stateMaxScanBytes,
+      stateScanTimeoutMs);
+    std::cout << "issue_commands.ready=" << (issueCommandsProof.passed ? "true" : "false") << '\n';
+    std::cout << "issue_commands.delivery_checked="
+              << (issueCommandsProof.deliveryChecked ? "true" : "false") << '\n';
+    std::cout << "issue_commands.behavior_checked="
+              << (issueCommandsProof.behaviorChecked ? "true" : "false") << '\n';
+    std::cout << "issue_commands.self_fixture="
+              << (issueCommandsProof.selfFixture ? "true" : "false") << '\n';
+    std::cout << "issue_commands.receiver_active="
+              << (issueCommandsProof.receiverActive ? "true" : "false") << '\n';
+    if (issueCommandsProof.vectorAddress != 0)
+      std::cout << "issue_commands.vector_address="
+                << hexAddress(issueCommandsProof.vectorAddress) << '\n';
+    if (issueCommandsProof.frameCounterAddress != 0)
+      std::cout << "issue_commands.frame_counter_address="
+                << hexAddress(issueCommandsProof.frameCounterAddress) << '\n';
+    if (!issueCommandsProof.encodedBytes.empty())
+      std::cout << "issue_commands.encoded_bytes="
+                << issueCommandsProof.encodedBytes << '\n';
+    if (issueCommandsProof.baselineStart != 0 || issueCommandsProof.baselineEnd != 0)
+    {
+      std::cout << "issue_commands.baseline_delta="
+                << counterDelta(issueCommandsProof.baselineStart, issueCommandsProof.baselineEnd) << '\n';
+      std::cout << "issue_commands.paused_delta="
+                << counterDelta(issueCommandsProof.pausedStart, issueCommandsProof.pausedEnd) << '\n';
+      std::cout << "issue_commands.resumed_delta="
+                << counterDelta(issueCommandsProof.resumedStart, issueCommandsProof.resumedEnd) << '\n';
+    }
+    if (!issueCommandsProof.reason.empty())
+      std::cout << "issue_commands.reason=" << issueCommandsProof.reason << '\n';
+    if (!issueCommandsProof.passed)
+      proofFailureCode = proofFailureCode == 0 ? 12 : proofFailureCode;
   }
 
   std::error_code error;
@@ -4076,6 +5210,13 @@ int main(int argc, char** argv)
   if (proveReadUnits && readUnitsBehaviorProof == nullptr)
   {
     std::cerr << "read-units proof definition is missing\n";
+    return 1;
+  }
+
+  const RuntimeExecutorBehaviorProof* issueCommandsBehaviorProof = findProof("issue-commands");
+  if (proveIssueCommands && issueCommandsBehaviorProof == nullptr)
+  {
+    std::cerr << "issue-commands proof definition is missing\n";
     return 1;
   }
 
@@ -4207,6 +5348,25 @@ int main(int argc, char** argv)
       std::cout << "command_queue_discovery.snapshot.reason=" << commandQueueReason << '\n';
   }
 
+  const std::filesystem::path issueCommandsPath =
+    std::filesystem::path(environment.executorBridgePath) / "issue_commands.snapshot.tsv";
+  if (proveIssueCommands)
+  {
+    std::string issueReason;
+    const bool issueWritten = writeIssueCommandsSnapshot(
+      issueCommandsPath,
+      issueCommandsProof,
+      issueReason);
+    issueCommandsSnapshotWritten = issueWritten;
+    std::cout << "issue_commands.snapshot.success="
+              << (issueWritten ? "true" : "false") << '\n';
+    if (issueWritten)
+      std::cout << "issue_commands.snapshot.path="
+                << issueCommandsPath.string() << '\n';
+    if (!issueReason.empty())
+      std::cout << "issue_commands.snapshot.reason=" << issueReason << '\n';
+  }
+
   const std::filesystem::path readyPath =
     std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
   std::ofstream ready(readyPath);
@@ -4306,6 +5466,26 @@ int main(int argc, char** argv)
     }
     ready << readUnitsBehaviorProof->readyFileLine << '\n';
   }
+  if (proveIssueCommands
+      && issueCommandsProof.passed
+      && issueCommandsSnapshotWritten
+      && issueCommandsProof.receiverActive)
+  {
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "proof.issue_commands.command=" << issueCommandsProof.commandName << '\n';
+    ready << "proof.issue_commands.vector_address="
+          << hexAddress(issueCommandsProof.vectorAddress) << '\n';
+    ready << "proof.issue_commands.frame_counter_address="
+          << hexAddress(issueCommandsProof.frameCounterAddress) << '\n';
+    ready << "proof.issue_commands.encoded_bytes=" << issueCommandsProof.encodedBytes << '\n';
+    ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:"
+          << hexAddress(issueCommandsProof.vectorAddress + sizeof(std::uint64_t)) << '\n';
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:"
+          << hexAddress(issueCommandsProof.bufferBegin) << '\n';
+    ready << issueCommandsBehaviorProof->readyFileLine << '\n';
+  }
   if (proveDispatchEvents && dispatchEventsProof.passed && dispatchEventsSnapshotWritten && activeMatchReady)
   {
     ready << "proof.dispatch_events.frame_events=" << dispatchEventsProof.frameEvents << '\n';
@@ -4387,6 +5567,13 @@ int main(int argc, char** argv)
       ready << "proof.command_queue_discovery.reason=" << commandQueueDiscoveryProof.reason << '\n';
   }
 
+  ready.close();
+  if (!ready)
+  {
+    std::cerr << "failed to finalize ready file: " << readyPath.string() << '\n';
+    return 1;
+  }
+
   std::cout << "bridge.ready=" << readyPath.string() << '\n';
   std::cout << attachProof->readyFileLine << '\n';
   if (proveReadGameState && readGameStateProof.passed)
@@ -4395,6 +5582,11 @@ int main(int argc, char** argv)
     std::cout << activeMatchStateBehaviorProof->readyFileLine << '\n';
   if (readUnitsReady)
     std::cout << readUnitsBehaviorProof->readyFileLine << '\n';
+  if (proveIssueCommands
+      && issueCommandsProof.passed
+      && issueCommandsSnapshotWritten
+      && issueCommandsProof.receiverActive)
+    std::cout << issueCommandsBehaviorProof->readyFileLine << '\n';
   if (proveDispatchEvents && dispatchEventsProof.passed && dispatchEventsSnapshotWritten && activeMatchReady)
     std::cout << dispatchEventsBehaviorProof->readyFileLine << '\n';
   if (proveReadMapData && mapDataProof.passed && mapDataSnapshotWritten)
@@ -4408,5 +5600,15 @@ int main(int argc, char** argv)
   if (discoverCommandQueue)
     std::cout << "proof.command_queue_discovery="
               << (commandQueueDiscoveryProof.ready ? "candidate-found" : "not-found") << '\n';
+  if (serveCommandBridge)
+  {
+    if (!issueCommandsProof.passed || !issueCommandsProof.receiverActive)
+    {
+      std::cout << "command_receiver.active=false\n";
+      std::cout << "command_receiver.reason=issue-commands behavior proof did not pass\n";
+      return proofFailureCode == 0 ? 12 : proofFailureCode;
+    }
+    return serveRuntimeCommandBridge(environment, issueCommandsProof.commandQueue);
+  }
   return proofFailureCode == 0 ? 0 : proofFailureCode;
 }

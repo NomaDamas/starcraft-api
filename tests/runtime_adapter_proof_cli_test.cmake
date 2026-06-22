@@ -76,7 +76,7 @@ execute_process(
     --bridge "${command_queue_bridge_dir}"
     --discover-command-queue
     --self-command-queue-fixture
-    --unit-max-scan-mb 16
+    --unit-max-scan-mb 128
     --unit-scan-timeout-ms 5000
   RESULT_VARIABLE command_queue_result
   OUTPUT_VARIABLE command_queue_output
@@ -140,6 +140,74 @@ foreach(needle
 endforeach()
 
 file(REMOVE_RECURSE "${command_queue_bridge_dir}")
+
+set(issue_commands_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-issue-commands-bridge")
+file(REMOVE_RECURSE "${issue_commands_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${issue_commands_bridge_dir}"
+    --prove-issue-commands
+    --self-command-queue-fixture
+    --unit-max-scan-mb 128
+    --unit-scan-timeout-ms 5000
+  RESULT_VARIABLE issue_commands_result
+  OUTPUT_VARIABLE issue_commands_output
+  ERROR_VARIABLE issue_commands_error
+)
+if(NOT issue_commands_result EQUAL 12)
+  message(FATAL_ERROR "expected self issue-commands proof to fail only behavior proof with code 12\nstdout:\n${issue_commands_output}\nstderr:\n${issue_commands_error}")
+endif()
+foreach(needle
+    "command_queue_discovery.ready=true"
+    "issue_commands.ready=false"
+    "issue_commands.delivery_checked=true"
+    "issue_commands.behavior_checked=false"
+    "issue_commands.self_fixture=true"
+    "issue_commands.reason=self command queue fixture append/readback passed; active StarCraft behavior proof is required"
+    "issue_commands.snapshot.success=true")
+  string(FIND "${issue_commands_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "self issue-commands output missing '${needle}'\n${issue_commands_output}")
+  endif()
+endforeach()
+
+set(issue_commands_ready_file "${issue_commands_bridge_dir}/ready")
+if(NOT EXISTS "${issue_commands_ready_file}")
+  message(FATAL_ERROR "self issue-commands proof did not write partial ready file")
+endif()
+file(READ "${issue_commands_ready_file}" issue_commands_ready)
+foreach(forbidden
+    "proof.issue_commands=passed"
+    "command.receiver=active"
+    "command.sink=runtime-command-queue-v1"
+    "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue"
+    "contract.binding.BW::BWDATA::TurnBuffer=command-queue")
+  string(FIND "${issue_commands_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "self issue-commands proof must not claim production command path '${forbidden}'\n${issue_commands_ready}")
+  endif()
+endforeach()
+
+set(issue_commands_snapshot "${issue_commands_bridge_dir}/issue_commands.snapshot.tsv")
+if(NOT EXISTS "${issue_commands_snapshot}")
+  message(FATAL_ERROR "self issue-commands snapshot was not written")
+endif()
+file(READ "${issue_commands_snapshot}" issue_commands_snapshot_content)
+foreach(needle
+    "delivery_checked\ttrue"
+    "behavior_checked\tfalse"
+    "self_fixture\ttrue")
+  string(FIND "${issue_commands_snapshot_content}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "self issue-commands snapshot missing '${needle}'\n${issue_commands_snapshot_content}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${issue_commands_bridge_dir}")
 
 set(map_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-map-bridge")
 set(fake_install_root "${STARCRAFT_API_CLI_TEST_DIR}/fake-starcraft-install")

@@ -1,5 +1,8 @@
 #include <BWAPI/Runtime/RuntimeCommandEncoder.h>
 
+#include <BWAPI/Order.h>
+#include <BWAPI/TechType.h>
+
 #include <cassert>
 #include <cstdint>
 #include <string>
@@ -79,6 +82,7 @@ int main()
   expectBytes(
     encodeRuntimeCommandRequest(targetUnitCommand("Unload", 0x0803)),
     "29 03 08");
+  expectBytes(encodeRuntimeCommandRequest(unitCommand("Unload_All")), "28 00");
 
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Burrow")), "2c 00");
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Unburrow")), "2d 00");
@@ -92,6 +96,7 @@ int main()
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Cancel_Addon")), "34");
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Cancel_Research")), "31");
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Cancel_Upgrade")), "33");
+  expectBytes(encodeRuntimeCommandRequest(unitCommand("Cancel_Morph")), "19");
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Cancel_Train")), "20 fe 00");
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Cancel_Train_Slot", { 2 })), "20 02 00");
   expectBytes(encodeRuntimeCommandRequest(unitCommand("Halt_Construction")), "1a 00");
@@ -108,9 +113,23 @@ int main()
   RuntimeEncodedCommand build = encodeRuntimeCommandRequest(unitCommand("Build", { 1, 2, 106, 30 }));
   expectBytes(build, "0c 1e 01 00 02 00 6a 00");
   assert(!build.warnings.empty());
+  RuntimeEncodedCommand load = encodeRuntimeCommandRequest(
+    targetUnitCommand("Load", 0x0804, { BWAPI::Orders::Enum::PickupTransport, 1 }));
+  assert(load.encoded);
+  assert(load.reason.empty());
+  assert(load.bytes.size() == 11);
+  assert(load.bytes[0] == 0x15);
+  assert(load.bytes[5] == 0x04);
+  assert(load.bytes[6] == 0x08);
+  assert(load.bytes[9] == BWAPI::Orders::Enum::PickupTransport);
+  assert(load.bytes[10] == 1);
+  assert(!load.warnings.empty());
   expectBytes(
     encodeRuntimeCommandRequest(unitCommand("Land", { 3, 4, 106 })),
     "0c 47 03 00 04 00 6a 00");
+  expectBytes(
+    encodeRuntimeCommandRequest(unitCommand("Use_Tech", { BWAPI::TechTypes::Enum::Stim_Packs })),
+    "36");
 
   expectBytes(encodeRuntimeCommandRequest(gameAction("pauseGame")), "10");
   expectBytes(encodeRuntimeCommandRequest(gameAction("resumeGame")), "11");
@@ -125,6 +144,11 @@ int main()
   RuntimeEncodedCommand unsupported = encodeRuntimeCommandRequest(unitCommand("Load"));
   assert(!unsupported.encoded);
   assert(!unsupported.reason.empty());
+
+  RuntimeEncodedCommand stateDependentTech = encodeRuntimeCommandRequest(
+    unitCommand("Use_Tech", { BWAPI::TechTypes::Enum::Tank_Siege_Mode }));
+  assert(!stateDependentTech.encoded);
+  assert(!stateDependentTech.reason.empty());
 
   RuntimeEncodedCommand badQueued = encodeRuntimeCommandRequest(unitCommand("Stop", { 2 }));
   assert(!badQueued.encoded);

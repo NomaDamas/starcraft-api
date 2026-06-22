@@ -65,6 +65,162 @@ endif()
 
 file(REMOVE_RECURSE "${bridge_dir}")
 
+set(command_queue_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-command-queue-bridge")
+file(REMOVE_RECURSE "${command_queue_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${command_queue_bridge_dir}"
+    --discover-command-queue
+    --self-command-queue-fixture
+    --unit-max-scan-mb 16
+    --unit-scan-timeout-ms 5000
+  RESULT_VARIABLE command_queue_result
+  OUTPUT_VARIABLE command_queue_output
+  ERROR_VARIABLE command_queue_error
+)
+if(NOT command_queue_result EQUAL 0)
+  message(FATAL_ERROR "expected command queue discovery to pass with self fixture\nstdout:\n${command_queue_output}\nstderr:\n${command_queue_error}")
+endif()
+foreach(needle
+    "command_queue_discovery.ready=true"
+    "command_queue_discovery.candidate_count="
+    "command_queue_discovery.best.vector_address=0x"
+    "command_queue_discovery.proof_scope=discovery-only-not-command-behavior"
+    "command_queue_discovery.snapshot.success=true"
+    "proof.command_queue_discovery=candidate-found")
+  string(FIND "${command_queue_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "command queue discovery output missing '${needle}'\n${command_queue_output}")
+  endif()
+endforeach()
+
+set(command_queue_ready_file "${command_queue_bridge_dir}/ready")
+if(NOT EXISTS "${command_queue_ready_file}")
+  message(FATAL_ERROR "command queue discovery did not write ready file")
+endif()
+file(READ "${command_queue_ready_file}" command_queue_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.command_queue_discovery=candidate-found"
+    "proof.command_queue_discovery.snapshot=command_queue.candidates.tsv"
+    "proof.command_queue_discovery.proof_scope=discovery-only-not-command-behavior"
+    "proof.command_queue_discovery.best.vector_address=0x")
+  string(FIND "${command_queue_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "command queue discovery ready file missing '${needle}'\n${command_queue_ready}")
+  endif()
+endforeach()
+foreach(forbidden
+    "proof.issue_commands=passed"
+    "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue"
+    "contract.binding.BW::BWDATA::TurnBuffer=command-queue")
+  string(FIND "${command_queue_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "command queue discovery must not claim production command proof '${forbidden}'\n${command_queue_ready}")
+  endif()
+endforeach()
+
+set(command_queue_snapshot "${command_queue_bridge_dir}/command_queue.candidates.tsv")
+if(NOT EXISTS "${command_queue_snapshot}")
+  message(FATAL_ERROR "command queue discovery snapshot was not written")
+endif()
+file(READ "${command_queue_snapshot}" command_queue_snapshot_content)
+foreach(needle
+    "vector_address"
+    "buffer_begin"
+    "capacity_bytes")
+  string(FIND "${command_queue_snapshot_content}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "command queue discovery snapshot missing '${needle}'\n${command_queue_snapshot_content}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${command_queue_bridge_dir}")
+
+set(map_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-map-bridge")
+set(fake_install_root "${STARCRAFT_API_CLI_TEST_DIR}/fake-starcraft-install")
+set(fake_replay_root "${STARCRAFT_API_CLI_TEST_DIR}/fake-starcraft-replays")
+set(fake_autosave_dir "${fake_replay_root}/AutoSave/20260622")
+file(REMOVE_RECURSE "${map_bridge_dir}" "${fake_install_root}" "${fake_replay_root}")
+file(MAKE_DIRECTORY
+  "${fake_install_root}/x86_64/StarCraft.app/Contents/MacOS"
+  "${fake_install_root}/Maps/BroodWar"
+  "${fake_autosave_dir}")
+file(WRITE "${fake_install_root}/x86_64/StarCraft.app/Contents/MacOS/StarCraft" "fake executable\n")
+file(WRITE "${fake_install_root}/Maps/BroodWar/(2)Astral Balance.scm" "fake map fixture\n")
+set(fake_replay_payload "fake replay fixture payload\n")
+set(fake_autosave_path "${fake_autosave_dir}/013435,(2)Astral Balance.rep")
+set(fake_last_replay_path "${fake_replay_root}/LastReplay.rep")
+file(WRITE "${fake_autosave_path}" "${fake_replay_payload}")
+file(WRITE "${fake_last_replay_path}" "${fake_replay_payload}")
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "STARCRAFT_API_INSTALL_DIR=${fake_install_root}"
+    "STARCRAFT_API_REPLAY_DIR=${fake_replay_root}"
+    "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${map_bridge_dir}"
+    --prove-read-map-data
+    --state-max-scan-mb 1
+    --state-scan-timeout-ms 1
+  RESULT_VARIABLE map_result
+  OUTPUT_VARIABLE map_output
+  ERROR_VARIABLE map_error
+)
+if(NOT map_result EQUAL 0)
+  message(FATAL_ERROR "expected replay-artifact map proof to pass\nstdout:\n${map_output}\nstderr:\n${map_error}")
+endif()
+foreach(needle
+    "read_map_data.ready=true"
+    "read_map_data.map_name=(2)Astral Balance"
+    "read_map_data.source=latest-replay-artifact"
+    "read_map_data.replay_path=${fake_autosave_path}"
+    "proof.read_map_data=passed")
+  string(FIND "${map_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "map proof output missing '${needle}'\n${map_output}")
+  endif()
+endforeach()
+
+set(map_ready_file "${map_bridge_dir}/ready")
+if(NOT EXISTS "${map_ready_file}")
+  message(FATAL_ERROR "map proof did not write ready file")
+endif()
+file(READ "${map_ready_file}" map_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_map_data.map_name=(2)Astral Balance"
+    "proof.read_map_data.map_path=${fake_install_root}/Maps/BroodWar/(2)Astral Balance.scm"
+    "proof.read_map_data.source=latest-replay-artifact"
+    "proof.read_map_data.replay_path=${fake_autosave_path}"
+    "proof.read_map_data.snapshot=map.snapshot.tsv"
+    "proof.read_map_data=passed")
+  string(FIND "${map_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "map proof ready file missing '${needle}'\n${map_ready}")
+  endif()
+endforeach()
+
+file(READ "${map_bridge_dir}/map.snapshot.tsv" map_snapshot)
+foreach(needle
+    "source"
+    "latest-replay-artifact"
+    "${fake_autosave_path}")
+  string(FIND "${map_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "map snapshot missing '${needle}'\n${map_snapshot}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${map_bridge_dir}" "${fake_install_root}" "${fake_replay_root}")
+
 set(units_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-units-bridge")
 set(units_best_dump "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-units-best.bin")
 file(REMOVE_RECURSE "${units_bridge_dir}")

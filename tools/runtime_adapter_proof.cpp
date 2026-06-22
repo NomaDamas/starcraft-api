@@ -47,6 +47,10 @@ namespace
       << "  --prove-replay-analysis  prove replay-compatible map/frame metadata from live state\n"
       << "  --prove-battle-net-policy\n"
       << "                           prove Battle.net launch/attach policy preflight has no blockers\n"
+      << "  --discover-command-queue\n"
+      << "                           scan live memory for command-queue-like vector candidates without claiming command proof\n"
+      << "  --self-command-queue-fixture\n"
+      << "                           allocate a self-test command queue candidate before --discover-command-queue\n"
       << "  --state-sample-delay-ms <ms>\n"
       << "                           delay between live state samples (default: 250)\n"
       << "  --state-scan-timeout-ms <ms>\n"
@@ -181,7 +185,10 @@ namespace
     std::uintptr_t mapNameAddress = 0;
     std::string mapName;
     std::string mapPath;
+    std::string source;
+    std::string replayPath;
     std::uintmax_t mapFileSize = 0;
+    std::uintmax_t replayFileSize = 0;
     std::string reason;
   };
 
@@ -207,6 +214,27 @@ namespace
     std::size_t playerCount = 0;
     std::uint32_t firstFrame = 0;
     std::uint32_t lastFrame = 0;
+    std::string reason;
+  };
+
+  struct CommandQueueCandidate
+  {
+    std::uintptr_t vectorAddress = 0;
+    std::uintptr_t bufferBegin = 0;
+    std::uintptr_t bufferEnd = 0;
+    std::uintptr_t bufferCapacity = 0;
+    std::size_t usedBytes = 0;
+    std::size_t capacityBytes = 0;
+    int score = 0;
+    std::string regionPath;
+  };
+
+  struct CommandQueueDiscoveryProof
+  {
+    bool ready = false;
+    std::size_t scannedRegions = 0;
+    std::size_t scannedBytes = 0;
+    std::vector<CommandQueueCandidate> candidates;
     std::string reason;
   };
 
@@ -282,6 +310,14 @@ namespace
     bool passed = false;
     RuntimeLaunchDiagnosis diagnosis;
     std::string reason;
+  };
+
+  struct SelfCommandQueueFixture
+  {
+    std::array<unsigned char, 4096> buffer;
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+    std::uintptr_t capacity = 0;
   };
 
   LiveUnitsProof failedUnitsProof(std::string reason)
@@ -442,6 +478,45 @@ namespace
     return value;
   }
 
+  std::string extractNullTerminatedUtf16String(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t maxLength,
+    bool bigEndian)
+  {
+    std::string value;
+    for (std::size_t i = offset; i + 1 < bytes.size() && value.size() < maxLength; i += 2)
+    {
+      const unsigned char first = bytes[i];
+      const unsigned char second = bytes[i + 1];
+      const unsigned char high = bigEndian ? first : second;
+      const unsigned char low = bigEndian ? second : first;
+      if (high == 0 && low == 0)
+        break;
+      if (high != 0 || !asciiPrintable(low))
+        return {};
+      value.push_back(static_cast<char>(low));
+    }
+    return value;
+  }
+
+  bool looksLikeUtf16AsciiAt(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    bool bigEndian)
+  {
+    if (offset + 3 >= bytes.size())
+      return false;
+    const unsigned char firstHigh = bigEndian ? bytes[offset] : bytes[offset + 1];
+    const unsigned char firstLow = bigEndian ? bytes[offset + 1] : bytes[offset];
+    const unsigned char secondHigh = bigEndian ? bytes[offset + 2] : bytes[offset + 3];
+    const unsigned char secondLow = bigEndian ? bytes[offset + 3] : bytes[offset + 2];
+    return firstHigh == 0
+      && secondHigh == 0
+      && asciiPrintable(firstLow)
+      && asciiPrintable(secondLow);
+  }
+
   std::filesystem::path findMapFileByName(
     const std::string& installRoot,
     const std::string& mapName)
@@ -469,6 +544,215 @@ namespace
       it.increment(error);
     }
     return {};
+  }
+
+  std::string trimWhitespace(std::string value)
+  {
+    const std::size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+      return {};
+    const std::size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+  }
+
+  std::string replayAutosaveMapStem(const std::filesystem::path& path)
+  {
+    std::string stem = path.stem().string();
+    const std::size_t comma = stem.find(',');
+    if (comma != std::string::npos && comma + 1 < stem.size())
+      stem = stem.substr(comma + 1);
+    else if (lowerCase(path.filename().string()) == "lastreplay.rep")
+      return {};
+    return trimWhitespace(stem);
+  }
+
+  bool fileTimeClose(
+    const std::filesystem::file_time_type& lhs,
+    const std::filesystem::file_time_type& rhs,
+    std::chrono::seconds tolerance)
+  {
+    const auto delta = lhs > rhs ? lhs - rhs : rhs - lhs;
+    return delta <= tolerance;
+  }
+
+  std::vector<std::filesystem::path> replayRootCandidates(const std::string& installRoot)
+  {
+    std::vector<std::filesystem::path> roots;
+    const auto addRoot =
+      [&](const std::filesystem::path& root)
+      {
+        if (!root.empty())
+          roots.push_back(root);
+      };
+
+    if (const char* explicitRoot = std::getenv("STARCRAFT_API_REPLAY_DIR"))
+      addRoot(explicitRoot);
+
+    if (!installRoot.empty())
+      addRoot(std::filesystem::path(installRoot) / "Maps" / "Replays");
+
+    if (const char* homeValue = std::getenv("HOME"))
+    {
+      const std::filesystem::path home(homeValue);
+      addRoot(home / "Library" / "Application Support" / "Blizzard" / "StarCraft" / "Maps" / "Replays");
+      addRoot(home / "Documents" / "StarCraft" / "Maps" / "Replays");
+      addRoot(home / ".local" / "share" / "Blizzard" / "StarCraft" / "Maps" / "Replays");
+    }
+
+    if (const char* appData = std::getenv("APPDATA"))
+      addRoot(std::filesystem::path(appData) / "Blizzard" / "StarCraft" / "Maps" / "Replays");
+    if (const char* userProfile = std::getenv("USERPROFILE"))
+      addRoot(std::filesystem::path(userProfile) / "Documents" / "StarCraft" / "Maps" / "Replays");
+    if (const char* xdgData = std::getenv("XDG_DATA_HOME"))
+      addRoot(std::filesystem::path(xdgData) / "Blizzard" / "StarCraft" / "Maps" / "Replays");
+
+    std::vector<std::filesystem::path> uniqueRoots;
+    for (const std::filesystem::path& root : roots)
+    {
+      std::error_code error;
+      const std::filesystem::path normalized = std::filesystem::weakly_canonical(root, error);
+      const std::filesystem::path comparable = error ? root.lexically_normal() : normalized.lexically_normal();
+      bool duplicate = false;
+      for (const std::filesystem::path& existing : uniqueRoots)
+      {
+        if (existing == comparable)
+        {
+          duplicate = true;
+          break;
+        }
+      }
+      if (!duplicate)
+        uniqueRoots.push_back(comparable);
+    }
+    return uniqueRoots;
+  }
+
+  std::filesystem::path findInstalledMapForReplayStem(
+    const std::string& installRoot,
+    const std::string& mapStem)
+  {
+    if (installRoot.empty() || mapStem.empty())
+      return {};
+
+    for (const std::string& candidate : {
+           mapStem,
+           mapStem + ".scx",
+           mapStem + ".scm",
+           mapStem + ".SCX",
+           mapStem + ".SCM" })
+    {
+      std::filesystem::path mapPath = findMapFileByName(installRoot, candidate);
+      if (!mapPath.empty())
+        return mapPath;
+    }
+    return {};
+  }
+
+  MapDataProof proveMapDataFromReplayArtifact(const std::string& installRoot)
+  {
+    MapDataProof proof;
+    const std::vector<std::filesystem::path> roots = replayRootCandidates(installRoot);
+    if (roots.empty())
+    {
+      proof.reason = "no StarCraft replay directories are configured";
+      return proof;
+    }
+
+    bool sawReplayRoot = false;
+    std::filesystem::path bestReplayPath;
+    std::filesystem::path bestMapPath;
+    std::string bestMapName;
+    std::uintmax_t bestReplaySize = 0;
+    std::uintmax_t bestMapSize = 0;
+    std::filesystem::file_time_type bestTime = std::filesystem::file_time_type::min();
+
+    for (const std::filesystem::path& root : roots)
+    {
+      std::error_code error;
+      if (!std::filesystem::is_directory(root, error) || error)
+        continue;
+      sawReplayRoot = true;
+
+      const std::filesystem::path lastReplay = root / "LastReplay.rep";
+      const bool hasLastReplay = std::filesystem::is_regular_file(lastReplay, error) && !error;
+      const std::uintmax_t lastReplaySize =
+        hasLastReplay ? std::filesystem::file_size(lastReplay, error) : 0;
+      if (error)
+        continue;
+      const std::filesystem::file_time_type lastReplayTime =
+        hasLastReplay ? std::filesystem::last_write_time(lastReplay, error) : std::filesystem::file_time_type::min();
+      if (error)
+        continue;
+
+      const std::filesystem::recursive_directory_iterator end;
+      for (std::filesystem::recursive_directory_iterator it(
+             root,
+             std::filesystem::directory_options::skip_permission_denied,
+             error);
+           !error && it != end;
+           it.increment(error))
+      {
+        if (error || !it->is_regular_file(error) || error)
+          continue;
+        const std::filesystem::path replayPath = it->path();
+        if (lowerCase(replayPath.extension().string()) != ".rep")
+          continue;
+        if (lowerCase(replayPath.filename().string()) == "lastreplay.rep")
+          continue;
+
+        const std::string mapName = replayAutosaveMapStem(replayPath);
+        if (mapName.empty())
+          continue;
+
+        const std::uintmax_t replaySize = std::filesystem::file_size(replayPath, error);
+        if (error || replaySize == 0)
+          continue;
+        const std::filesystem::file_time_type replayTime =
+          std::filesystem::last_write_time(replayPath, error);
+        if (error)
+          continue;
+
+        if (hasLastReplay
+            && (replaySize != lastReplaySize
+                || !fileTimeClose(replayTime, lastReplayTime, std::chrono::seconds(3))))
+          continue;
+
+        std::filesystem::path mapPath = findInstalledMapForReplayStem(installRoot, mapName);
+        if (mapPath.empty())
+          continue;
+
+        const std::uintmax_t mapSize = std::filesystem::file_size(mapPath, error);
+        if (error || mapSize == 0)
+          continue;
+
+        if (bestReplayPath.empty() || replayTime > bestTime)
+        {
+          bestReplayPath = replayPath;
+          bestMapPath = mapPath;
+          bestMapName = mapName;
+          bestReplaySize = replaySize;
+          bestMapSize = mapSize;
+          bestTime = replayTime;
+        }
+      }
+    }
+
+    if (bestReplayPath.empty())
+    {
+      proof.reason = sawReplayRoot
+        ? "no fresh LastReplay-matched autosave replay mapped to an installed map"
+        : "no StarCraft replay directory exists";
+      return proof;
+    }
+
+    proof.passed = true;
+    proof.mapName = bestMapName;
+    proof.mapPath = bestMapPath.string();
+    proof.source = "latest-replay-artifact";
+    proof.replayPath = bestReplayPath.string();
+    proof.mapFileSize = bestMapSize;
+    proof.replayFileSize = bestReplaySize;
+    return proof;
   }
 
   bool addressFits(std::uint64_t address)
@@ -502,6 +786,34 @@ namespace
       + std::abs(secondDelta - expectedDelta);
     const int stabilityError = std::abs(firstDelta - secondDelta);
     return (frameLike ? 0 : 100000) + expectedError + stabilityError;
+  }
+
+  bool frameCounterConfidencePassed(
+    std::uint32_t first,
+    std::uint32_t second,
+    std::uint32_t third,
+    int sampleDelayMs)
+  {
+    if (!plausibleCounterDelta(first, second) || !plausibleCounterDelta(second, third))
+      return false;
+
+    const int firstDelta = static_cast<int>(second - first);
+    const int secondDelta = static_cast<int>(third - second);
+    const int expectedDelta = std::max(1, (sampleDelayMs * 24) / 1000);
+    const int minimumFrameLikeDelta = std::max(2, expectedDelta / 3);
+    const int maximumFrameLikeDelta = std::max(12, expectedDelta * 4);
+    const int maximumStabilityDelta = std::max(8, expectedDelta * 2);
+
+    if (firstDelta < minimumFrameLikeDelta || secondDelta < minimumFrameLikeDelta)
+      return false;
+    if (firstDelta > maximumFrameLikeDelta || secondDelta > maximumFrameLikeDelta)
+      return false;
+    if (std::abs(firstDelta - secondDelta) > maximumStabilityDelta)
+      return false;
+
+    const std::uint32_t minimumObservedFrame =
+      static_cast<std::uint32_t>(std::max(24, expectedDelta * 2));
+    return third >= minimumObservedFrame;
   }
 
   bool writeBinaryFile(
@@ -587,6 +899,27 @@ namespace
     std::size_t size)
   {
     return findReadableRegion(regions, address, size) != nullptr;
+  }
+
+  const RuntimeMemoryRegion* findWritableRegion(
+    const std::vector<RuntimeMemoryRegion>& regions,
+    std::uintptr_t address,
+    std::size_t size)
+  {
+    for (const RuntimeMemoryRegion& region : regions)
+    {
+      if (region.readable && region.writable && regionContains(region, address, size))
+        return &region;
+    }
+    return nullptr;
+  }
+
+  bool writableAddress(
+    const std::vector<RuntimeMemoryRegion>& regions,
+    std::uintptr_t address,
+    std::size_t size)
+  {
+    return findWritableRegion(regions, address, size) != nullptr;
   }
 
   bool readablePointerValue(
@@ -1941,8 +2274,10 @@ namespace
     {
       if (timedOut(deadline))
       {
-        MapDataProof proof;
-        proof.reason = "map-data scan timed out before proof";
+        MapDataProof proof = proveMapDataFromReplayArtifact(installRoot);
+        if (proof.passed)
+          return proof;
+        proof.reason = "map-data scan timed out before proof; replay artifact fallback failed: " + proof.reason;
         return proof;
       }
       if (scanned >= maxScanBytes)
@@ -1959,41 +2294,56 @@ namespace
       {
         if ((offset % (4 * 1024)) == 0 && timedOut(deadline))
         {
-          MapDataProof proof;
-          proof.reason = "map-data scan timed out before proof";
+          MapDataProof proof = proveMapDataFromReplayArtifact(installRoot);
+          if (proof.passed)
+            return proof;
+          proof.reason = "map-data scan timed out before proof; replay artifact fallback failed: " + proof.reason;
           return proof;
         }
-        if (!asciiPrintable(read.bytes[offset]))
-          continue;
+        std::vector<std::string> candidates;
+        if (asciiPrintable(read.bytes[offset]))
+          candidates.push_back(extractNullTerminatedAsciiString(read.bytes, offset, 128));
+        if (looksLikeUtf16AsciiAt(read.bytes, offset, false))
+          candidates.push_back(extractNullTerminatedUtf16String(read.bytes, offset, 128, false));
+        if (looksLikeUtf16AsciiAt(read.bytes, offset, true))
+          candidates.push_back(extractNullTerminatedUtf16String(read.bytes, offset, 128, true));
 
-        const std::string candidate = extractNullTerminatedAsciiString(read.bytes, offset, 128);
-        std::string mapName = basenameFromMapPathCandidate(candidate);
-        if (mapName.empty())
-          continue;
+        for (const std::string& candidate : candidates)
+        {
+          std::string mapName = basenameFromMapPathCandidate(candidate);
+          if (mapName.empty())
+            continue;
 
-        std::filesystem::path mapPath = existingMapPathCandidate(candidate);
-        if (mapPath.empty())
-          mapPath = findMapFileByName(installRoot, mapName);
-        if (mapPath.empty())
-          continue;
+          std::filesystem::path mapPath = existingMapPathCandidate(candidate);
+          if (mapPath.empty())
+            mapPath = findMapFileByName(installRoot, mapName);
+          if (mapPath.empty())
+            continue;
 
-        std::error_code error;
-        const std::uintmax_t fileSize = std::filesystem::file_size(mapPath, error);
-        if (error || fileSize == 0)
-          continue;
+          std::error_code error;
+          const std::uintmax_t fileSize = std::filesystem::file_size(mapPath, error);
+          if (error || fileSize == 0)
+            continue;
 
-        MapDataProof proof;
-        proof.passed = true;
-        proof.mapNameAddress = region.address + offset;
-        proof.mapName = mapName;
-        proof.mapPath = mapPath.string();
-        proof.mapFileSize = fileSize;
-        return proof;
+          MapDataProof proof;
+          proof.passed = true;
+          proof.mapNameAddress = region.address + offset;
+          proof.mapName = mapName;
+          proof.mapPath = mapPath.string();
+          proof.mapFileSize = fileSize;
+          return proof;
+        }
       }
     }
 
+    MapDataProof replayProof = proveMapDataFromReplayArtifact(installRoot);
+    if (replayProof.passed)
+      return replayProof;
+
     MapDataProof proof;
-    proof.reason = "no live StarCraft map path or filename matched an installed map file";
+    proof.reason =
+      "no live StarCraft map path or filename matched an installed map file; replay artifact fallback failed: "
+      + replayProof.reason;
     return proof;
   }
 
@@ -2064,6 +2414,225 @@ namespace
     proof.firstFrame = gameStateProof.first;
     proof.lastFrame = gameStateProof.third;
     return proof;
+  }
+
+  bool plausibleCommandQueueVector(
+    const std::vector<RuntimeMemoryRegion>& regions,
+    std::uintptr_t begin,
+    std::uintptr_t end,
+    std::uintptr_t capacity,
+    std::size_t& usedBytes,
+    std::size_t& capacityBytes)
+  {
+    if (begin == 0 || capacity <= begin || end < begin || end > capacity)
+      return false;
+
+    usedBytes = static_cast<std::size_t>(end - begin);
+    capacityBytes = static_cast<std::size_t>(capacity - begin);
+    if (capacityBytes < 64 || capacityBytes > 64 * 1024)
+      return false;
+    if (usedBytes > capacityBytes)
+      return false;
+
+    const std::size_t bytesToCheck = std::max<std::size_t>(1, std::min<std::size_t>(capacityBytes, 64));
+    return writableAddress(regions, begin, bytesToCheck);
+  }
+
+  int commandQueueCandidateScore(
+    const RuntimeMemoryRegion& vectorRegion,
+    const RuntimeMemoryRegion& bufferRegion,
+    const std::string& executablePath,
+    const StarCraftImageSectionHints& hints,
+    std::size_t usedBytes,
+    std::size_t capacityBytes)
+  {
+    int score = 0;
+    if (regionIntersectsStarCraftRuntimeData(vectorRegion, hints))
+      score += 100;
+    if (sameMappedFile(vectorRegion.mappedPath, executablePath))
+      score += 50;
+    if (sameMappedFile(bufferRegion.mappedPath, executablePath))
+      score += 25;
+    if (usedBytes == 0)
+      score += 8;
+    else if (usedBytes <= 512)
+      score += 12;
+    if (capacityBytes <= 8192)
+      score += 10;
+    if (capacityBytes <= 4096)
+      score += 5;
+    return score;
+  }
+
+  CommandQueueDiscoveryProof discoverCommandQueueCandidates(
+    int processId,
+    const std::string& executablePath,
+    std::size_t maxScanBytes,
+    int scanTimeoutMs)
+  {
+    CommandQueueDiscoveryProof proof;
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+    {
+      proof.reason = regions.reason;
+      return proof;
+    }
+
+    std::uintptr_t targetImageBase = 0;
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!sameMappedFile(region.mappedPath, executablePath))
+        continue;
+      if (targetImageBase == 0 || region.address < targetImageBase)
+        targetImageBase = region.address;
+    }
+
+    const StarCraftImageSectionHints hints = starCraftImageSectionHints(targetImageBase);
+    std::vector<RuntimeMemoryRegion> scanRegions = regions.regions;
+    std::stable_sort(
+      scanRegions.begin(),
+      scanRegions.end(),
+      [&](const RuntimeMemoryRegion& lhs, const RuntimeMemoryRegion& rhs)
+      {
+        const int lhsPriority = unitScanRegionPriority(lhs, executablePath, targetImageBase);
+        const int rhsPriority = unitScanRegionPriority(rhs, executablePath, targetImageBase);
+        if (lhsPriority != rhsPriority)
+          return lhsPriority < rhsPriority;
+        return lhs.address < rhs.address;
+      });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
+    constexpr std::size_t maxRegionBytes = 4 * 1024 * 1024;
+    constexpr std::size_t maxCandidates = 128;
+    std::unordered_set<std::uintptr_t> seenVectors;
+    std::size_t scanned = 0;
+
+    for (const RuntimeMemoryRegion& region : scanRegions)
+    {
+      if (timedOut(deadline))
+      {
+        proof.reason = "command queue discovery timed out before scan completed";
+        break;
+      }
+      if (!region.readable || !region.writable || region.executable || region.size < sizeof(std::uint64_t) * 3)
+        continue;
+      if (fileBackedNonTargetRegion(region, executablePath))
+        continue;
+      if (scanned >= maxScanBytes)
+      {
+        proof.reason = "command queue discovery reached scan byte limit";
+        break;
+      }
+
+      const std::size_t bytesToRead = std::min(region.size, std::min(maxRegionBytes, maxScanBytes - scanned));
+      RuntimeMemoryReadResult read = readProcessMemory(processId, region.address, bytesToRead);
+      if (!read.success || read.bytesRead < sizeof(std::uint64_t) * 3)
+        continue;
+
+      ++proof.scannedRegions;
+      proof.scannedBytes += read.bytesRead;
+      scanned += read.bytesRead;
+
+      for (std::size_t offset = 0; offset + sizeof(std::uint64_t) * 3 <= read.bytes.size(); offset += 8)
+      {
+        if ((offset % (16 * 1024)) == 0 && timedOut(deadline))
+        {
+          proof.reason = "command queue discovery timed out while scoring vector candidates";
+          break;
+        }
+
+        const std::uintptr_t vectorAddress = region.address + offset;
+        if (!seenVectors.insert(vectorAddress).second)
+          continue;
+
+        const auto begin = static_cast<std::uintptr_t>(readU64(read.bytes, offset));
+        const auto end = static_cast<std::uintptr_t>(readU64(read.bytes, offset + 8));
+        const auto capacity = static_cast<std::uintptr_t>(readU64(read.bytes, offset + 16));
+        std::size_t usedBytes = 0;
+        std::size_t capacityBytes = 0;
+        if (!plausibleCommandQueueVector(regions.regions, begin, end, capacity, usedBytes, capacityBytes))
+          continue;
+
+        const RuntimeMemoryRegion* bufferRegion =
+          findWritableRegion(regions.regions, begin, std::max<std::size_t>(1, std::min<std::size_t>(capacityBytes, 64)));
+        if (bufferRegion == nullptr)
+          continue;
+
+        CommandQueueCandidate candidate;
+        candidate.vectorAddress = vectorAddress;
+        candidate.bufferBegin = begin;
+        candidate.bufferEnd = end;
+        candidate.bufferCapacity = capacity;
+        candidate.usedBytes = usedBytes;
+        candidate.capacityBytes = capacityBytes;
+        candidate.score = commandQueueCandidateScore(
+          region,
+          *bufferRegion,
+          executablePath,
+          hints,
+          usedBytes,
+          capacityBytes);
+        candidate.regionPath = region.mappedPath;
+        proof.candidates.push_back(std::move(candidate));
+      }
+
+      if (proof.candidates.size() >= maxCandidates || !proof.reason.empty())
+        break;
+    }
+
+    std::sort(
+      proof.candidates.begin(),
+      proof.candidates.end(),
+      [](const CommandQueueCandidate& lhs, const CommandQueueCandidate& rhs)
+      {
+        if (lhs.score != rhs.score)
+          return lhs.score > rhs.score;
+        if (lhs.capacityBytes != rhs.capacityBytes)
+          return lhs.capacityBytes < rhs.capacityBytes;
+        return lhs.vectorAddress < rhs.vectorAddress;
+      });
+
+    if (proof.candidates.size() > 32)
+      proof.candidates.resize(32);
+
+    proof.ready = !proof.candidates.empty();
+    if (!proof.ready && proof.reason.empty())
+      proof.reason = "no command-queue-like live vector candidates were found";
+    return proof;
+  }
+
+  bool writeCommandQueueDiscoverySnapshot(
+    const std::filesystem::path& path,
+    const CommandQueueDiscoveryProof& proof,
+    std::string& reason)
+  {
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open command queue discovery snapshot output";
+      return false;
+    }
+
+    output << "rank\tscore\tvector_address\tbuffer_begin\tbuffer_end\tbuffer_capacity\tused_bytes\tcapacity_bytes\tregion_path\n";
+    for (std::size_t i = 0; i < proof.candidates.size(); ++i)
+    {
+      const CommandQueueCandidate& candidate = proof.candidates[i];
+      output << i << '\t'
+             << candidate.score << '\t'
+             << hexAddress(candidate.vectorAddress) << '\t'
+             << hexAddress(candidate.bufferBegin) << '\t'
+             << hexAddress(candidate.bufferEnd) << '\t'
+             << hexAddress(candidate.bufferCapacity) << '\t'
+             << candidate.usedBytes << '\t'
+             << candidate.capacityBytes << '\t'
+             << candidate.regionPath << '\n';
+    }
+    if (!output)
+    {
+      reason = "unable to write command queue discovery snapshot output";
+      return false;
+    }
+    return true;
   }
 
   bool writeRemasteredUnitSnapshot(
@@ -2211,11 +2780,14 @@ namespace
       return false;
     }
 
-    output << "map_name\tmap_name_address\tmap_path\tmap_file_size\n";
+    output << "map_name\tmap_name_address\tmap_path\tmap_file_size\tsource\treplay_path\treplay_file_size\n";
     output << proof.mapName << '\t'
            << hexAddress(proof.mapNameAddress) << '\t'
            << proof.mapPath << '\t'
-           << proof.mapFileSize << '\n';
+           << proof.mapFileSize << '\t'
+           << proof.source << '\t'
+           << proof.replayPath << '\t'
+           << proof.replayFileSize << '\n';
     if (!output)
     {
       reason = "unable to write map snapshot output";
@@ -2551,7 +3123,7 @@ namespace
         continue;
 
       const std::uint32_t thirdValue = readU32(third.bytes, 0);
-      if (plausibleCounterDelta(candidate.second, thirdValue))
+      if (frameCounterConfidencePassed(candidate.first, candidate.second, thirdValue, sampleDelayMs))
       {
         const int score =
           frameCounterScore(candidate.first, candidate.second, thirdValue, sampleDelayMs);
@@ -2566,7 +3138,7 @@ namespace
     if (bestProof.passed)
       return bestProof;
 
-    return { false, 0, 0, 0, 0, "candidate counters did not keep increasing across the third sample" };
+    return { false, 0, 0, 0, 0, "candidate counters did not pass frame-counter confidence checks" };
   }
 
   struct SelfUnitFixture
@@ -2617,6 +3189,24 @@ namespace
       writeU16(record, 0x64, static_cast<std::uint16_t>(i % 228));
     }
     return fixture;
+  }
+
+  void initializeSelfCommandQueueFixture(SelfCommandQueueFixture& fixture)
+  {
+    fixture.buffer.fill(0);
+    fixture.buffer[0] = 0x14;
+    fixture.buffer[1] = 0x00;
+    fixture.buffer[2] = 0x34;
+    fixture.buffer[3] = 0x12;
+    fixture.begin = reinterpret_cast<std::uintptr_t>(fixture.buffer.data());
+    fixture.end = fixture.begin + 4;
+    fixture.capacity = fixture.begin + fixture.buffer.size();
+  }
+
+  void keepSelfCommandQueueFixtureAlive(const SelfCommandQueueFixture& fixture)
+  {
+    if (fixture.begin == 0 || fixture.end < fixture.begin || fixture.capacity <= fixture.begin)
+      std::cerr << "invalid self command queue fixture\n";
   }
 
   std::string firstBlocker(const RuntimeLaunchDiagnosis& diagnosis)
@@ -2680,6 +3270,8 @@ int main(int argc, char** argv)
   bool proveReadPlayerData = false;
   bool proveReplayAnalysis = false;
   bool proveBattleNetPolicyFlag = false;
+  bool discoverCommandQueue = false;
+  bool selfCommandQueueFixture = false;
   bool unitScanDiagnosticsFlag = false;
   bool unitScanReadableOnlyFlag = false;
   bool unitScanVectorsFlag = false;
@@ -2797,6 +3389,16 @@ int main(int argc, char** argv)
     if (arg == "--prove-battle-net-policy")
     {
       proveBattleNetPolicyFlag = true;
+      continue;
+    }
+    if (arg == "--discover-command-queue")
+    {
+      discoverCommandQueue = true;
+      continue;
+    }
+    if (arg == "--self-command-queue-fixture")
+    {
+      selfCommandQueueFixture = true;
       continue;
     }
     if (arg == "--state-sample-delay-ms")
@@ -2994,15 +3596,23 @@ int main(int argc, char** argv)
   StateScanDiagnostics stateScanDiagnostics;
   UnitScanDiagnostics unitScanDiagnostics;
   BattleNetPolicyProof battleNetPolicyProof;
+  CommandQueueDiscoveryProof commandQueueDiscoveryProof;
   bool unitSnapshotWritten = false;
   bool dispatchEventsSnapshotWritten = false;
   bool mapDataSnapshotWritten = false;
   bool playerDataSnapshotWritten = false;
   bool replayAnalysisSnapshotWritten = false;
+  bool commandQueueDiscoverySnapshotWritten = false;
   SelfUnitFixture unitFixture;
+  SelfCommandQueueFixture commandQueueFixture;
   int proofFailureCode = 0;
   if (self && selfUnitFixture)
     unitFixture = makeSelfUnitFixture();
+  if (self && selfCommandQueueFixture)
+  {
+    initializeSelfCommandQueueFixture(commandQueueFixture);
+    keepSelfCommandQueueFixtureAlive(commandQueueFixture);
+  }
 
   if (proveReadGameState)
   {
@@ -3020,6 +3630,11 @@ int main(int argc, char** argv)
       std::cout << "read_game_state.sample.0=" << readGameStateProof.first << '\n';
       std::cout << "read_game_state.sample.1=" << readGameStateProof.second << '\n';
       std::cout << "read_game_state.sample.2=" << readGameStateProof.third << '\n';
+      std::cout << "read_game_state.delta.0="
+                << (readGameStateProof.second - readGameStateProof.first) << '\n';
+      std::cout << "read_game_state.delta.1="
+                << (readGameStateProof.third - readGameStateProof.second) << '\n';
+      std::cout << "read_game_state.confidence=frame-like\n";
     }
     if (!readGameStateProof.reason.empty())
       std::cout << "read_game_state.reason=" << readGameStateProof.reason << '\n';
@@ -3066,10 +3681,18 @@ int main(int argc, char** argv)
     if (mapDataProof.passed)
     {
       std::cout << "read_map_data.map_name=" << mapDataProof.mapName << '\n';
-      std::cout << "read_map_data.map_name_address=0x"
-                << std::hex << mapDataProof.mapNameAddress << std::dec << '\n';
+      if (mapDataProof.mapNameAddress != 0)
+        std::cout << "read_map_data.map_name_address=0x"
+                  << std::hex << mapDataProof.mapNameAddress << std::dec << '\n';
       std::cout << "read_map_data.map_path=" << mapDataProof.mapPath << '\n';
       std::cout << "read_map_data.map_file_size=" << mapDataProof.mapFileSize << '\n';
+      if (!mapDataProof.source.empty())
+        std::cout << "read_map_data.source=" << mapDataProof.source << '\n';
+      if (!mapDataProof.replayPath.empty())
+      {
+        std::cout << "read_map_data.replay_path=" << mapDataProof.replayPath << '\n';
+        std::cout << "read_map_data.replay_file_size=" << mapDataProof.replayFileSize << '\n';
+      }
     }
     if (!mapDataProof.reason.empty())
       std::cout << "read_map_data.reason=" << mapDataProof.reason << '\n';
@@ -3386,6 +4009,40 @@ int main(int argc, char** argv)
       proofFailureCode = proofFailureCode == 0 ? 5 : proofFailureCode;
   }
 
+  if (discoverCommandQueue)
+  {
+    commandQueueDiscoveryProof = discoverCommandQueueCandidates(
+      environment.processId,
+      environment.executablePath,
+      unitMaxScanBytes,
+      unitScanTimeoutMs);
+    std::cout << "command_queue_discovery.ready="
+              << (commandQueueDiscoveryProof.ready ? "true" : "false") << '\n';
+    std::cout << "command_queue_discovery.scanned_regions="
+              << commandQueueDiscoveryProof.scannedRegions << '\n';
+    std::cout << "command_queue_discovery.scanned_bytes="
+              << commandQueueDiscoveryProof.scannedBytes << '\n';
+    std::cout << "command_queue_discovery.candidate_count="
+              << commandQueueDiscoveryProof.candidates.size() << '\n';
+    if (!commandQueueDiscoveryProof.candidates.empty())
+    {
+      const CommandQueueCandidate& best = commandQueueDiscoveryProof.candidates.front();
+      std::cout << "command_queue_discovery.best.vector_address="
+                << hexAddress(best.vectorAddress) << '\n';
+      std::cout << "command_queue_discovery.best.buffer_begin="
+                << hexAddress(best.bufferBegin) << '\n';
+      std::cout << "command_queue_discovery.best.used_bytes="
+                << best.usedBytes << '\n';
+      std::cout << "command_queue_discovery.best.capacity_bytes="
+                << best.capacityBytes << '\n';
+      std::cout << "command_queue_discovery.best.score="
+                << best.score << '\n';
+    }
+    if (!commandQueueDiscoveryProof.reason.empty())
+      std::cout << "command_queue_discovery.reason=" << commandQueueDiscoveryProof.reason << '\n';
+    std::cout << "command_queue_discovery.proof_scope=discovery-only-not-command-behavior\n";
+  }
+
   std::error_code error;
   std::filesystem::create_directories(environment.executorBridgePath, error);
   if (error)
@@ -3531,6 +4188,25 @@ int main(int argc, char** argv)
       proofFailureCode = proofFailureCode == 0 ? 11 : proofFailureCode;
   }
 
+  const std::filesystem::path commandQueueDiscoveryPath =
+    std::filesystem::path(environment.executorBridgePath) / "command_queue.candidates.tsv";
+  if (discoverCommandQueue && commandQueueDiscoveryProof.ready)
+  {
+    std::string commandQueueReason;
+    const bool commandQueueWritten = writeCommandQueueDiscoverySnapshot(
+      commandQueueDiscoveryPath,
+      commandQueueDiscoveryProof,
+      commandQueueReason);
+    commandQueueDiscoverySnapshotWritten = commandQueueWritten;
+    std::cout << "command_queue_discovery.snapshot.success="
+              << (commandQueueWritten ? "true" : "false") << '\n';
+    if (commandQueueWritten)
+      std::cout << "command_queue_discovery.snapshot.path="
+                << commandQueueDiscoveryPath.string() << '\n';
+    if (!commandQueueReason.empty())
+      std::cout << "command_queue_discovery.snapshot.reason=" << commandQueueReason << '\n';
+  }
+
   const std::filesystem::path readyPath =
     std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
   std::ofstream ready(readyPath);
@@ -3556,6 +4232,10 @@ int main(int argc, char** argv)
           << readGameStateProof.first << ','
           << readGameStateProof.second << ','
           << readGameStateProof.third << '\n';
+    ready << "proof.read_game_state.delta="
+          << (readGameStateProof.second - readGameStateProof.first) << ','
+          << (readGameStateProof.third - readGameStateProof.second) << '\n';
+    ready << "proof.read_game_state.confidence=frame-like\n";
     ready << readGameStateBehaviorProof->readyFileLine << '\n';
   }
   const bool activeMatchReady =
@@ -3640,10 +4320,18 @@ int main(int argc, char** argv)
   if (proveReadMapData && mapDataProof.passed && mapDataSnapshotWritten)
   {
     ready << "proof.read_map_data.map_name=" << mapDataProof.mapName << '\n';
-    ready << "proof.read_map_data.map_name_address=0x"
-          << std::hex << mapDataProof.mapNameAddress << std::dec << '\n';
+    if (mapDataProof.mapNameAddress != 0)
+      ready << "proof.read_map_data.map_name_address=0x"
+            << std::hex << mapDataProof.mapNameAddress << std::dec << '\n';
     ready << "proof.read_map_data.map_path=" << mapDataProof.mapPath << '\n';
     ready << "proof.read_map_data.map_file_size=" << mapDataProof.mapFileSize << '\n';
+    if (!mapDataProof.source.empty())
+      ready << "proof.read_map_data.source=" << mapDataProof.source << '\n';
+    if (!mapDataProof.replayPath.empty())
+    {
+      ready << "proof.read_map_data.replay_path=" << mapDataProof.replayPath << '\n';
+      ready << "proof.read_map_data.replay_file_size=" << mapDataProof.replayFileSize << '\n';
+    }
     ready << "proof.read_map_data.snapshot=map.snapshot.tsv\n";
     ready << "proof.read_map_data=passed\n";
   }
@@ -3672,6 +4360,32 @@ int main(int argc, char** argv)
           << battleNetPolicyProof.diagnosis.blockers.size() << '\n';
     ready << battleNetPolicyBehaviorProof->readyFileLine << '\n';
   }
+  if (discoverCommandQueue)
+  {
+    ready << "proof.command_queue_discovery="
+          << (commandQueueDiscoveryProof.ready ? "candidate-found" : "not-found") << '\n';
+    ready << "proof.command_queue_discovery.candidate_count="
+          << commandQueueDiscoveryProof.candidates.size() << '\n';
+    ready << "proof.command_queue_discovery.scanned_regions="
+          << commandQueueDiscoveryProof.scannedRegions << '\n';
+    ready << "proof.command_queue_discovery.scanned_bytes="
+          << commandQueueDiscoveryProof.scannedBytes << '\n';
+    ready << "proof.command_queue_discovery.proof_scope=discovery-only-not-command-behavior\n";
+    if (commandQueueDiscoverySnapshotWritten)
+      ready << "proof.command_queue_discovery.snapshot=command_queue.candidates.tsv\n";
+    if (!commandQueueDiscoveryProof.candidates.empty())
+    {
+      const CommandQueueCandidate& best = commandQueueDiscoveryProof.candidates.front();
+      ready << "proof.command_queue_discovery.best.vector_address="
+            << hexAddress(best.vectorAddress) << '\n';
+      ready << "proof.command_queue_discovery.best.buffer_begin="
+            << hexAddress(best.bufferBegin) << '\n';
+      ready << "proof.command_queue_discovery.best.capacity_bytes="
+            << best.capacityBytes << '\n';
+    }
+    if (!commandQueueDiscoveryProof.reason.empty())
+      ready << "proof.command_queue_discovery.reason=" << commandQueueDiscoveryProof.reason << '\n';
+  }
 
   std::cout << "bridge.ready=" << readyPath.string() << '\n';
   std::cout << attachProof->readyFileLine << '\n';
@@ -3691,5 +4405,8 @@ int main(int argc, char** argv)
     std::cout << replayAnalysisBehaviorProof->readyFileLine << '\n';
   if (proveBattleNetPolicyFlag && battleNetPolicyProof.passed)
     std::cout << battleNetPolicyBehaviorProof->readyFileLine << '\n';
+  if (discoverCommandQueue)
+    std::cout << "proof.command_queue_discovery="
+              << (commandQueueDiscoveryProof.ready ? "candidate-found" : "not-found") << '\n';
   return proofFailureCode == 0 ? 0 : proofFailureCode;
 }

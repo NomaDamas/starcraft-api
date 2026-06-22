@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeCommandEncoder.h>
 
 #include <BWAPI/Order.h>
+#include <BWAPI/TechType.h>
 #include <BWAPI/UnitType.h>
 
 #include <algorithm>
@@ -471,6 +472,75 @@ namespace BWAPI::Runtime
       return encodeAttackTarget(0, 0, request.targetUnitId, order, 0);
     }
 
+    RuntimeEncodedCommand encodeLoadCommand(const RuntimeCommandRequest& request)
+    {
+      RuntimeEncodedCommand failure;
+      if (!requireArgCount(request, 1, 2, failure))
+        return failure;
+      if (!inRange(request.targetUnitId, 1, std::numeric_limits<std::uint16_t>::max()))
+        return reject(request.name + " requires --unit to be a raw 16-bit BW UnitTarget id");
+
+      int order = 0;
+      if (!readArg(request, 0, "loadOrder", 0, std::numeric_limits<std::uint8_t>::max(), order, failure))
+        return failure;
+
+      int queued = 0;
+      RuntimeEncodedCommand queuedResult = readQueued(request, 1, queued);
+      if (!queuedResult.encoded)
+        return queuedResult;
+
+      RuntimeEncodedCommand encoded = encodeAttackTarget(0, 0, request.targetUnitId, order, queued);
+      if (encoded.encoded)
+      {
+        encoded.warnings.push_back(
+          "Load is state-dependent in BWAPI; loadOrder must already be PickupBunker, PickupTransport, or RightClick.");
+      }
+      return encoded;
+    }
+
+    RuntimeEncodedCommand encodeUnloadAllCommand(const RuntimeCommandRequest& request)
+    {
+      RuntimeEncodedCommand encoded = encodeUnusedByteCommand(request, 0x28);
+      if (encoded.encoded)
+      {
+        encoded.warnings.push_back(
+          "Unload_All is state-dependent in BWAPI; this encodes the bunker UnloadAll command form.");
+      }
+      return encoded;
+    }
+
+    RuntimeEncodedCommand encodeCancelMorphCommand(const RuntimeCommandRequest& request)
+    {
+      RuntimeEncodedCommand encoded = encodeSingleOpcodeCommand(request, 0x19);
+      if (encoded.encoded)
+      {
+        encoded.warnings.push_back(
+          "Cancel_Morph is state-dependent in BWAPI; this encodes the non-building CancelUnitMorph command form.");
+      }
+      return encoded;
+    }
+
+    RuntimeEncodedCommand encodeUseTechCommand(const RuntimeCommandRequest& request)
+    {
+      RuntimeEncodedCommand failure;
+      if (!requireArgCount(request, 1, 1, failure))
+        return failure;
+
+      int tech = 0;
+      if (!readArg(request, 0, "tech", 0, std::numeric_limits<std::uint8_t>::max(), tech, failure))
+        return failure;
+
+      if (tech == BWAPI::TechTypes::Enum::Stim_Packs)
+      {
+        std::vector<std::uint8_t> bytes;
+        appendU8(bytes, 0x36);
+        return accept(std::move(bytes));
+      }
+
+      return reject(
+        "Use_Tech requires live unit state for this tech; only Stim_Packs has a state-independent turn-buffer form");
+    }
+
     RuntimeEncodedCommand encodeGameAction(const RuntimeCommandRequest& request)
     {
       if (request.name == "pauseGame")
@@ -623,6 +693,14 @@ namespace BWAPI::Runtime
       return encodeTileAndUnitTypeCommand(request, BWAPI::Orders::Enum::BuildingLand);
     if (request.name == "Place_COP")
       return encodeTileAndUnitTypeCommand(request, BWAPI::Orders::Enum::CTFCOP2);
+    if (request.name == "Load")
+      return encodeLoadCommand(request);
+    if (request.name == "Unload_All")
+      return encodeUnloadAllCommand(request);
+    if (request.name == "Cancel_Morph")
+      return encodeCancelMorphCommand(request);
+    if (request.name == "Use_Tech")
+      return encodeUseTechCommand(request);
     if (request.name == "Use_Tech_Position")
       return encodeUseTechPosition(request);
     if (request.name == "Use_Tech_Unit")

@@ -121,4 +121,4 @@ Reference: https://github.com/bwapi/bwapi
 
 ## Legal
 
-StarCraft, StarCraft: Brood War, StarCraft: Remastered, Battle.net, and Blizzard Entertainment names are trademarks of Blizzard Entertainment. This repository does not include or redistribute StarCraft game binaries.
+StarCraft, StarCraft: Brood War, StarCraft: Remastered, Battle.net, and Blizzard Entertainment names are trademarks of Blizzard Entertainment.

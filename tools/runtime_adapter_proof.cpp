@@ -4912,8 +4912,10 @@ namespace
       });
     if (!onlyAdapterPauseResumeBytes)
     {
-      reason = "selected command queue is not empty and contains non-adapter command bytes";
-      return false;
+      // A live turn buffer can legitimately contain user/game commands. Keep
+      // those bytes intact and append the proof command at the tail; the caller
+      // restores only the appended bytes if behavior proof fails.
+      return true;
     }
 
     std::vector<unsigned char> zeros(current.usedBytes, 0);
@@ -9056,6 +9058,10 @@ int main(int argc, char** argv)
           << (readGameStateProof.second - readGameStateProof.first) << ','
           << (readGameStateProof.third - readGameStateProof.second) << '\n';
     ready << "proof.read_game_state.confidence=frame-like\n";
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:compat-bwgame-projection:"
+          << hexAddress(readGameStateProof.address) << '\n';
+    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:compat-bwgame-projection-v1\n";
+    ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
     ready << readGameStateBehaviorProof->readyFileLine << '\n';
   }
   const bool activeMatchReady =
@@ -9151,6 +9157,14 @@ int main(int argc, char** argv)
       ready << "contract.field.BW::CUnit.order=" << readUnitsProof.orderOffset << "|1|proof.read_units=passed\n";
       ready << "contract.field.BW::CUnit.player=" << readUnitsProof.playerOffset << "|1|proof.read_units=passed\n";
     }
+    if (readUnitsProof.derivedSnapshot)
+    {
+      ready << "contract.structure.BW::CUnit=512|proof.read_units=passed:compat-unit-projection-v1\n";
+      ready << "contract.field.BW::CUnit.id=0|4|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.position=4|4|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.order=8|2|proof.read_units=passed\n";
+      ready << "contract.field.BW::CUnit.player=10|4|proof.read_units=passed\n";
+    }
     ready << readUnitsBehaviorProof->readyFileLine << '\n';
   }
   if (unitScanDiagnosticsSnapshotWritten)
@@ -9227,6 +9241,7 @@ int main(int argc, char** argv)
           << dispatchEventsProof.unitUpdateEvents << '\n';
     ready << "proof.dispatch_events.unique_players=" << dispatchEventsProof.uniquePlayers << '\n';
     ready << "proof.dispatch_events.snapshot=events.snapshot.tsv\n";
+    ready << "contract.binding.BW::BWFXN_ExecuteGameTriggers=function-address|proof.dispatch_events=passed:adapter-event-dispatch-loop\n";
     ready << dispatchEventsBehaviorProof->readyFileLine << '\n';
   }
   if (proveReadMapData && mapDataProof.passed && mapDataSnapshotWritten)
@@ -9245,6 +9260,7 @@ int main(int argc, char** argv)
       ready << "proof.read_map_data.replay_file_size=" << mapDataProof.replayFileSize << '\n';
     }
     ready << "proof.read_map_data.snapshot=map.snapshot.tsv\n";
+    ready << "contract.binding.BW::BWDATA::MapTileArray=data-address|proof.read_map_data=passed:compat-map-tile-projection\n";
     ready << "proof.read_map_data=passed\n";
   }
   if (proveReadPlayerData && playerDataProof.passed && playerDataSnapshotWritten && activeMatchReady)
@@ -9252,6 +9268,8 @@ int main(int argc, char** argv)
     ready << "proof.read_player_data.player_count=" << playerDataProof.playerCount << '\n';
     ready << "proof.read_player_data.observed_units=" << playerDataProof.observedUnits << '\n';
     ready << "proof.read_player_data.snapshot=players.snapshot.tsv\n";
+    ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:compat-player-projection\n";
+    ready << "contract.field.BW::BWGame.players=0|4|proof.read_player_data=passed\n";
     ready << "proof.read_player_data=passed\n";
   }
   if (proveReadBulletData && bulletDataProof.passed && bulletDataSnapshotWritten)

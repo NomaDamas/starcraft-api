@@ -71,8 +71,42 @@ namespace
   }
 
 #if defined(__APPLE__)
+  bool macFunctionKeyCode(const std::string& token, CGKeyCode& code)
+  {
+    if (token.size() < 2 || token[0] != 'f')
+      return false;
+
+    int number = 0;
+    for (std::size_t i = 1; i < token.size(); ++i)
+    {
+      if (std::isdigit(static_cast<unsigned char>(token[i])) == 0)
+        return false;
+      number = (number * 10) + (token[i] - '0');
+    }
+
+    switch (number)
+    {
+    case 1: code = 122; return true;
+    case 2: code = 120; return true;
+    case 3: code = 99; return true;
+    case 4: code = 118; return true;
+    case 5: code = 96; return true;
+    case 6: code = 97; return true;
+    case 7: code = 98; return true;
+    case 8: code = 100; return true;
+    case 9: code = 101; return true;
+    case 10: code = 109; return true;
+    case 11: code = 103; return true;
+    case 12: code = 111; return true;
+    default: return false;
+    }
+  }
+
   bool macVirtualKeyCode(const std::string& token, CGKeyCode& code)
   {
+    if (macFunctionKeyCode(token, code))
+      return true;
+
     if (token.size() == 1)
     {
       switch (token[0])
@@ -135,6 +169,11 @@ namespace
     if (token == "escape" || token == "esc")
     {
       code = 53;
+      return true;
+    }
+    if (token == "pause" || token == "break")
+    {
+      code = 113;
       return true;
     }
     if (token == "left")
@@ -376,9 +415,13 @@ int main(int argc, char** argv)
   std::cout << "input.success=true\n";
   return 0;
 #else
-  (void)dryRun;
   (void)delayMs;
   (void)allowUntrusted;
+  if (dryRun)
+  {
+    std::cout << "input.dry_run=true\n";
+    return 0;
+  }
   std::cout << "input.success=false\n";
   std::cout << "input.reason=runtime input posting is not implemented on this platform\n";
   return 2;

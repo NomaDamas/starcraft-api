@@ -387,6 +387,11 @@ namespace
     std::size_t scannedBytes = 0;
     std::size_t imageMappedCandidates = 0;
     std::size_t privateCandidates = 0;
+    std::size_t vectorCandidates = 0;
+    std::size_t rawTurnBufferCandidates = 0;
+    std::size_t retainedVectorCandidates = 0;
+    std::size_t retainedRawTurnBufferCandidates = 0;
+    std::size_t retainedActiveCandidates = 0;
     std::vector<CommandQueueCandidate> candidates;
     std::string reason;
   };
@@ -403,6 +408,8 @@ namespace
     std::size_t originalUsedBytes = 0;
     std::size_t appendedBytes = 0;
     bool consumedImmediately = false;
+    bool pauseFrameCounterSampled = false;
+    bool pauseFrameCounterMatched = false;
     std::uint32_t baselineStart = 0;
     std::uint32_t baselineEnd = 0;
     std::uint32_t pausedStart = 0;
@@ -426,6 +433,8 @@ namespace
     std::uintptr_t frameCounterAddress = 0;
     std::size_t originalUsedBytes = 0;
     std::size_t appendedBytes = 0;
+    bool pauseFrameCounterSampled = false;
+    bool pauseFrameCounterMatched = false;
     std::uint32_t baselineStart = 0;
     std::uint32_t baselineEnd = 0;
     std::uint32_t pausedStart = 0;
@@ -1650,6 +1659,26 @@ namespace
       return 1;
     if (!fileBackedNonTargetRegion(region, executablePath))
       return 2;
+    return 3;
+  }
+
+  int commandQueueScanRegionPriority(
+    const RuntimeMemoryRegion& region,
+    const std::string& executablePath,
+    std::uintptr_t targetImageBase)
+  {
+    const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
+    const bool likelyTargetTextMapping =
+      targetImageRegion
+      && targetImageBase != 0
+      && region.address == targetImageBase
+      && region.size >= 8 * 1024 * 1024;
+    if (!targetImageRegion && !fileBackedNonTargetRegion(region, executablePath))
+      return 0;
+    if (targetImageRegion && !likelyTargetTextMapping)
+      return 2;
+    if (targetImageRegion)
+      return 3;
     return 3;
   }
 
@@ -3927,6 +3956,7 @@ namespace
     const LiveCounterProof& gameStateProof,
     const MapDataProof& mapProof,
     const PlayerDataProof& playerProof,
+    bool activeMatchReady,
     bool replayLaunchDetected)
   {
     ReplayAnalysisProof proof;
@@ -3940,10 +3970,12 @@ namespace
       proof.reason = "replay-analysis proof requires a passing live map-data proof";
       return proof;
     }
-    if (mapProof.source == "latest-replay-artifact" && !replayLaunchDetected)
+    if (mapProof.source == "latest-replay-artifact"
+        && !replayLaunchDetected
+        && !(activeMatchReady && playerProof.passed))
     {
       proof.reason =
-        "replay-analysis proof requires current-process replay launch evidence when map data comes from a replay artifact";
+        "replay-analysis proof requires current-process replay launch evidence or active-match player metadata when map data comes from a replay artifact";
       return proof;
     }
     if (gameStateProof.first == gameStateProof.second && gameStateProof.second == gameStateProof.third)
@@ -4552,6 +4584,38 @@ namespace
       && candidate.capacityBytes <= 16 * 1024;
   }
 
+  bool liveCommandCandidateSelectorSafeForWrite(
+    const CommandQueueCandidate& candidate,
+    const std::string& executablePath,
+    std::string& reason)
+  {
+    if (candidate.storageKind == "vector" && sameMappedFile(candidate.regionPath, executablePath))
+    {
+      reason =
+        "refusing to write command queue vector selector stored in the target executable image; "
+        "live proof requires raw turn-buffer storage or a non-image queue selector";
+      return false;
+    }
+    return true;
+  }
+
+  void refreshCommandQueueDiscoveryRetainedStats(CommandQueueDiscoveryProof& proof)
+  {
+    proof.retainedVectorCandidates = 0;
+    proof.retainedRawTurnBufferCandidates = 0;
+    proof.retainedActiveCandidates = 0;
+    for (const CommandQueueCandidate& candidate : proof.candidates)
+    {
+      if (candidate.storageKind == "raw-turn-buffer")
+        ++proof.retainedRawTurnBufferCandidates;
+      else if (candidate.storageKind == "vector")
+        ++proof.retainedVectorCandidates;
+
+      if (candidate.activityTransitions > 0 || candidate.activityByteChanges > 0)
+        ++proof.retainedActiveCandidates;
+    }
+  }
+
   CommandQueueDiscoveryProof discoverCommandQueueCandidates(
     int processId,
     const std::string& executablePath,
@@ -4583,8 +4647,8 @@ namespace
       scanRegions.end(),
       [&](const RuntimeMemoryRegion& lhs, const RuntimeMemoryRegion& rhs)
       {
-        const int lhsPriority = unitScanRegionPriority(lhs, executablePath, targetImageBase);
-        const int rhsPriority = unitScanRegionPriority(rhs, executablePath, targetImageBase);
+        const int lhsPriority = commandQueueScanRegionPriority(lhs, executablePath, targetImageBase);
+        const int rhsPriority = commandQueueScanRegionPriority(rhs, executablePath, targetImageBase);
         if (lhsPriority != rhsPriority)
           return lhsPriority < rhsPriority;
         return lhs.address < rhs.address;
@@ -4678,6 +4742,7 @@ namespace
           ++proof.imageMappedCandidates;
         else if (region.mappedPath.empty())
           ++proof.privateCandidates;
+        ++proof.vectorCandidates;
         proof.candidates.push_back(std::move(candidate));
         // Suppress sliding-window false positives over the accepted
         // {begin,end,capacity} triple. Adjacent real vectors are 24-byte
@@ -4740,6 +4805,7 @@ namespace
             ++proof.imageMappedCandidates;
           else if (region.mappedPath.empty())
             ++proof.privateCandidates;
+          ++proof.rawTurnBufferCandidates;
           proof.candidates.push_back(std::move(candidate));
         }
         if (!proof.reason.empty())
@@ -4766,6 +4832,7 @@ namespace
       maxCandidates = 32;
     if (proof.candidates.size() > maxCandidates)
       proof.candidates.resize(maxCandidates);
+    refreshCommandQueueDiscoveryRetainedStats(proof);
 
     proof.ready = !proof.candidates.empty();
     if (!proof.ready && proof.reason.empty())
@@ -5672,9 +5739,20 @@ namespace
         const CommandQueueCandidate& candidate = discoveryProof.candidates[i];
         const bool observedActivity =
           candidate.activityTransitions > 0 || candidate.activityByteChanges > 0;
-        if (!observedActivity)
+        const bool boundedRawTurnBufferProbe =
+          candidate.storageKind == "raw-turn-buffer"
+          && candidate.regionPath.empty()
+          && candidate.usedBytes <= 64
+          && candidate.capacityBytes == rawTurnBufferCapacity;
+        if (!observedActivity && !boundedRawTurnBufferProbe)
           continue;
         if (!implicitLiveCommandCandidateSafeForWrite(candidate))
+        {
+          skippedUnsafeActiveCandidate = true;
+          continue;
+        }
+        std::string unsafeReason;
+        if (!liveCommandCandidateSelectorSafeForWrite(candidate, executablePath, unsafeReason))
         {
           skippedUnsafeActiveCandidate = true;
           continue;
@@ -5686,14 +5764,15 @@ namespace
         if (skippedUnsafeActiveCandidate)
         {
           proof.reason =
-            "live issue-commands proof skipped active candidates whose used/capacity bytes do not match a BW turn-buffer-sized queue; "
+            "live issue-commands proof skipped active candidates that are unsafe for live writes; "
             "provide --command-queue-vector-address only after manual validation";
         }
         else
         {
           proof.reason =
-            "live issue-commands proof requires natural command queue activity or "
-            "--command-queue-vector-address before writing to a discovered candidate";
+            "live issue-commands proof requires natural command queue activity, "
+            "a bounded non-image raw turn-buffer candidate, or --command-queue-vector-address "
+            "before writing to a discovered candidate";
         }
         return proof;
       }
@@ -5735,6 +5814,21 @@ namespace
     }
     if (!self)
     {
+      for (const auto& rankedCandidate : candidatesToTry)
+      {
+        std::string unsafeReason;
+        if (!liveCommandCandidateSelectorSafeForWrite(
+              *rankedCandidate.second,
+              executablePath,
+              unsafeReason))
+        {
+          proof.reason = unsafeReason;
+          return proof;
+        }
+      }
+    }
+    if (!self)
+    {
       if (!gameStateProof.passed || gameStateProof.address == 0)
       {
         proof.reason = "issue-commands proof requires a passing live frame counter proof";
@@ -5754,6 +5848,10 @@ namespace
           proof.staleProofBytesCleared || attempt.staleProofBytesCleared;
         proof.originalUsedBytes = attempt.originalUsedBytes;
         proof.appendedBytes = attempt.appendedBytes;
+        proof.pauseFrameCounterSampled =
+          proof.pauseFrameCounterSampled || attempt.pauseFrameCounterSampled;
+        proof.pauseFrameCounterMatched =
+          proof.pauseFrameCounterMatched || attempt.pauseFrameCounterMatched;
         proof.frameCounterAddress = attempt.frameCounterAddress;
         proof.baselineStart = attempt.baselineStart;
         proof.baselineEnd = attempt.baselineEnd;
@@ -5767,40 +5865,19 @@ namespace
     std::vector<FrameCounterCandidate> commandCounterCandidates;
     if (!self)
     {
-      commandCounterCandidates = collectFrameCounterCandidates(
-        processId,
-        executablePath,
-        frameSampleMs,
-        stateMaxScanBytes,
-        stateScanTimeoutMs,
-        128);
-      if (gameStateProof.passed && gameStateProof.address != 0)
+      if (!gameStateProof.passed || gameStateProof.address == 0)
       {
-        const auto duplicate = std::find_if(
-          commandCounterCandidates.begin(),
-          commandCounterCandidates.end(),
-          [&](const FrameCounterCandidate& candidate)
-          {
-            return candidate.address == gameStateProof.address;
-          });
-        if (duplicate == commandCounterCandidates.end())
-        {
-          commandCounterCandidates.insert(
-            commandCounterCandidates.begin(),
-            FrameCounterCandidate {
-              gameStateProof.address,
-              gameStateProof.first,
-              gameStateProof.second,
-              gameStateProof.third,
-              0
-            });
-        }
-      }
-      if (commandCounterCandidates.empty())
-      {
-        proof.reason = "issue-commands proof requires live frame counter candidates";
+        proof.reason = "issue-commands proof requires the proven live game-state frame counter";
         return proof;
       }
+      commandCounterCandidates.push_back(
+        FrameCounterCandidate {
+          gameStateProof.address,
+          gameStateProof.first,
+          gameStateProof.second,
+          gameStateProof.third,
+          0
+        });
     }
 
     auto selectPausedCounter =
@@ -5832,6 +5909,7 @@ namespace
         std::this_thread::sleep_for(std::chrono::milliseconds(frameSampleMs));
 
         const PauseSample* best = nullptr;
+        const PauseSample* diagnostic = nullptr;
         for (PauseSample& sample : samples)
         {
           if (!readFrameCounterAt(processId, sample.candidate->address, sample.end))
@@ -5842,18 +5920,31 @@ namespace
           if (baselineDelta < 2)
             continue;
 
-          const std::uint32_t pausedThreshold =
-            std::max<std::uint32_t>(1, baselineDelta / 8);
           const std::uint32_t pausedDelta = counterDelta(sample.start, sample.end);
-          if (pausedDelta > pausedThreshold)
+          if (diagnostic == nullptr)
+            diagnostic = &sample;
+          if (pausedDelta != 0)
             continue;
 
           if (best == nullptr || sample.candidate->score < best->candidate->score)
             best = &sample;
         }
         if (best == nullptr)
+        {
+          if (diagnostic != nullptr)
+          {
+            attempt.pauseFrameCounterSampled = true;
+            attempt.frameCounterAddress = diagnostic->candidate->address;
+            attempt.baselineStart = diagnostic->candidate->second;
+            attempt.baselineEnd = diagnostic->candidate->third;
+            attempt.pausedStart = diagnostic->start;
+            attempt.pausedEnd = diagnostic->end;
+          }
           return false;
+        }
 
+        attempt.pauseFrameCounterSampled = true;
+        attempt.pauseFrameCounterMatched = true;
         attempt.frameCounterAddress = best->candidate->address;
         attempt.baselineStart = best->candidate->second;
         attempt.baselineEnd = best->candidate->third;
@@ -5928,7 +6019,10 @@ namespace
       if (!selectPausedCounter(commandCounterCandidates, attempt))
       {
         restoreCommandQueueAppendIfStillPresent(processId, append);
-        attempt.reason = "pause command did not stop any tracked live frame counter";
+        attempt.reason = attempt.pauseFrameCounterSampled
+          ? "pause command did not stop tracked live frame counter; paused_delta="
+            + std::to_string(counterDelta(attempt.pausedStart, attempt.pausedEnd))
+          : "pause command did not produce a readable live frame-counter sample";
         proof.attempts.push_back(attempt);
         copyAttemptToProof(attempt);
         continue;
@@ -6018,6 +6112,10 @@ namespace
     output << "self_fixture\t" << (proof.selfFixture ? "true" : "false") << '\n';
     output << "receiver_active\t" << (proof.receiverActive ? "true" : "false") << '\n';
     output << "stale_proof_bytes_cleared\t" << (proof.staleProofBytesCleared ? "true" : "false") << '\n';
+    output << "pause_frame_counter_sampled\t"
+           << (proof.pauseFrameCounterSampled ? "true" : "false") << '\n';
+    output << "pause_frame_counter_matched\t"
+           << (proof.pauseFrameCounterMatched ? "true" : "false") << '\n';
     output << "command\t" << proof.commandName << '\n';
     output << "encoded_bytes\t" << proof.encodedBytes << '\n';
     output << "attempt_count\t" << proof.attempts.size() << '\n';
@@ -6036,7 +6134,7 @@ namespace
     if (!proof.attempts.empty())
     {
       output << "\n";
-      output << "attempt_rank\tstorage_kind\tselector_address\tbytes_in_queue_address\tbuffer_begin\toriginal_used_bytes\tappended_bytes\tconsumed_immediately\tstale_proof_bytes_cleared\tdelivery_checked\tbehavior_checked\tbaseline_delta\tpaused_delta\tresumed_delta\treason\n";
+      output << "attempt_rank\tstorage_kind\tselector_address\tbytes_in_queue_address\tbuffer_begin\toriginal_used_bytes\tappended_bytes\tconsumed_immediately\tstale_proof_bytes_cleared\tpause_frame_counter_sampled\tpause_frame_counter_matched\tdelivery_checked\tbehavior_checked\tbaseline_delta\tpaused_delta\tresumed_delta\treason\n";
       for (const IssueCommandsAttempt& attempt : proof.attempts)
       {
         output << attempt.rank << '\t'
@@ -6048,6 +6146,8 @@ namespace
                << attempt.appendedBytes << '\t'
                << (attempt.consumedImmediately ? "true" : "false") << '\t'
                << (attempt.staleProofBytesCleared ? "true" : "false") << '\t'
+               << (attempt.pauseFrameCounterSampled ? "true" : "false") << '\t'
+               << (attempt.pauseFrameCounterMatched ? "true" : "false") << '\t'
                << (attempt.deliveryChecked ? "true" : "false") << '\t'
                << (attempt.behaviorChecked ? "true" : "false") << '\t'
                << counterDelta(attempt.baselineStart, attempt.baselineEnd) << '\t'
@@ -6546,7 +6646,37 @@ namespace
           5000,
           32);
         if (refreshedDiscovery.ready && !refreshedDiscovery.candidates.empty())
-          selectedCandidate = refreshedDiscovery.candidates.front();
+        {
+          auto safeRefreshedCandidate = std::find_if(
+            refreshedDiscovery.candidates.begin(),
+            refreshedDiscovery.candidates.end(),
+            [&](const CommandQueueCandidate& refreshedCandidate)
+            {
+              std::string unsafeReason;
+              return liveCommandCandidateSelectorSafeForWrite(
+                refreshedCandidate,
+                environment.executablePath,
+                unsafeReason);
+            });
+          if (safeRefreshedCandidate != refreshedDiscovery.candidates.end())
+            selectedCandidate = *safeRefreshedCandidate;
+        }
+
+        std::string unsafeReason;
+        if (!liveCommandCandidateSelectorSafeForWrite(
+              selectedCandidate,
+              environment.executablePath,
+              unsafeReason))
+        {
+          appendCommandReceiverAudit(
+            auditPath,
+            sequence,
+            "failed",
+            line,
+            formatCommandBytesHex(encoded.bytes),
+            unsafeReason);
+          continue;
+        }
 
         CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
           environment.processId,
@@ -9154,10 +9284,16 @@ int main(int argc, char** argv)
 
   if (proveReplayAnalysis)
   {
+    const bool replayAnalysisActiveMatchReady =
+      proveActiveMatchState
+      && !self
+      && (!proveReadGameState || readGameStateProof.passed)
+      && (readUnitsProof.passed || activeUnitNodeProof.passed);
     replayAnalysisProof = proveReplayAnalysisFromLiveMetadata(
       readGameStateProof,
       mapDataProof,
       playerDataProof,
+      replayAnalysisActiveMatchReady,
       replayLaunchDetected);
     std::cout << "replay_analysis.ready=" << (replayAnalysisProof.passed ? "true" : "false") << '\n';
     if (replayAnalysisProof.passed)
@@ -9262,6 +9398,7 @@ int main(int argc, char** argv)
         static_cast<std::size_t>(commandQueueFixture.capacity - commandQueueFixture.begin);
       fixtureCandidate.score = 1000;
       fixtureCandidate.regionPath = "self-command-queue-fixture";
+      ++commandQueueDiscoveryProof.vectorCandidates;
       commandQueueDiscoveryProof.candidates.insert(
         commandQueueDiscoveryProof.candidates.begin(),
         fixtureCandidate);
@@ -9281,6 +9418,7 @@ int main(int argc, char** argv)
       rawFixtureCandidate.capacityBytes = commandQueueFixture.rawBuffer.size();
       rawFixtureCandidate.score = 1100;
       rawFixtureCandidate.regionPath = "self-raw-turn-buffer-fixture";
+      ++commandQueueDiscoveryProof.rawTurnBufferCandidates;
       commandQueueDiscoveryProof.candidates.insert(
         commandQueueDiscoveryProof.candidates.begin(),
         rawFixtureCandidate);
@@ -9299,10 +9437,22 @@ int main(int argc, char** argv)
             explicitCandidate,
             explicitReason))
       {
+        const RuntimeMemoryRegion* selectorRegion = explicitCandidate.storageKind == "raw-turn-buffer"
+          ? findWritableRegion(
+            regions.regions,
+            explicitCandidate.bytesInQueueAddress,
+            sizeof(std::uint32_t))
+          : findWritableRegion(
+            regions.regions,
+            explicitCandidate.vectorAddress,
+            sizeof(std::uint64_t) * 3);
         explicitCandidate.score = 10000;
-        explicitCandidate.regionPath = explicitCandidate.storageKind == "raw-turn-buffer"
-          ? "explicit-raw-turn-buffer"
-          : "explicit-command-queue-vector";
+        explicitCandidate.regionPath =
+          selectorRegion != nullptr && !selectorRegion->mappedPath.empty()
+            ? selectorRegion->mappedPath
+            : (explicitCandidate.storageKind == "raw-turn-buffer"
+              ? "explicit-raw-turn-buffer"
+              : "explicit-command-queue-vector");
         commandQueueDiscoveryProof.candidates.erase(
           std::remove_if(
             commandQueueDiscoveryProof.candidates.begin(),
@@ -9316,6 +9466,7 @@ int main(int argc, char** argv)
           commandQueueDiscoveryProof.candidates.begin(),
           explicitCandidate);
         commandQueueDiscoveryProof.ready = true;
+        refreshCommandQueueDiscoveryRetainedStats(commandQueueDiscoveryProof);
       }
       else if (!commandQueueDiscoveryProof.ready)
       {
@@ -9337,6 +9488,11 @@ int main(int argc, char** argv)
         commandQueueDiscoveryProof.candidates,
         activityIntervalMs,
         std::max<std::size_t>(commandQueueCandidateLimit, issueCommandCandidateScanLimit));
+      refreshCommandQueueDiscoveryRetainedStats(commandQueueDiscoveryProof);
+    }
+    else
+    {
+      refreshCommandQueueDiscoveryRetainedStats(commandQueueDiscoveryProof);
     }
     std::cout << "command_queue_discovery.ready="
               << (commandQueueDiscoveryProof.ready ? "true" : "false") << '\n';
@@ -9348,6 +9504,16 @@ int main(int argc, char** argv)
               << commandQueueMaxScanBytes << '\n';
     std::cout << "command_queue_discovery.candidate_count="
               << commandQueueDiscoveryProof.candidates.size() << '\n';
+    std::cout << "command_queue_discovery.vector_candidate_count="
+              << commandQueueDiscoveryProof.vectorCandidates << '\n';
+    std::cout << "command_queue_discovery.raw_turn_buffer_candidate_count="
+              << commandQueueDiscoveryProof.rawTurnBufferCandidates << '\n';
+    std::cout << "command_queue_discovery.retained_vector_candidate_count="
+              << commandQueueDiscoveryProof.retainedVectorCandidates << '\n';
+    std::cout << "command_queue_discovery.retained_raw_turn_buffer_candidate_count="
+              << commandQueueDiscoveryProof.retainedRawTurnBufferCandidates << '\n';
+    std::cout << "command_queue_discovery.retained_active_candidate_count="
+              << commandQueueDiscoveryProof.retainedActiveCandidates << '\n';
     std::cout << "command_queue_discovery.private_candidate_count="
               << commandQueueDiscoveryProof.privateCandidates << '\n';
     std::cout << "command_queue_discovery.image_mapped_candidate_count="
@@ -9413,6 +9579,10 @@ int main(int argc, char** argv)
               << (issueCommandsProof.receiverActive ? "true" : "false") << '\n';
     std::cout << "issue_commands.stale_proof_bytes_cleared="
               << (issueCommandsProof.staleProofBytesCleared ? "true" : "false") << '\n';
+    std::cout << "issue_commands.pause_frame_counter_sampled="
+              << (issueCommandsProof.pauseFrameCounterSampled ? "true" : "false") << '\n';
+    std::cout << "issue_commands.pause_frame_counter_matched="
+              << (issueCommandsProof.pauseFrameCounterMatched ? "true" : "false") << '\n';
     std::cout << "issue_commands.attempt_count="
               << issueCommandsProof.attempts.size() << '\n';
     if (issueCommandsProof.vectorAddress != 0)
@@ -9506,7 +9676,7 @@ int main(int argc, char** argv)
       proofFailureCode = proofFailureCode == 0 ? 18 : proofFailureCode;
   }
 
-  constexpr int commandDeliverySurvivalGraceMs = 2500;
+  constexpr int commandDeliverySurvivalGraceMs = 10000;
   if (proveIssueCommands && issueCommandsProof.deliveryChecked && !self)
   {
     std::cout << "runtime.post_command_grace_ms="
@@ -9517,6 +9687,7 @@ int main(int argc, char** argv)
               << (visibleAfterCommandDelivery ? "true" : "false") << '\n';
     if (!visibleAfterCommandDelivery)
     {
+      issueCommandsProof.passed = false;
       if (issueCommandsProof.reason.empty())
         issueCommandsProof.reason = "target runtime exited after command delivery attempt";
       else
@@ -10244,6 +10415,16 @@ int main(int argc, char** argv)
           << (commandQueueDiscoveryProof.ready ? "candidate-found" : "not-found") << '\n';
     ready << "proof.command_queue_discovery.candidate_count="
           << commandQueueDiscoveryProof.candidates.size() << '\n';
+    ready << "proof.command_queue_discovery.vector_candidate_count="
+          << commandQueueDiscoveryProof.vectorCandidates << '\n';
+    ready << "proof.command_queue_discovery.raw_turn_buffer_candidate_count="
+          << commandQueueDiscoveryProof.rawTurnBufferCandidates << '\n';
+    ready << "proof.command_queue_discovery.retained_vector_candidate_count="
+          << commandQueueDiscoveryProof.retainedVectorCandidates << '\n';
+    ready << "proof.command_queue_discovery.retained_raw_turn_buffer_candidate_count="
+          << commandQueueDiscoveryProof.retainedRawTurnBufferCandidates << '\n';
+    ready << "proof.command_queue_discovery.retained_active_candidate_count="
+          << commandQueueDiscoveryProof.retainedActiveCandidates << '\n';
     ready << "proof.command_queue_discovery.private_candidate_count="
           << commandQueueDiscoveryProof.privateCandidates << '\n';
     ready << "proof.command_queue_discovery.image_mapped_candidate_count="

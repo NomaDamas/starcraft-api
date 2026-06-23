@@ -3,6 +3,7 @@
 #include <BWAPI/Runtime/RuntimeBackend.h>
 
 #include <string>
+#include <vector>
 
 namespace BWAPI::Runtime
 {
@@ -23,8 +24,17 @@ namespace BWAPI::Runtime
     std::string reason;
   };
 
+  struct RuntimeProcessCommandLineResult
+  {
+    bool inspected = false;
+    std::vector<std::string> arguments;
+    std::string commandLine;
+    std::string reason;
+  };
+
   bool runtimeProcessExists(int processId);
   std::string runtimeProcessExecutablePath(int processId);
   RuntimeProcessStateResult inspectRuntimeProcessState(int processId);
+  RuntimeProcessCommandLineResult inspectRuntimeProcessCommandLine(int processId);
   RuntimeProcessOpenResult openRuntimeProcess(const RuntimeEnvironment& environment);
 }

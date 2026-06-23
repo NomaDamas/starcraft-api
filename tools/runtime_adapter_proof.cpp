@@ -76,6 +76,12 @@ namespace
       << "                           prove encoded BWAPI turn-buffer commands are delivered to a live runtime command path\n"
       << "  --issue-command-candidate-scan-limit <count>\n"
       << "                           with --prove-issue-commands, safely try up to count discovered command-queue candidates\n"
+      << "  --command-queue-activity-ms <ms>\n"
+      << "                           live sampling window used to rank command queue candidates by natural activity (default: 375)\n"
+      << "  --command-queue-candidate-limit <count>\n"
+      << "                           retain up to count discovered command candidates for diagnostics (default: 32)\n"
+      << "  --command-queue-max-scan-mb <mb>\n"
+      << "                           maximum memory to scan for command queue candidates (default: --state-max-scan-mb)\n"
       << "  --prove-draw-overlays\n"
       << "                           write fail-closed overlay diagnostics unless a real render hook proof is available\n"
       << "  --prove-multiplayer-sync\n"
@@ -192,6 +198,7 @@ namespace
     std::string layoutName;
     std::string idSource;
     std::string positionSource;
+    std::string hitPointsSource;
     std::string orderSource;
     std::string playerSource;
     std::string reason;
@@ -212,6 +219,9 @@ namespace
     std::uint16_t state = 0;
     int player = -1;
     std::uint16_t typeHint = 0;
+    std::uint32_t hitPoints = 0;
+    bool hitPointsResolved = false;
+    std::string hitPointsSource;
     bool metadataDerived = false;
   };
 
@@ -254,6 +264,14 @@ namespace
   {
     int player = -1;
     std::size_t unitCount = 0;
+    int stormId = -1;
+    int race = 8;
+    int minerals = -1;
+    int gas = -1;
+    int supplyUsed = -1;
+    int supplyTotal = -1;
+    std::uint32_t allianceMask = 0;
+    bool raceInferred = false;
   };
 
   struct PlayerDataProof
@@ -261,6 +279,10 @@ namespace
     bool passed = false;
     std::size_t playerCount = 0;
     std::size_t observedUnits = 0;
+    std::size_t playerInfoRecordSize = 128;
+    bool playerInfoProjectionReady = false;
+    bool allianceProjectionReady = false;
+    std::string projectionSource;
     std::vector<PlayerSnapshotRecord> players;
     std::string reason;
   };
@@ -351,7 +373,11 @@ namespace
     std::size_t usedBytes = 0;
     std::size_t capacityBytes = 0;
     int score = 0;
+    std::size_t activitySamples = 0;
+    std::size_t activityTransitions = 0;
+    std::size_t activityByteChanges = 0;
     std::string regionPath;
+    std::string activityReason;
   };
 
   struct CommandQueueDiscoveryProof
@@ -434,6 +460,7 @@ namespace
     bool commandQueueProven = false;
     bool activeMatchProven = false;
     bool replayOnly = false;
+    bool replayLaunchDetected = false;
     bool snetReceiveResolved = false;
     bool snetSendTurnResolved = false;
     bool platformReceiveResolved = false;
@@ -446,6 +473,7 @@ namespace
     std::string platformSendBinding = "SC:R::TLSNetworkConnection::Send";
     std::string turnPacketBinding = "SC:R::GetTurnPackets";
     std::string snapshot = "multiplayer_sync.snapshot.tsv";
+    std::string replayLaunchEvidence;
     std::vector<std::string> resolvedAnchors;
     std::vector<std::string> missingAnchors;
     std::string reason;
@@ -3013,6 +3041,26 @@ namespace
     return failedUnitNodeProof("no explicit SC:R unit-node candidate address contained enough active records");
   }
 
+  bool parseScrCompactHitPoints(
+    const std::vector<unsigned char>& bytes,
+    std::uint32_t& hitPoints,
+    std::string& source)
+  {
+    constexpr std::size_t currentHitPointsOffset = 0x1a;
+    constexpr std::size_t maxHitPointsOffset = 0x1b;
+    if (bytes.size() <= maxHitPointsOffset)
+      return false;
+
+    const unsigned char currentHitPoints = bytes[currentHitPointsOffset];
+    const unsigned char maxHitPoints = bytes[maxHitPointsOffset];
+    if (currentHitPoints == 0 || maxHitPoints == 0 || currentHitPoints > maxHitPoints)
+      return false;
+
+    hitPoints = static_cast<std::uint32_t>(currentHitPoints) * 256u;
+    source = "secondary+0x1a compact-hp-byte";
+    return true;
+  }
+
   bool parseRemasteredUnitSnapshotRecord(
     int processId,
     const std::vector<unsigned char>& bytes,
@@ -3055,6 +3103,8 @@ namespace
             record.id = static_cast<std::uint32_t>((nodeAddress >> 4) & 0xffffffffu);
             record.player = rawPlayer == 255 ? 11 : static_cast<int>(rawPlayer);
             record.typeHint = typeHint;
+            record.hitPointsResolved =
+              parseScrCompactHitPoints(secondaryRead.bytes, record.hitPoints, record.hitPointsSource);
             return true;
           }
         }
@@ -3083,6 +3133,10 @@ namespace
     record.id = static_cast<std::uint32_t>((nodeAddress >> 4) & 0xffffffffu);
     record.player = static_cast<int>(metadataPlayer);
     record.typeHint = metadataType;
+    record.hitPointsResolved =
+      parseScrCompactHitPoints(metadataRead.bytes, record.hitPoints, record.hitPointsSource);
+    if (record.hitPointsResolved && record.hitPointsSource.rfind("secondary+", 0) == 0)
+      record.hitPointsSource.replace(0, 10, "metadata+");
     record.metadataDerived = true;
     return record.id != 0;
   }
@@ -3456,20 +3510,32 @@ namespace
       {
         return record.metadataDerived;
       });
+    const bool hitPointsResolved = std::all_of(
+      records.begin(),
+      records.end(),
+      [](const RemasteredUnitSnapshotRecord& record)
+      {
+        return record.hitPointsResolved && record.hitPoints > 0;
+      });
 
     LiveUnitsProof proof;
     proof.passed = true;
     proof.address = nodeProof.address;
     proof.recordSize = nodeProof.recordSize;
     proof.positionOffset = 0x24;
+    proof.hitPointsOffset = hitPointsResolved ? 12 : 0;
     proof.orderOffset = 0x30;
     proof.sampledRecords = availableRecords;
     proof.activeRecords = records.size();
     proof.derivedSnapshot = true;
-    proof.hitPointsResolved = false;
+    proof.hitPointsResolved = hitPointsResolved;
     proof.layoutName = "scr-unit-node-object-graph";
     proof.idSource = usesMetadataFields ? "stable-node-handle|unit-node+0x40 metadata" : "stable-node-handle";
     proof.positionSource = "unit-node+36|4";
+    proof.hitPointsSource =
+      hitPointsResolved
+        ? (usesMetadataFields ? "metadata+0x1a compact-hp-byte -> bwapi-hp-raw" : "secondary+0x1a compact-hp-byte -> bwapi-hp-raw")
+        : "";
     proof.orderSource = "unit-node+48|2";
     proof.playerSource = usesMetadataFields ? "unit-node+0x40 metadata+0xc0|1" : "unit-node+0x50 secondary+0x14|1";
     return proof;
@@ -3603,6 +3669,29 @@ namespace
     return proof;
   }
 
+  int inferRaceFromUnitTypeHint(std::uint16_t typeHint, int player)
+  {
+    if (player >= 8)
+      return 3; // BWAPI::Races::Other for neutral/observer slots.
+
+    // BWAPI UnitTypes are grouped by race for the classic ids. SC:R type
+    // hints are validated as unit-type-like ids before this projection is used.
+    if (typeHint <= 34 || typeHint == 58 || (typeHint >= 105 && typeHint <= 131))
+      return 1; // Terran
+    if ((typeHint >= 35 && typeHint <= 57)
+        || typeHint == 59
+        || typeHint == 96
+        || typeHint == 102
+        || typeHint == 103
+        || (typeHint >= 132 && typeHint <= 157))
+      return 0; // Zerg
+    if ((typeHint >= 60 && typeHint <= 87)
+        || typeHint == 97
+        || (typeHint >= 159 && typeHint <= 173))
+      return 2; // Protoss
+    return 8; // BWAPI::Races::Unknown
+  }
+
   PlayerDataProof provePlayerDataFromUnitSnapshot(const LiveUnitNodeProof& nodeProof)
   {
     PlayerDataProof proof;
@@ -3613,12 +3702,17 @@ namespace
     }
 
     std::array<std::size_t, 12> unitCounts = {};
+    std::array<std::array<std::size_t, 9>, 12> raceVotes = {};
     for (const RemasteredUnitSnapshotRecord& record : nodeProof.records)
     {
       if (record.player < 0 || record.player >= static_cast<int>(unitCounts.size()))
         continue;
-      ++unitCounts[static_cast<std::size_t>(record.player)];
+      const std::size_t playerIndex = static_cast<std::size_t>(record.player);
+      ++unitCounts[playerIndex];
       ++proof.observedUnits;
+      const int inferredRace = inferRaceFromUnitTypeHint(record.typeHint, record.player);
+      if (inferredRace >= 0 && inferredRace < static_cast<int>(raceVotes[playerIndex].size()))
+        ++raceVotes[playerIndex][static_cast<std::size_t>(inferredRace)];
     }
 
     for (std::size_t player = 0; player < unitCounts.size(); ++player)
@@ -3628,6 +3722,17 @@ namespace
       PlayerSnapshotRecord record;
       record.player = static_cast<int>(player);
       record.unitCount = unitCounts[player];
+      record.stormId = record.player;
+      record.race = 8;
+      for (std::size_t race = 0; race < raceVotes[player].size(); ++race)
+      {
+        if (raceVotes[player][race] > raceVotes[player][static_cast<std::size_t>(record.race)])
+        {
+          record.race = static_cast<int>(race);
+          record.raceInferred = true;
+        }
+      }
+      record.allianceMask = 1u << player;
       proof.players.push_back(record);
     }
 
@@ -3639,13 +3744,17 @@ namespace
 
     proof.passed = true;
     proof.playerCount = proof.players.size();
+    proof.playerInfoProjectionReady = true;
+    proof.allianceProjectionReady = true;
+    proof.projectionSource = "compat-player-projection-v1:unit-snapshot-derived";
     return proof;
   }
 
   ReplayAnalysisProof proveReplayAnalysisFromLiveMetadata(
     const LiveCounterProof& gameStateProof,
     const MapDataProof& mapProof,
-    const PlayerDataProof& playerProof)
+    const PlayerDataProof& playerProof,
+    bool replayLaunchDetected)
   {
     ReplayAnalysisProof proof;
     if (!gameStateProof.passed)
@@ -3656,6 +3765,12 @@ namespace
     if (!mapProof.passed)
     {
       proof.reason = "replay-analysis proof requires a passing live map-data proof";
+      return proof;
+    }
+    if (mapProof.source == "latest-replay-artifact" && !replayLaunchDetected)
+    {
+      proof.reason =
+        "replay-analysis proof requires current-process replay launch evidence when map data comes from a replay artifact";
       return proof;
     }
     if (gameStateProof.first == gameStateProof.second && gameStateProof.second == gameStateProof.third)
@@ -4092,6 +4207,7 @@ namespace
   }
 
   constexpr std::size_t rawTurnBufferCapacity = 512;
+  constexpr std::size_t implicitLiveCommandQueueMaxUsedBytes = rawTurnBufferCapacity;
   constexpr std::array<std::size_t, 6> rawTurnBufferCounterOffsets = {
     0x200, 0x204, 0x208, 0x210, 0x220, 0x240
   };
@@ -4204,17 +4320,21 @@ namespace
     int score = 0;
     const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
     if (region.mappedPath.empty())
-      score += 900;
+      score += 250;
     if (regionIntersectsStarCraftRuntimeData(region, hints))
-      score += targetImageRegion ? 120 : 700;
+      score += targetImageRegion ? 80 : 350;
     if (targetImageRegion)
       score -= 300;
     if (counterOffset == 0x220)
-      score += 80;
+      score += 40;
     if (usedBytes > 0)
       score += 60;
+    else
+      score -= 120;
     if (usedBytes <= 8)
       score += 20;
+    if (usedBytes > 128)
+      score -= 80;
     return score;
   }
 
@@ -4241,18 +4361,30 @@ namespace
       score += 8;
     else if (usedBytes <= 512)
       score += 12;
+    else
+      score -= 500;
     if (capacityBytes <= 8192)
       score += 10;
+    else
+      score -= 200;
     if (capacityBytes <= 4096)
       score += 5;
     return score;
+  }
+
+  bool implicitLiveCommandCandidateSafeForWrite(const CommandQueueCandidate& candidate)
+  {
+    return candidate.usedBytes <= implicitLiveCommandQueueMaxUsedBytes
+      && candidate.capacityBytes >= rawTurnBufferCapacity
+      && candidate.capacityBytes <= 16 * 1024;
   }
 
   CommandQueueDiscoveryProof discoverCommandQueueCandidates(
     int processId,
     const std::string& executablePath,
     std::size_t maxScanBytes,
-    int scanTimeoutMs)
+    int scanTimeoutMs,
+    std::size_t maxCandidates)
   {
     CommandQueueDiscoveryProof proof;
     RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
@@ -4452,8 +4584,10 @@ namespace
         return lhs.vectorAddress < rhs.vectorAddress;
       });
 
-    if (proof.candidates.size() > 32)
-      proof.candidates.resize(32);
+    if (maxCandidates == 0)
+      maxCandidates = 32;
+    if (proof.candidates.size() > maxCandidates)
+      proof.candidates.resize(maxCandidates);
 
     proof.ready = !proof.candidates.empty();
     if (!proof.ready && proof.reason.empty())
@@ -4473,7 +4607,7 @@ namespace
       return false;
     }
 
-    output << "rank\tscore\tkind\tselector_address\tbytes_in_queue_address\tbuffer_begin\tbuffer_end\tbuffer_capacity\tused_bytes\tcapacity_bytes\tregion_path\n";
+    output << "rank\tscore\tkind\tselector_address\tbytes_in_queue_address\tbuffer_begin\tbuffer_end\tbuffer_capacity\tused_bytes\tcapacity_bytes\tactivity_samples\tactivity_transitions\tactivity_byte_changes\tactivity_reason\tregion_path\n";
     for (std::size_t i = 0; i < proof.candidates.size(); ++i)
     {
       const CommandQueueCandidate& candidate = proof.candidates[i];
@@ -4487,6 +4621,10 @@ namespace
              << hexAddress(candidate.bufferCapacity) << '\t'
              << candidate.usedBytes << '\t'
              << candidate.capacityBytes << '\t'
+             << candidate.activitySamples << '\t'
+             << candidate.activityTransitions << '\t'
+             << candidate.activityByteChanges << '\t'
+             << candidate.activityReason << '\t'
              << candidate.regionPath << '\n';
     }
     if (!output)
@@ -4606,6 +4744,182 @@ namespace
     candidate.usedBytes = usedBytes;
     candidate.capacityBytes = capacityBytes;
     return true;
+  }
+
+  std::uint64_t fnv1a64(const std::vector<unsigned char>& bytes)
+  {
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (unsigned char byte : bytes)
+    {
+      hash ^= byte;
+      hash *= 1099511628211ULL;
+    }
+    return hash;
+  }
+
+  bool readCandidatePrefixHash(
+    int processId,
+    const CommandQueueCandidate& candidate,
+    std::uint64_t& hash,
+    std::string& reason)
+  {
+    const std::size_t bytesToRead =
+      std::min<std::size_t>(candidate.capacityBytes, rawTurnBufferCapacity);
+    if (bytesToRead == 0)
+    {
+      reason = "command queue candidate has zero readable capacity";
+      return false;
+    }
+
+    RuntimeMemoryReadResult read =
+      readProcessMemory(processId, candidate.bufferBegin, bytesToRead);
+    if (!read.success || read.bytesRead != bytesToRead)
+    {
+      reason = read.reason.empty()
+        ? "unable to read command queue candidate prefix"
+        : read.reason;
+      return false;
+    }
+
+    hash = fnv1a64(read.bytes);
+    return true;
+  }
+
+  void observeCommandQueueCandidateActivity(
+    int processId,
+    std::vector<CommandQueueCandidate>& candidates,
+    int intervalMs,
+    std::size_t maxObservedCandidates)
+  {
+    if (candidates.empty() || intervalMs <= 0)
+      return;
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+    {
+      for (CommandQueueCandidate& candidate : candidates)
+        candidate.activityReason = regions.reason;
+      return;
+    }
+
+    const std::size_t limit = std::min(maxObservedCandidates, candidates.size());
+
+    struct ObservedCandidate
+    {
+      std::size_t index = 0;
+      bool readable = false;
+      CommandQueueCandidate previous;
+      std::uint64_t previousHash = 0;
+    };
+
+    std::vector<ObservedCandidate> observed;
+    observed.reserve(limit);
+    for (std::size_t index = 0; index < limit; ++index)
+    {
+      CommandQueueCandidate& candidate = candidates[index];
+      ObservedCandidate state;
+      state.index = index;
+      std::string reason;
+      if (!readCommandQueueCandidate(
+            processId,
+            regions.regions,
+            candidate.vectorAddress,
+            state.previous,
+            reason))
+      {
+        candidate.activityReason = reason;
+        observed.push_back(state);
+        continue;
+      }
+
+      if (!readCandidatePrefixHash(processId, state.previous, state.previousHash, reason))
+      {
+        candidate.activityReason = reason;
+        observed.push_back(state);
+        continue;
+      }
+
+      candidate.activitySamples = 1;
+      state.readable = true;
+      observed.push_back(state);
+    }
+
+    for (int sample = 0; sample < 3; ++sample)
+    {
+      std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+
+      for (ObservedCandidate& state : observed)
+      {
+        if (!state.readable)
+          continue;
+
+        CommandQueueCandidate& candidate = candidates[state.index];
+        CommandQueueCandidate current;
+        std::string reason;
+        if (!readCommandQueueCandidate(
+              processId,
+              regions.regions,
+              candidate.vectorAddress,
+              current,
+              reason))
+        {
+          candidate.activityReason = reason;
+          state.readable = false;
+          continue;
+        }
+
+        std::uint64_t currentHash = 0;
+        if (!readCandidatePrefixHash(processId, current, currentHash, reason))
+        {
+          candidate.activityReason = reason;
+          state.readable = false;
+          continue;
+        }
+
+        ++candidate.activitySamples;
+        if (current.usedBytes != state.previous.usedBytes
+            || current.bufferEnd != state.previous.bufferEnd)
+        {
+          ++candidate.activityTransitions;
+        }
+        if (currentHash != state.previousHash)
+          ++candidate.activityByteChanges;
+
+        state.previous = current;
+        state.previousHash = currentHash;
+      }
+    }
+
+    for (std::size_t index = 0; index < limit; ++index)
+    {
+      CommandQueueCandidate& candidate = candidates[index];
+      if (candidate.activityTransitions > 0 || candidate.activityByteChanges > 0)
+      {
+        candidate.score += 2000
+          + static_cast<int>(candidate.activityTransitions * 250)
+          + static_cast<int>(candidate.activityByteChanges * 150);
+      }
+      else if (candidate.activityReason.empty())
+      {
+        candidate.activityReason = "no natural queue activity observed during short live sampling window";
+      }
+    }
+
+    std::stable_sort(
+      candidates.begin(),
+      candidates.end(),
+      [](const CommandQueueCandidate& lhs, const CommandQueueCandidate& rhs)
+      {
+        const bool lhsActive = lhs.activityTransitions > 0 || lhs.activityByteChanges > 0;
+        const bool rhsActive = rhs.activityTransitions > 0 || rhs.activityByteChanges > 0;
+        if (lhsActive != rhsActive)
+          return lhsActive;
+        if (lhs.score != rhs.score)
+          return lhs.score > rhs.score;
+        if (lhs.capacityBytes != rhs.capacityBytes)
+          return lhs.capacityBytes < rhs.capacityBytes;
+        return lhs.vectorAddress < rhs.vectorAddress;
+      });
   }
 
   struct CommandQueueAppendResult
@@ -5114,8 +5428,37 @@ namespace
       }
       const std::size_t limit =
         std::min(discoveryCandidateScanLimit, discoveryProof.candidates.size());
+      bool skippedUnsafeActiveCandidate = false;
       for (std::size_t i = 0; i < limit; ++i)
-        candidatesToTry.emplace_back(i, &discoveryProof.candidates[i]);
+      {
+        const CommandQueueCandidate& candidate = discoveryProof.candidates[i];
+        const bool observedActivity =
+          candidate.activityTransitions > 0 || candidate.activityByteChanges > 0;
+        if (!observedActivity)
+          continue;
+        if (!implicitLiveCommandCandidateSafeForWrite(candidate))
+        {
+          skippedUnsafeActiveCandidate = true;
+          continue;
+        }
+        candidatesToTry.emplace_back(i, &candidate);
+      }
+      if (candidatesToTry.empty())
+      {
+        if (skippedUnsafeActiveCandidate)
+        {
+          proof.reason =
+            "live issue-commands proof skipped active candidates whose used/capacity bytes do not match a BW turn-buffer-sized queue; "
+            "provide --command-queue-vector-address only after manual validation";
+        }
+        else
+        {
+          proof.reason =
+            "live issue-commands proof requires natural command queue activity or "
+            "--command-queue-vector-address before writing to a discovered candidate";
+        }
+        return proof;
+      }
     }
     else
     {
@@ -5483,6 +5826,32 @@ namespace
     return true;
   }
 
+  std::string lowerAscii(std::string value)
+  {
+    for (char& ch : value)
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return value;
+  }
+
+  bool detectReplayLaunch(
+    const RuntimeProcessCommandLineResult& commandLine,
+    std::string& evidence)
+  {
+    if (!commandLine.inspected)
+      return false;
+
+    for (const std::string& argument : commandLine.arguments)
+    {
+      const std::string lowered = lowerAscii(argument);
+      if (lowered == "playreplay" || lowered.find("playreplay") != std::string::npos)
+      {
+        evidence = argument;
+        return true;
+      }
+    }
+    return false;
+  }
+
   DrawOverlaysProof proveDrawOverlaysFailClosed(
     const IssueCommandsProof& issueCommandsProof,
     const std::string& executablePath)
@@ -5577,12 +5946,16 @@ namespace
     const IssueCommandsProof& issueCommandsProof,
     bool activeMatchReady,
     const ReplayAnalysisProof& replayAnalysisProof,
+    bool replayLaunchDetected,
+    std::string replayLaunchEvidence,
     const std::string& executablePath)
   {
     MultiplayerSyncProof proof;
     proof.commandQueueProven = issueCommandsProof.passed;
     proof.activeMatchProven = activeMatchReady;
-    proof.replayOnly = replayAnalysisProof.passed;
+    proof.replayLaunchDetected = replayLaunchDetected;
+    proof.replayLaunchEvidence = std::move(replayLaunchEvidence);
+    proof.replayOnly = replayAnalysisProof.passed || replayLaunchDetected;
     const ExecutableAnchorScan legacySNetScan = scanExecutableAnchors(
       executablePath,
       {
@@ -5649,6 +6022,8 @@ namespace
     proof.reason =
       "multiplayer-sync proof requires resolved live send/receive synchronization hooks and behavior evidence; "
       "active replay or local command queue delivery is not multiplayer synchronization proof";
+    if (proof.replayLaunchDetected)
+      proof.reason += "; target process was launched with replay playback argument: " + proof.replayLaunchEvidence;
     if (proof.platformReceiveResolved || proof.platformSendResolved || proof.turnPacketAnchorResolved)
     {
       proof.reason +=
@@ -5678,6 +6053,10 @@ namespace
     output << "command_queue_proven\t" << (proof.commandQueueProven ? "true" : "false") << '\n';
     output << "active_match_proven\t" << (proof.activeMatchProven ? "true" : "false") << '\n';
     output << "replay_only\t" << (proof.replayOnly ? "true" : "false") << '\n';
+    output << "replay_launch_detected\t"
+           << (proof.replayLaunchDetected ? "true" : "false") << '\n';
+    if (!proof.replayLaunchEvidence.empty())
+      output << "replay_launch_evidence\t" << proof.replayLaunchEvidence << '\n';
     output << "snet_receive_resolved\t" << (proof.snetReceiveResolved ? "true" : "false") << '\n';
     output << "snet_send_turn_resolved\t" << (proof.snetSendTurnResolved ? "true" : "false") << '\n';
     output << "platform_receive_resolved\t"
@@ -5925,7 +6304,8 @@ namespace
           environment.processId,
           environment.executablePath,
           64 * 1024 * 1024,
-          5000);
+          5000,
+          32);
         if (refreshedDiscovery.ready && !refreshedDiscovery.candidates.empty())
           selectedCandidate = refreshedDiscovery.candidates.front();
 
@@ -5979,7 +6359,8 @@ namespace
              << record.state << '\t'
              << record.player << '\t'
              << record.typeHint << '\t'
-             << "unresolved\n";
+             << (record.hitPointsResolved ? std::to_string(record.hitPoints) : "unresolved")
+             << '\n';
     }
 
     if (!output)
@@ -6237,9 +6618,20 @@ namespace
       return false;
     }
 
-    output << "player\tobserved_unit_count\n";
+    output << "player\tstorm_id\trace\trace_inferred\tobserved_unit_count\tminerals\tgas\tsupply_used\tsupply_total\talliance_mask\n";
     for (const PlayerSnapshotRecord& record : proof.players)
-      output << record.player << '\t' << record.unitCount << '\n';
+    {
+      output << record.player << '\t'
+             << record.stormId << '\t'
+             << record.race << '\t'
+             << (record.raceInferred ? "true" : "false") << '\t'
+             << record.unitCount << '\t'
+             << record.minerals << '\t'
+             << record.gas << '\t'
+             << record.supplyUsed << '\t'
+             << record.supplyTotal << '\t'
+             << hexAddress(record.allianceMask) << '\n';
+    }
     if (!output)
     {
       reason = "unable to write player snapshot output";
@@ -7041,6 +7433,8 @@ namespace
 
       writeU16(secondary, 0x10, static_cast<std::uint16_t>(i % 228));
       secondary[0x14] = static_cast<unsigned char>(i % 4);
+      secondary[0x1a] = static_cast<unsigned char>(40 + i);
+      secondary[0x1b] = static_cast<unsigned char>(48 + i);
       writeU16(secondary, 0x18, static_cast<std::uint16_t>(100 + i));
       writeU16(secondary, 0x20, static_cast<std::uint16_t>(i % 228));
       writeU64(
@@ -7214,9 +7608,12 @@ int main(int argc, char** argv)
   int stateScanTimeoutMs = 30000;
   std::size_t unitMaxScanBytes = 0;
   std::size_t bulletMaxScanBytes = 0;
+  std::size_t commandQueueMaxScanBytes = 0;
   int unitScanTimeoutMs = 15000;
   int activeMatchWaitMs = 0;
   int activeMatchPollMs = 1000;
+  int commandQueueActivityMs = 375;
+  std::size_t commandQueueCandidateLimit = 32;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -7434,6 +7831,26 @@ int main(int argc, char** argv)
       issueCommandCandidateScanLimit = static_cast<std::size_t>(limit);
       continue;
     }
+    if (arg == "--command-queue-activity-ms")
+    {
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], commandQueueActivityMs))
+      {
+        std::cerr << "--command-queue-activity-ms requires a positive integer\n";
+        return 64;
+      }
+      continue;
+    }
+    if (arg == "--command-queue-candidate-limit")
+    {
+      int limit = 0;
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], limit))
+      {
+        std::cerr << "--command-queue-candidate-limit requires a positive integer\n";
+        return 64;
+      }
+      commandQueueCandidateLimit = static_cast<std::size_t>(limit);
+      continue;
+    }
     if (arg == "--serve-command-bridge")
     {
       serveCommandBridge = true;
@@ -7516,6 +7933,17 @@ int main(int argc, char** argv)
         return 64;
       }
       bulletMaxScanBytes = static_cast<std::size_t>(megabytes) * 1024 * 1024;
+      continue;
+    }
+    if (arg == "--command-queue-max-scan-mb")
+    {
+      int megabytes = 0;
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], megabytes))
+      {
+        std::cerr << "--command-queue-max-scan-mb requires a positive integer\n";
+        return 64;
+      }
+      commandQueueMaxScanBytes = static_cast<std::size_t>(megabytes) * 1024 * 1024;
       continue;
     }
     if (arg == "--active-match-wait-ms")
@@ -7622,6 +8050,8 @@ int main(int argc, char** argv)
     unitMaxScanBytes = stateMaxScanBytes;
   if (bulletMaxScanBytes == 0)
     bulletMaxScanBytes = unitMaxScanBytes;
+  if (commandQueueMaxScanBytes == 0)
+    commandQueueMaxScanBytes = stateMaxScanBytes;
   if (proveDispatchEvents)
   {
     proveReadGameState = true;
@@ -7676,6 +8106,27 @@ int main(int argc, char** argv)
     std::cout << "attach.memory_access.reason=" << memoryAccess.reason << '\n';
   if (!memoryAccess.accessible)
     return 3;
+
+  RuntimeProcessCommandLineResult processCommandLine;
+  bool replayLaunchDetected = false;
+  std::string replayLaunchEvidence;
+  if (!self && (proveActiveMatchState || proveReplayAnalysis || proveMultiplayerSync))
+  {
+    processCommandLine = inspectRuntimeProcessCommandLine(environment.processId);
+    replayLaunchDetected = detectReplayLaunch(processCommandLine, replayLaunchEvidence);
+    std::cout << "process.command_line.inspected="
+              << (processCommandLine.inspected ? "true" : "false") << '\n';
+    std::cout << "process.command_line.argument_count="
+              << processCommandLine.arguments.size() << '\n';
+    std::cout << "process.command_line.replay_launch_detected="
+              << (replayLaunchDetected ? "true" : "false") << '\n';
+    if (!replayLaunchEvidence.empty())
+      std::cout << "process.command_line.replay_launch_evidence="
+                << replayLaunchEvidence << '\n';
+    if (!processCommandLine.reason.empty())
+      std::cout << "process.command_line.reason="
+                << processCommandLine.reason << '\n';
+  }
 
   const RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
   std::cout << "command_surface.ready=true\n";
@@ -8079,6 +8530,7 @@ int main(int argc, char** argv)
       const bool frameGatePassed = !proveReadGameState || readGameStateProof.passed;
       const bool replayBackedActiveMatch =
         frameGatePassed
+        && replayLaunchDetected
         && mapDataProof.passed
         && !mapDataProof.replayPath.empty()
         && mapDataProof.replayFileSize > 0;
@@ -8089,13 +8541,15 @@ int main(int argc, char** argv)
       const char* activeMatchEvidence =
         readUnitsProof.passed
           ? (readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records")
-          : (activeUnitNodeProof.passed ? "active-unit-node-anchor" : "active-replay-metadata");
+          : (activeUnitNodeProof.passed
+            ? "active-unit-node-anchor"
+            : (replayBackedActiveMatch ? "active-replay-metadata" : "none"));
       std::cout << "active_match_state.in_game=" << (activeMatchProven ? "true" : "false") << '\n';
       std::cout << "active_match_state.evidence=" << activeMatchEvidence << '\n';
       if (!frameGatePassed)
         std::cout << "active_match_state.reason=active match proof requires live frame progression\n";
       else if (!readUnitsProof.passed && !activeUnitNodeProof.passed && !replayBackedActiveMatch)
-        std::cout << "active_match_state.reason=active match proof requires a BWAPI-facing live unit snapshot\n";
+        std::cout << "active_match_state.reason=active match proof requires a BWAPI-facing live unit snapshot or current-process replay launch evidence\n";
       if (readUnitsProof.passed)
       {
         std::cout << "active_match_state.active_records=" << readUnitsProof.activeRecords << '\n';
@@ -8316,6 +8770,7 @@ int main(int argc, char** argv)
       && !proveReadUnits
       && !self
       && (!proveReadGameState || readGameStateProof.passed)
+      && replayLaunchDetected
       && mapDataProof.passed
       && !mapDataProof.replayPath.empty()
       && mapDataProof.replayFileSize > 0;
@@ -8334,6 +8789,14 @@ int main(int argc, char** argv)
     {
       std::cout << "read_player_data.player_count=" << playerDataProof.playerCount << '\n';
       std::cout << "read_player_data.observed_units=" << playerDataProof.observedUnits << '\n';
+      std::cout << "read_player_data.player_info_projection="
+                << (playerDataProof.playerInfoProjectionReady ? "true" : "false") << '\n';
+      std::cout << "read_player_data.player_info_record_size="
+                << playerDataProof.playerInfoRecordSize << '\n';
+      std::cout << "read_player_data.alliance_projection="
+                << (playerDataProof.allianceProjectionReady ? "true" : "false") << '\n';
+      std::cout << "read_player_data.projection_source="
+                << playerDataProof.projectionSource << '\n';
     }
     if (!playerDataProof.reason.empty())
       std::cout << "read_player_data.reason=" << playerDataProof.reason << '\n';
@@ -8401,7 +8864,8 @@ int main(int argc, char** argv)
     replayAnalysisProof = proveReplayAnalysisFromLiveMetadata(
       readGameStateProof,
       mapDataProof,
-      playerDataProof);
+      playerDataProof,
+      replayLaunchDetected);
     std::cout << "replay_analysis.ready=" << (replayAnalysisProof.passed ? "true" : "false") << '\n';
     if (replayAnalysisProof.passed)
     {
@@ -8478,11 +8942,16 @@ int main(int argc, char** argv)
 
   if (discoverCommandQueue)
   {
+    const std::size_t commandQueueRetainLimit =
+      proveIssueCommands
+        ? std::max<std::size_t>(commandQueueCandidateLimit, issueCommandCandidateScanLimit)
+        : commandQueueCandidateLimit;
     commandQueueDiscoveryProof = discoverCommandQueueCandidates(
       environment.processId,
       environment.executablePath,
-      unitMaxScanBytes,
-      unitScanTimeoutMs);
+      commandQueueMaxScanBytes,
+      unitScanTimeoutMs,
+      commandQueueRetainLimit);
     if (self && selfCommandQueueFixture)
     {
       CommandQueueCandidate fixtureCandidate;
@@ -8562,18 +9031,39 @@ int main(int argc, char** argv)
           : explicitReason;
       }
     }
+    const bool shouldObserveCommandQueueActivity =
+      !self
+      && commandQueueDiscoveryProof.ready
+      && commandQueueActivityMs > 0
+      && (proveIssueCommands || commandQueueCandidateLimit > 32);
+    if (shouldObserveCommandQueueActivity)
+    {
+      const int activityIntervalMs = std::max(1, commandQueueActivityMs / 3);
+      observeCommandQueueCandidateActivity(
+        environment.processId,
+        commandQueueDiscoveryProof.candidates,
+        activityIntervalMs,
+        std::max<std::size_t>(commandQueueCandidateLimit, issueCommandCandidateScanLimit));
+    }
     std::cout << "command_queue_discovery.ready="
               << (commandQueueDiscoveryProof.ready ? "true" : "false") << '\n';
     std::cout << "command_queue_discovery.scanned_regions="
               << commandQueueDiscoveryProof.scannedRegions << '\n';
     std::cout << "command_queue_discovery.scanned_bytes="
               << commandQueueDiscoveryProof.scannedBytes << '\n';
+    std::cout << "command_queue_discovery.max_scan_bytes="
+              << commandQueueMaxScanBytes << '\n';
     std::cout << "command_queue_discovery.candidate_count="
               << commandQueueDiscoveryProof.candidates.size() << '\n';
     std::cout << "command_queue_discovery.private_candidate_count="
               << commandQueueDiscoveryProof.privateCandidates << '\n';
     std::cout << "command_queue_discovery.image_mapped_candidate_count="
               << commandQueueDiscoveryProof.imageMappedCandidates << '\n';
+    std::cout << "command_queue_discovery.candidate_limit="
+              << commandQueueRetainLimit << '\n';
+    if (shouldObserveCommandQueueActivity)
+      std::cout << "command_queue_discovery.activity_window_ms="
+                << commandQueueActivityMs << '\n';
     if (!commandQueueDiscoveryProof.candidates.empty())
     {
       const CommandQueueCandidate& best = commandQueueDiscoveryProof.candidates.front();
@@ -8591,6 +9081,15 @@ int main(int argc, char** argv)
                 << best.capacityBytes << '\n';
       std::cout << "command_queue_discovery.best.score="
                 << best.score << '\n';
+      std::cout << "command_queue_discovery.best.activity_samples="
+                << best.activitySamples << '\n';
+      std::cout << "command_queue_discovery.best.activity_transitions="
+                << best.activityTransitions << '\n';
+      std::cout << "command_queue_discovery.best.activity_byte_changes="
+                << best.activityByteChanges << '\n';
+      if (!best.activityReason.empty())
+        std::cout << "command_queue_discovery.best.activity_reason="
+                  << best.activityReason << '\n';
     }
     if (!commandQueueDiscoveryProof.reason.empty())
       std::cout << "command_queue_discovery.reason=" << commandQueueDiscoveryProof.reason << '\n';
@@ -8684,6 +9183,8 @@ int main(int argc, char** argv)
       issueCommandsProof,
       activeMatchReadyForDiagnostics,
       replayAnalysisProof,
+      replayLaunchDetected,
+      replayLaunchEvidence,
       environment.executablePath);
     std::cout << "multiplayer_sync.ready=" << (multiplayerSyncProof.passed ? "true" : "false") << '\n';
     std::cout << "multiplayer_sync.command_queue_proven="
@@ -8692,6 +9193,8 @@ int main(int argc, char** argv)
               << (multiplayerSyncProof.activeMatchProven ? "true" : "false") << '\n';
     std::cout << "multiplayer_sync.replay_only="
               << (multiplayerSyncProof.replayOnly ? "true" : "false") << '\n';
+    std::cout << "multiplayer_sync.replay_launch_detected="
+              << (multiplayerSyncProof.replayLaunchDetected ? "true" : "false") << '\n';
     std::cout << "multiplayer_sync.snet_receive_resolved="
               << (multiplayerSyncProof.snetReceiveResolved ? "true" : "false") << '\n';
     std::cout << "multiplayer_sync.snet_send_turn_resolved="
@@ -9027,6 +9530,15 @@ int main(int argc, char** argv)
 
   const std::filesystem::path readyPath =
     std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
+  const bool runtimeVisibleAtReady = self || runtimeProcessExists(environment.processId);
+  std::cout << "runtime.process_visible_at_ready="
+            << (runtimeVisibleAtReady ? "true" : "false") << '\n';
+  if (!runtimeVisibleAtReady)
+  {
+    std::cout << "runtime.ready_reason=target runtime process exited before ready proof finalization\n";
+    proofFailureCode = proofFailureCode == 0 ? 3 : proofFailureCode;
+  }
+
   std::ofstream ready(readyPath);
   if (!ready)
   {
@@ -9041,8 +9553,17 @@ int main(int argc, char** argv)
   ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
   ready << "process_id=" << environment.processId << '\n';
   ready << "executable=" << environment.executablePath << '\n';
-  ready << "contract.binding.shared-memory-client-transport=transport|proof.attach=passed\n";
-  ready << attachProof->readyFileLine << '\n';
+  ready << "runtime.process_visible_at_ready="
+        << (runtimeVisibleAtReady ? "true" : "false") << '\n';
+  if (runtimeVisibleAtReady)
+  {
+    ready << "contract.binding.shared-memory-client-transport=transport|proof.attach=passed\n";
+    ready << attachProof->readyFileLine << '\n';
+  }
+  else
+  {
+    ready << "diagnostic.attach.reason=target runtime process exited before ready proof finalization\n";
+  }
   ready << RuntimeExecutorBridgeCommandSurfaceLine << '\n';
   ready << "command_surface.unit_commands=" << commandSurface.unitCommands.size() << '\n';
   ready << "command_surface.game_actions=" << commandSurface.gameActions.size() << '\n';
@@ -9072,6 +9593,7 @@ int main(int argc, char** argv)
         || activeUnitNodeProof.passed
         || (proveReadMapData
             && mapDataProof.passed
+            && replayLaunchDetected
             && !mapDataProof.replayPath.empty()
             && mapDataProof.replayFileSize > 0
             && proveReplayAnalysis
@@ -9141,6 +9663,9 @@ int main(int argc, char** argv)
       ready << "proof.read_units.position_source="
             << (readUnitsProof.positionSource.empty() ? "unit-node+36|4" : readUnitsProof.positionSource)
             << '\n';
+      if (readUnitsProof.hitPointsResolved && !readUnitsProof.hitPointsSource.empty())
+        ready << "proof.read_units.hit_points_source="
+              << readUnitsProof.hitPointsSource << '\n';
       ready << "proof.read_units.order_source="
             << (readUnitsProof.orderSource.empty() ? "unit-node+48|2" : readUnitsProof.orderSource)
             << '\n';
@@ -9162,6 +9687,9 @@ int main(int argc, char** argv)
       ready << "contract.structure.BW::CUnit=512|proof.read_units=passed:compat-unit-projection-v1\n";
       ready << "contract.field.BW::CUnit.id=0|4|proof.read_units=passed\n";
       ready << "contract.field.BW::CUnit.position=4|4|proof.read_units=passed\n";
+      if (readUnitsProof.hitPointsResolved)
+        ready << "contract.field.BW::CUnit.hitPoints="
+              << readUnitsProof.hitPointsOffset << "|4|proof.read_units=passed:scr-compact-hp-byte\n";
       ready << "contract.field.BW::CUnit.order=8|2|proof.read_units=passed\n";
       ready << "contract.field.BW::CUnit.player=10|4|proof.read_units=passed\n";
     }
@@ -9267,9 +9795,29 @@ int main(int argc, char** argv)
   {
     ready << "proof.read_player_data.player_count=" << playerDataProof.playerCount << '\n';
     ready << "proof.read_player_data.observed_units=" << playerDataProof.observedUnits << '\n';
+    ready << "proof.read_player_data.player_info_projection="
+          << (playerDataProof.playerInfoProjectionReady ? "true" : "false") << '\n';
+    ready << "proof.read_player_data.player_info_record_size="
+          << playerDataProof.playerInfoRecordSize << '\n';
+    ready << "proof.read_player_data.alliance_projection="
+          << (playerDataProof.allianceProjectionReady ? "true" : "false") << '\n';
+    ready << "proof.read_player_data.projection_source="
+          << playerDataProof.projectionSource << '\n';
     ready << "proof.read_player_data.snapshot=players.snapshot.tsv\n";
-    ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:compat-player-projection\n";
+    ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:"
+          << playerDataProof.projectionSource << '\n';
     ready << "contract.field.BW::BWGame.players=0|4|proof.read_player_data=passed\n";
+    if (playerDataProof.allianceProjectionReady)
+      ready << "contract.field.BW::BWGame.alliance=4|4|proof.read_player_data=passed:compat-alliance-mask\n";
+    if (playerDataProof.playerInfoProjectionReady)
+    {
+      ready << "contract.structure.BW::PlayerInfo=" << playerDataProof.playerInfoRecordSize
+            << "|proof.read_player_data=passed:" << playerDataProof.projectionSource << '\n';
+      ready << "contract.field.BW::PlayerInfo.stormId=0|4|proof.read_player_data=passed\n";
+      ready << "contract.field.BW::PlayerInfo.race=4|4|proof.read_player_data=passed\n";
+      ready << "contract.field.BW::PlayerInfo.resources=8|8|proof.read_player_data=passed:projection-unresolved-values\n";
+      ready << "contract.field.BW::PlayerInfo.supply=16|8|proof.read_player_data=passed:projection-unresolved-values\n";
+    }
     ready << "proof.read_player_data=passed\n";
   }
   if (proveReadBulletData && bulletDataProof.passed && bulletDataSnapshotWritten)
@@ -9349,6 +9897,13 @@ int main(int argc, char** argv)
           << commandQueueDiscoveryProof.scannedRegions << '\n';
     ready << "proof.command_queue_discovery.scanned_bytes="
           << commandQueueDiscoveryProof.scannedBytes << '\n';
+    ready << "proof.command_queue_discovery.max_scan_bytes="
+          << commandQueueMaxScanBytes << '\n';
+    ready << "proof.command_queue_discovery.candidate_limit="
+          << commandQueueDiscoveryProof.candidates.size() << '\n';
+    if (!self && (proveIssueCommands || commandQueueCandidateLimit > 32))
+      ready << "proof.command_queue_discovery.activity_window_ms="
+            << commandQueueActivityMs << '\n';
     ready << "proof.command_queue_discovery.proof_scope=discovery-only-not-command-behavior\n";
     if (commandQueueDiscoverySnapshotWritten)
       ready << "proof.command_queue_discovery.snapshot=command_queue.candidates.tsv\n";
@@ -9365,6 +9920,15 @@ int main(int argc, char** argv)
             << hexAddress(best.bufferBegin) << '\n';
       ready << "proof.command_queue_discovery.best.capacity_bytes="
             << best.capacityBytes << '\n';
+      ready << "proof.command_queue_discovery.best.activity_samples="
+            << best.activitySamples << '\n';
+      ready << "proof.command_queue_discovery.best.activity_transitions="
+            << best.activityTransitions << '\n';
+      ready << "proof.command_queue_discovery.best.activity_byte_changes="
+            << best.activityByteChanges << '\n';
+      if (!best.activityReason.empty())
+        ready << "proof.command_queue_discovery.best.activity_reason="
+              << best.activityReason << '\n';
     }
     if (!commandQueueDiscoveryProof.reason.empty())
       ready << "proof.command_queue_discovery.reason=" << commandQueueDiscoveryProof.reason << '\n';
@@ -9378,7 +9942,8 @@ int main(int argc, char** argv)
   }
 
   std::cout << "bridge.ready=" << readyPath.string() << '\n';
-  std::cout << attachProof->readyFileLine << '\n';
+  if (runtimeVisibleAtReady)
+    std::cout << attachProof->readyFileLine << '\n';
   if (proveReadGameState && readGameStateProof.passed)
     std::cout << readGameStateBehaviorProof->readyFileLine << '\n';
   if (activeMatchReady)

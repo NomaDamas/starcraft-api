@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeProcess.h>
 
 #include <cerrno>
+#include <fstream>
 #include <cstring>
 #include <filesystem>
 #include <limits.h>
@@ -15,6 +16,7 @@
 #include <signal.h>
 #include <sys/proc.h>
 #include <sys/proc_info.h>
+#include <sys/sysctl.h>
 #elif defined(__linux__)
 #include <signal.h>
 #include <unistd.h>
@@ -61,6 +63,38 @@ namespace BWAPI::Runtime
       if (actual.empty())
         return false;
       return normalizePath(actual) == normalizePath(expected);
+    }
+
+    std::string joinCommandLine(const std::vector<std::string>& arguments)
+    {
+      std::ostringstream output;
+      for (std::size_t i = 0; i < arguments.size(); ++i)
+      {
+        if (i > 0)
+          output << ' ';
+        const bool needsQuotes = arguments[i].find_first_of(" \t\n\"'") != std::string::npos;
+        if (!needsQuotes)
+        {
+          output << arguments[i];
+          continue;
+        }
+        output << '"';
+        for (char ch : arguments[i])
+        {
+          if (ch == '"' || ch == '\\')
+            output << '\\';
+          output << ch;
+        }
+        output << '"';
+      }
+      return output.str();
+    }
+
+    RuntimeProcessCommandLineResult commandLineFailure(std::string reason)
+    {
+      RuntimeProcessCommandLineResult result;
+      result.reason = std::move(reason);
+      return result;
     }
   }
 
@@ -153,6 +187,100 @@ namespace BWAPI::Runtime
     (void)processId;
     result.reason = "runtime process state inspection is unsupported on this platform";
     return result;
+#endif
+  }
+
+  RuntimeProcessCommandLineResult inspectRuntimeProcessCommandLine(int processId)
+  {
+    if (processId <= 0)
+      return commandLineFailure("process id must be positive");
+
+#if defined(__APPLE__)
+    int mib[3] = { CTL_KERN, KERN_PROCARGS2, processId };
+    std::size_t size = 0;
+    if (sysctl(mib, 3, nullptr, &size, nullptr, 0) != 0 || size == 0)
+      return commandLineFailure("sysctl(KERN_PROCARGS2) size query failed");
+
+    std::vector<char> buffer(size);
+    if (sysctl(mib, 3, buffer.data(), &size, nullptr, 0) != 0 || size < sizeof(int))
+      return commandLineFailure("sysctl(KERN_PROCARGS2) read failed");
+
+    int argc = 0;
+    std::memcpy(&argc, buffer.data(), sizeof(argc));
+    if (argc <= 0)
+      return commandLineFailure("process command line argument count is empty");
+
+    const char* cursor = buffer.data() + sizeof(argc);
+    const char* end = buffer.data() + size;
+    if (cursor >= end)
+      return commandLineFailure("process command line buffer is truncated");
+
+    while (cursor < end && *cursor != '\0')
+      ++cursor;
+    while (cursor < end && *cursor == '\0')
+      ++cursor;
+
+    std::vector<std::string> arguments;
+    for (int i = 0; i < argc && cursor < end; ++i)
+    {
+      const char* start = cursor;
+      while (cursor < end && *cursor != '\0')
+        ++cursor;
+      if (cursor == start)
+        break;
+      arguments.emplace_back(start, cursor);
+      while (cursor < end && *cursor == '\0')
+        ++cursor;
+    }
+
+    if (arguments.empty())
+      return commandLineFailure("process command line did not contain arguments");
+
+    RuntimeProcessCommandLineResult result;
+    result.inspected = true;
+    result.arguments = std::move(arguments);
+    result.commandLine = joinCommandLine(result.arguments);
+    return result;
+#elif defined(__linux__)
+    const std::string path = "/proc/" + std::to_string(processId) + "/cmdline";
+    std::ifstream input(path, std::ios::binary);
+    if (!input)
+      return commandLineFailure("unable to open " + path);
+
+    std::vector<char> bytes(
+      (std::istreambuf_iterator<char>(input)),
+      std::istreambuf_iterator<char>());
+    if (bytes.empty())
+      return commandLineFailure("process command line is empty");
+
+    std::vector<std::string> arguments;
+    std::string current;
+    for (char byte : bytes)
+    {
+      if (byte == '\0')
+      {
+        if (!current.empty())
+        {
+          arguments.push_back(current);
+          current.clear();
+        }
+        continue;
+      }
+      current.push_back(byte);
+    }
+    if (!current.empty())
+      arguments.push_back(current);
+    if (arguments.empty())
+      return commandLineFailure("process command line did not contain arguments");
+
+    RuntimeProcessCommandLineResult result;
+    result.inspected = true;
+    result.arguments = std::move(arguments);
+    result.commandLine = joinCommandLine(result.arguments);
+    return result;
+#else
+    (void)processId;
+    return commandLineFailure("runtime process command line inspection is unsupported on this platform");
 #endif
   }
 

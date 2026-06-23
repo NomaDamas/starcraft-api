@@ -80,7 +80,6 @@ execute_process(
     --bridge "${command_queue_bridge_dir}"
     --discover-command-queue
     --self-command-queue-fixture
-    --unit-max-scan-mb 128
     --unit-scan-timeout-ms 5000
   RESULT_VARIABLE command_queue_result
   OUTPUT_VARIABLE command_queue_output
@@ -161,7 +160,6 @@ execute_process(
     --bridge "${issue_commands_bridge_dir}"
     --prove-issue-commands
     --self-command-queue-fixture
-    --unit-max-scan-mb 128
     --unit-scan-timeout-ms 5000
   RESULT_VARIABLE issue_commands_result
   OUTPUT_VARIABLE issue_commands_output
@@ -234,7 +232,6 @@ execute_process(
     --prove-issue-commands
     --self-command-queue-fixture
     --command-queue-vector-address 0x1
-    --unit-max-scan-mb 128
     --unit-scan-timeout-ms 5000
   RESULT_VARIABLE issue_commands_explicit_result
   OUTPUT_VARIABLE issue_commands_explicit_output
@@ -590,7 +587,7 @@ foreach(needle
     "read_units.unit_array=true"
     "read_units.layout=scr-unit-node-object-graph"
     "read_units.derived_snapshot=true"
-    "read_units.hit_points_resolved=false"
+    "read_units.hit_points_resolved=true"
     "read_units.snapshot.success=true"
     "read_units.scan.snapshot.success=true"
     "proof.read_units=passed")
@@ -612,8 +609,10 @@ foreach(needle
     "proof.read_units.snapshot=units.snapshot.tsv"
     "proof.read_units.id_source=stable-node-handle"
     "proof.read_units.position_source=unit-node+36|4"
+    "proof.read_units.hit_points_source=secondary+0x1a compact-hp-byte -> bwapi-hp-raw"
     "proof.read_units.order_source=unit-node+48|2"
     "proof.read_units.player_source=unit-node+0x50 secondary+0x14|1"
+    "contract.field.BW::CUnit.hitPoints=12|4|proof.read_units=passed:scr-compact-hp-byte"
     "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv"
     "proof.read_units=passed")
   string(FIND "${unit_node_ready}" "${needle}" needle_index)
@@ -651,6 +650,71 @@ foreach(needle
 endforeach()
 
 file(REMOVE_RECURSE "${unit_node_bridge_dir}")
+
+set(player_projection_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-player-projection-bridge")
+file(REMOVE_RECURSE "${player_projection_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${player_projection_bridge_dir}"
+    --prove-read-units
+    --prove-read-player-data
+    --self-unit-node-fixture
+  RESULT_VARIABLE player_projection_result
+  OUTPUT_VARIABLE player_projection_output
+  ERROR_VARIABLE player_projection_error
+)
+if(NOT player_projection_result EQUAL 7)
+  message(FATAL_ERROR "expected self player projection to fail only active-match proof\nstdout:\n${player_projection_output}\nstderr:\n${player_projection_error}")
+endif()
+foreach(needle
+    "read_units.unit_array=true"
+    "read_player_data.ready=true"
+    "read_player_data.player_info_projection=true"
+    "read_player_data.alliance_projection=true"
+    "read_player_data.snapshot.success=true")
+  string(FIND "${player_projection_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "self player projection output missing '${needle}'\n${player_projection_output}")
+  endif()
+endforeach()
+
+set(player_projection_ready_file "${player_projection_bridge_dir}/ready")
+if(NOT EXISTS "${player_projection_ready_file}")
+  message(FATAL_ERROR "self player projection proof did not write ready file")
+endif()
+file(READ "${player_projection_ready_file}" player_projection_ready)
+foreach(needle
+    "proof.attach=passed")
+  string(FIND "${player_projection_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "self player projection ready file missing '${needle}'\n${player_projection_ready}")
+  endif()
+endforeach()
+foreach(forbidden
+    "proof.active_match_state=passed"
+    "proof.read_units=passed"
+    "proof.read_player_data=passed"
+    "contract.structure.BW::PlayerInfo"
+    "contract.field.BW::BWGame.alliance")
+  string(FIND "${player_projection_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "self player projection must not claim '${forbidden}' without active-match proof\n${player_projection_ready}")
+  endif()
+endforeach()
+file(READ "${player_projection_bridge_dir}/players.snapshot.tsv" player_projection_snapshot)
+foreach(needle
+    "player\tstorm_id\trace\trace_inferred\tobserved_unit_count\tminerals\tgas\tsupply_used\tsupply_total\talliance_mask"
+    "0x")
+  string(FIND "${player_projection_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "self player projection snapshot missing '${needle}'\n${player_projection_snapshot}")
+  endif()
+endforeach()
+file(REMOVE_RECURSE "${player_projection_bridge_dir}")
 
 set(bullet_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-bullet-bridge")
 file(REMOVE_RECURSE "${bullet_bridge_dir}")

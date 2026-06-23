@@ -14,6 +14,7 @@ Release_NoCopy
 Debug_NoCopy
 *.swp
 *.bak
+bwapi/include/output.txt
 build/
 cmake-build-*/
 .DS_Store

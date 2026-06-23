@@ -4584,6 +4584,29 @@ namespace
       && candidate.capacityBytes <= 16 * 1024;
   }
 
+  bool implicitLiveCommandCandidateEligibleForWrite(
+    const CommandQueueCandidate& candidate,
+    std::string& reason)
+  {
+    const bool observedActivity =
+      candidate.activityTransitions > 0 || candidate.activityByteChanges > 0;
+    if (!observedActivity)
+    {
+      reason =
+        "implicit live command writes require observed natural command-queue activity; "
+        "use --command-queue-vector-address only after manual validation";
+      return false;
+    }
+    if (!implicitLiveCommandCandidateSafeForWrite(candidate))
+    {
+      reason =
+        "implicit live command candidate is outside bounded write limits";
+      return false;
+    }
+    reason = "observed natural command-queue activity within bounded write limits";
+    return true;
+  }
+
   bool liveCommandCandidateSelectorSafeForWrite(
     const CommandQueueCandidate& candidate,
     const std::string& executablePath,
@@ -4852,10 +4875,13 @@ namespace
       return false;
     }
 
-    output << "rank\tscore\tkind\tselector_address\tbytes_in_queue_address\tbuffer_begin\tbuffer_end\tbuffer_capacity\tused_bytes\tcapacity_bytes\tactivity_samples\tactivity_transitions\tactivity_byte_changes\tactivity_reason\tregion_path\n";
+    output << "rank\tscore\tkind\tselector_address\tbytes_in_queue_address\tbuffer_begin\tbuffer_end\tbuffer_capacity\tused_bytes\tcapacity_bytes\tactivity_samples\tactivity_transitions\tactivity_byte_changes\timplicit_write_eligible\timplicit_write_reason\tactivity_reason\tregion_path\n";
     for (std::size_t i = 0; i < proof.candidates.size(); ++i)
     {
       const CommandQueueCandidate& candidate = proof.candidates[i];
+      std::string implicitWriteReason;
+      const bool implicitWriteEligible =
+        implicitLiveCommandCandidateEligibleForWrite(candidate, implicitWriteReason);
       output << i << '\t'
              << candidate.score << '\t'
              << candidate.storageKind << '\t'
@@ -4869,6 +4895,8 @@ namespace
              << candidate.activitySamples << '\t'
              << candidate.activityTransitions << '\t'
              << candidate.activityByteChanges << '\t'
+             << (implicitWriteEligible ? "true" : "false") << '\t'
+             << implicitWriteReason << '\t'
              << candidate.activityReason << '\t'
              << candidate.regionPath << '\n';
     }
@@ -5734,21 +5762,18 @@ namespace
       const std::size_t limit =
         std::min(discoveryCandidateScanLimit, discoveryProof.candidates.size());
       bool skippedUnsafeActiveCandidate = false;
+      bool skippedInactiveCandidate = false;
+      bool skippedOutOfBoundsCandidate = false;
       for (std::size_t i = 0; i < limit; ++i)
       {
         const CommandQueueCandidate& candidate = discoveryProof.candidates[i];
-        const bool observedActivity =
-          candidate.activityTransitions > 0 || candidate.activityByteChanges > 0;
-        const bool boundedRawTurnBufferProbe =
-          candidate.storageKind == "raw-turn-buffer"
-          && candidate.regionPath.empty()
-          && candidate.usedBytes <= 64
-          && candidate.capacityBytes == rawTurnBufferCapacity;
-        if (!observedActivity && !boundedRawTurnBufferProbe)
-          continue;
-        if (!implicitLiveCommandCandidateSafeForWrite(candidate))
+        std::string implicitWriteReason;
+        if (!implicitLiveCommandCandidateEligibleForWrite(candidate, implicitWriteReason))
         {
-          skippedUnsafeActiveCandidate = true;
+          if (implicitWriteReason.find("observed natural command-queue activity") != std::string::npos)
+            skippedInactiveCandidate = true;
+          else
+            skippedOutOfBoundsCandidate = true;
           continue;
         }
         std::string unsafeReason;
@@ -5770,9 +5795,12 @@ namespace
         else
         {
           proof.reason =
-            "live issue-commands proof requires natural command queue activity, "
-            "a bounded non-image raw turn-buffer candidate, or --command-queue-vector-address "
-            "before writing to a discovered candidate";
+            "live issue-commands proof requires observed natural command queue activity "
+            "or --command-queue-vector-address before writing to a discovered candidate";
+          if (skippedInactiveCandidate)
+            proof.reason += "; discovery candidates had no observed natural activity";
+          if (skippedOutOfBoundsCandidate)
+            proof.reason += "; some active candidates were outside bounded write limits";
         }
         return proof;
       }

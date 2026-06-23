@@ -4924,6 +4924,54 @@ namespace
     return true;
   }
 
+  bool readKnownRawTurnBufferCandidate(
+    int processId,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const CommandQueueCandidate& selectedCandidate,
+    CommandQueueCandidate& candidate,
+    std::string& reason)
+  {
+    if (selectedCandidate.storageKind != "raw-turn-buffer"
+        || selectedCandidate.bytesInQueueAddress == 0
+        || selectedCandidate.bufferBegin == 0
+        || selectedCandidate.capacityBytes == 0
+        || selectedCandidate.capacityBytes > rawTurnBufferCapacity)
+    {
+      reason = "selected command queue is not a known raw turn-buffer layout";
+      return false;
+    }
+
+    RuntimeMemoryReadResult countRead =
+      readProcessMemory(processId, selectedCandidate.bytesInQueueAddress, sizeof(std::uint32_t));
+    if (!countRead.success || countRead.bytesRead != sizeof(std::uint32_t))
+    {
+      reason = countRead.reason.empty()
+        ? "unable to read known raw turn-buffer byte count"
+        : countRead.reason;
+      return false;
+    }
+
+    const std::uint32_t usedBytes32 = readU32(countRead.bytes, 0);
+    if (usedBytes32 > selectedCandidate.capacityBytes)
+    {
+      reason = "known raw turn-buffer byte count is outside capacity";
+      return false;
+    }
+
+    if (!writableAddress(regions, selectedCandidate.bufferBegin, selectedCandidate.capacityBytes)
+        || !writableAddress(regions, selectedCandidate.bytesInQueueAddress, sizeof(std::uint32_t)))
+    {
+      reason = "known raw turn-buffer storage is no longer writable";
+      return false;
+    }
+
+    candidate = selectedCandidate;
+    candidate.bufferEnd = selectedCandidate.bufferBegin + usedBytes32;
+    candidate.bufferCapacity = selectedCandidate.bufferBegin + selectedCandidate.capacityBytes;
+    candidate.usedBytes = usedBytes32;
+    return true;
+  }
+
   std::uint64_t fnv1a64(const std::vector<unsigned char>& bytes)
   {
     std::uint64_t hash = 1469598103934665603ULL;
@@ -5116,7 +5164,8 @@ namespace
     int processId,
     const CommandQueueCandidate& selectedCandidate,
     const std::vector<std::uint8_t>& encodedBytes,
-    bool restoreAfterReadback)
+    bool restoreAfterReadback,
+    bool allowKnownRawTurnBufferFallback = false)
   {
     CommandQueueAppendResult result;
     if (encodedBytes.empty())
@@ -5141,8 +5190,17 @@ namespace
           current,
           reason))
     {
-      result.reason = reason;
-      return result;
+      if (!allowKnownRawTurnBufferFallback
+          || !readKnownRawTurnBufferCandidate(
+            processId,
+            regions.regions,
+            selectedCandidate,
+            current,
+            reason))
+      {
+        result.reason = reason;
+        return result;
+      }
     }
 
     const std::size_t availableBytes = current.capacityBytes - current.usedBytes;
@@ -5880,7 +5938,8 @@ namespace
         processId,
         append.candidate,
         resume.bytes,
-        false);
+        false,
+        true);
       if (!resumeAppend.passed)
       {
         restoreCommandQueueAppendIfStillPresent(processId, append);

@@ -147,9 +147,10 @@ int main(int argc, char** argv)
   const std::string selfExecutable = std::filesystem::absolute(argv[0]).lexically_normal().string();
 
   const std::vector<RuntimeExecutorBehaviorProof>& proofs = requiredRuntimeExecutorBehaviorProofs();
-  assert(proofs.size() == 10);
+  assert(proofs.size() == 11);
   assert(std::string(proofs.front().readyFileLine) == "proof.attach=passed");
-  assert(std::string(proofs.back().readyFileLine) == "proof.battle_net_policy=passed");
+  assert(std::string(proofs[9].readyFileLine) == "proof.battle_net_policy=passed");
+  assert(std::string(proofs.back().readyFileLine) == "proof.load_ai_modules=passed");
 
   RuntimeManifestLoadResult complete = loadRuntimeManifestFile(fixturePath("remastered-complete.manifest"));
   assert(complete.loaded);

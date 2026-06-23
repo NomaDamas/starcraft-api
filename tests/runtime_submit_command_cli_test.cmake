@@ -32,7 +32,8 @@ file(WRITE "${bridge_dir}/ready"
   "proof.dispatch_events=passed\n"
   "proof.replay_analysis=passed\n"
   "proof.multiplayer_sync=passed\n"
-  "proof.battle_net_policy=passed\n")
+  "proof.battle_net_policy=passed\n"
+  "proof.load_ai_modules=passed\n")
 
 set(manifest "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest")
 execute_process(

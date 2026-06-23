@@ -941,6 +941,12 @@ namespace BWAPI::Runtime
         Capability::BattleNet,
         "proof.battle_net_policy=passed",
         "adapter completed the authorized Battle.net policy validation path"
+      },
+      {
+        "load-ai-modules",
+        Capability::LoadAIModules,
+        "proof.load_ai_modules=passed",
+        "adapter loaded or validated BWAPI-compatible AI module delivery for the target runtime"
       }
     };
     return proofs;

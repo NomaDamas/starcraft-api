@@ -203,7 +203,8 @@ file(WRITE "${bridge_dir}/ready"
   "proof.draw_overlays=passed\n"
   "proof.dispatch_events=passed\n"
   "proof.replay_analysis=passed\n"
-  "proof.battle_net_policy=passed\n")
+  "proof.battle_net_policy=passed\n"
+  "proof.load_ai_modules=passed\n")
 
 execute_process(
   COMMAND

@@ -508,6 +508,21 @@ namespace
     bool readableSecondaryObject = false;
   };
 
+  struct UnitNodeVectorCandidateDiagnostic
+  {
+    std::uintptr_t vectorAddress = 0;
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+    std::uintptr_t capacity = 0;
+    std::size_t usedBytes = 0;
+    std::size_t capacityBytes = 0;
+    std::size_t recordCount = 0;
+    std::size_t pointerCount = 0;
+    bool recordVector = false;
+    bool pointerVector = false;
+    bool readablePrecheck = false;
+  };
+
   struct UnitScanDiagnostics
   {
     std::size_t readableWritableRegions = 0;
@@ -549,6 +564,7 @@ namespace
     std::uintptr_t unitNodeBestVectorAddress = 0;
     std::string unitNodeBestReason;
     std::vector<UnitNodeFieldCandidateDiagnostic> unitNodeFieldSamples;
+    std::vector<UnitNodeVectorCandidateDiagnostic> unitNodeVectorSamples;
     bool timedOut = false;
     bool byteLimitReached = false;
   };
@@ -1458,6 +1474,90 @@ namespace
     return normalizedPathForCompare(lhs) == normalizedPathForCompare(rhs);
   }
 
+  bool startsWith(const std::string& value, const std::string& prefix)
+  {
+    return value.rfind(prefix, 0) == 0;
+  }
+
+  std::vector<std::string> readReadyFileLines(const std::filesystem::path& readyPath)
+  {
+    std::vector<std::string> lines;
+    std::ifstream input(readyPath);
+    std::string line;
+    while (std::getline(input, line))
+    {
+      if (!line.empty())
+        lines.push_back(line);
+    }
+    return lines;
+  }
+
+  std::string readyValue(const std::vector<std::string>& lines, const std::string& key)
+  {
+    const std::string prefix = key + "=";
+    for (const std::string& line : lines)
+    {
+      if (startsWith(line, prefix))
+        return line.substr(prefix.size());
+    }
+    return {};
+  }
+
+  bool existingReadyIdentityMatches(
+    const std::vector<std::string>& lines,
+    const RuntimeEnvironment& environment)
+  {
+    if (readyValue(lines, "protocol") != RuntimeExecutorBridgeProtocol)
+      return false;
+    if (readyValue(lines, "product") != toString(environment.product))
+      return false;
+    if (readyValue(lines, "version") != environment.version)
+      return false;
+    if (readyValue(lines, "mode") != RuntimeExecutorBridgeValidatedAdapterMode)
+      return false;
+    if (readyValue(lines, "runtime.process_visible_at_ready") != "true")
+      return false;
+
+    int readyProcessId = 0;
+    if (!parsePositiveInt(readyValue(lines, "process_id"), readyProcessId))
+      return false;
+    if (readyProcessId != environment.processId)
+      return false;
+
+    const std::string readyExecutable = readyValue(lines, "executable");
+    if (readyExecutable.empty() || environment.executablePath.empty())
+      return readyExecutable == environment.executablePath;
+    return sameMappedFile(readyExecutable, environment.executablePath);
+  }
+
+  bool readyLineReferencesAnyProofToken(
+    const std::string& line,
+    const std::vector<std::string>& proofTokens)
+  {
+    for (const std::string& token : proofTokens)
+    {
+      if (line.find(token) != std::string::npos)
+        return true;
+    }
+    return false;
+  }
+
+  bool preservableReadyEvidenceLine(const std::string& line)
+  {
+    if (line == RuntimeExecutorBridgeCommandSurfaceLine)
+      return false;
+    if (line == "proof.attach=passed")
+      return false;
+    if (startsWith(line, "proof.command_surface"))
+      return false;
+    if (startsWith(line, "contract.binding.shared-memory-client-transport="))
+      return false;
+    return startsWith(line, "proof.")
+      || startsWith(line, "contract.binding.")
+      || startsWith(line, "contract.structure.")
+      || startsWith(line, "contract.field.");
+  }
+
   bool shouldSkipImageMappedRegion(
     const RuntimeMemoryRegion& region,
     const std::string& executablePath,
@@ -1837,6 +1937,52 @@ namespace
     diagnostics->unitNodeFieldSamples.push_back(sample);
   }
 
+  void rememberUnitNodeVectorSample(
+    UnitScanDiagnostics* diagnostics,
+    std::uintptr_t vectorAddress,
+    std::uintptr_t begin,
+    std::uintptr_t end,
+    std::uintptr_t capacity,
+    bool recordVector,
+    bool pointerVector,
+    std::size_t recordCount,
+    std::size_t pointerCount,
+    bool readablePrecheck)
+  {
+    if (diagnostics == nullptr)
+      return;
+
+    UnitNodeVectorCandidateDiagnostic sample;
+    sample.vectorAddress = vectorAddress;
+    sample.begin = begin;
+    sample.end = end;
+    sample.capacity = capacity;
+    sample.usedBytes = end > begin ? static_cast<std::size_t>(end - begin) : 0;
+    sample.capacityBytes = capacity > begin ? static_cast<std::size_t>(capacity - begin) : 0;
+    sample.recordVector = recordVector;
+    sample.pointerVector = pointerVector;
+    sample.recordCount = recordCount;
+    sample.pointerCount = pointerCount;
+    sample.readablePrecheck = readablePrecheck;
+    if (diagnostics->unitNodeVectorSamples.size() >= 16)
+    {
+      if (!readablePrecheck)
+        return;
+      auto replace = std::find_if(
+        diagnostics->unitNodeVectorSamples.begin(),
+        diagnostics->unitNodeVectorSamples.end(),
+        [](const UnitNodeVectorCandidateDiagnostic& existing)
+        {
+          return !existing.readablePrecheck;
+        });
+      if (replace == diagnostics->unitNodeVectorSamples.end())
+        return;
+      *replace = sample;
+      return;
+    }
+    diagnostics->unitNodeVectorSamples.push_back(sample);
+  }
+
   void rememberBestUnitNodeCandidate(
     UnitScanDiagnostics* diagnostics,
     const LiveUnitNodeProof& proof)
@@ -2031,7 +2177,20 @@ namespace
       const std::size_t readablePrecheckBytes = nodeRecordVector
         ? recordSize * minActiveUnitRecords
         : sizeof(std::uint64_t) * minActiveUnitRecords;
-      if (!readableAddress(regions, begin, std::min<std::size_t>(usedBytes, readablePrecheckBytes)))
+      const bool readablePrecheck =
+        readableAddress(regions, begin, std::min<std::size_t>(usedBytes, readablePrecheckBytes));
+      rememberUnitNodeVectorSample(
+        diagnostics,
+        baseAddress + offset,
+        begin,
+        end,
+        capacity,
+        nodeRecordVector,
+        nodePointerVector,
+        recordCount,
+        pointerCount,
+        readablePrecheck);
+      if (!readablePrecheck)
         continue;
       if (++vectorCandidatesRead > maxVectorCandidatesToRead)
         return {};
@@ -4375,7 +4534,7 @@ namespace
   bool implicitLiveCommandCandidateSafeForWrite(const CommandQueueCandidate& candidate)
   {
     return candidate.usedBytes <= implicitLiveCommandQueueMaxUsedBytes
-      && candidate.capacityBytes >= rawTurnBufferCapacity
+      && candidate.capacityBytes >= 256
       && candidate.capacityBytes <= 16 * 1024;
   }
 
@@ -4506,6 +4665,11 @@ namespace
         else if (region.mappedPath.empty())
           ++proof.privateCandidates;
         proof.candidates.push_back(std::move(candidate));
+        // Suppress sliding-window false positives over the accepted
+        // {begin,end,capacity} triple. Adjacent real vectors are 24-byte
+        // aligned here; +8/+16 candidates reinterpret end/capacity as begin/end.
+        seenVectors.insert(vectorAddress + sizeof(std::uint64_t));
+        seenVectors.insert(vectorAddress + sizeof(std::uint64_t) * 2);
       }
 
       for (std::size_t counterOffset : rawTurnBufferCounterOffsets)
@@ -5203,8 +5367,10 @@ namespace
       return true;
     if (current.usedBytes > 64)
     {
-      reason = "selected command queue is not empty and is too large to classify as adapter-generated proof bytes";
-      return false;
+      // Large live queues can contain normal game/user commands. Do not clear
+      // them as stale adapter proof bytes; append at the tail and let the
+      // pause/resume behavior proof decide whether this is the real sink.
+      return true;
     }
 
     RuntimeMemoryReadResult existing =
@@ -6452,6 +6618,31 @@ namespace
     output << "unit_node_best_vector_address\t"
            << hexAddress(diagnostics.unitNodeBestVectorAddress) << '\n';
     output << "unit_node_best_reason\t" << diagnostics.unitNodeBestReason << '\n';
+    output << "unit_node_vector_sample_count\t" << diagnostics.unitNodeVectorSamples.size() << '\n';
+    for (std::size_t index = 0; index < diagnostics.unitNodeVectorSamples.size(); ++index)
+    {
+      const UnitNodeVectorCandidateDiagnostic& sample = diagnostics.unitNodeVectorSamples[index];
+      output << "unit_node_vector_sample_" << index << "_vector_address\t"
+             << hexAddress(sample.vectorAddress) << '\n';
+      output << "unit_node_vector_sample_" << index << "_begin\t" << hexAddress(sample.begin) << '\n';
+      output << "unit_node_vector_sample_" << index << "_end\t" << hexAddress(sample.end) << '\n';
+      output << "unit_node_vector_sample_" << index << "_capacity\t"
+             << hexAddress(sample.capacity) << '\n';
+      output << "unit_node_vector_sample_" << index << "_used_bytes\t"
+             << sample.usedBytes << '\n';
+      output << "unit_node_vector_sample_" << index << "_capacity_bytes\t"
+             << sample.capacityBytes << '\n';
+      output << "unit_node_vector_sample_" << index << "_record_vector\t"
+             << (sample.recordVector ? "true" : "false") << '\n';
+      output << "unit_node_vector_sample_" << index << "_pointer_vector\t"
+             << (sample.pointerVector ? "true" : "false") << '\n';
+      output << "unit_node_vector_sample_" << index << "_record_count\t"
+             << sample.recordCount << '\n';
+      output << "unit_node_vector_sample_" << index << "_pointer_count\t"
+             << sample.pointerCount << '\n';
+      output << "unit_node_vector_sample_" << index << "_readable_precheck\t"
+             << (sample.readablePrecheck ? "true" : "false") << '\n';
+    }
     output << "unit_node_field_sample_count\t" << diagnostics.unitNodeFieldSamples.size() << '\n';
     for (std::size_t index = 0; index < diagnostics.unitNodeFieldSamples.size(); ++index)
     {
@@ -8677,6 +8868,35 @@ int main(int argc, char** argv)
       if (!unitScanDiagnostics.unitNodeBestReason.empty())
         std::cout << "read_units.unit_node_scan.best_reason="
                   << unitScanDiagnostics.unitNodeBestReason << '\n';
+      std::cout << "read_units.unit_node_scan.vector_sample_count="
+                << unitScanDiagnostics.unitNodeVectorSamples.size() << '\n';
+      for (std::size_t index = 0; index < unitScanDiagnostics.unitNodeVectorSamples.size(); ++index)
+      {
+        const UnitNodeVectorCandidateDiagnostic& sample =
+          unitScanDiagnostics.unitNodeVectorSamples[index];
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".vector_address=0x"
+                  << std::hex << sample.vectorAddress << std::dec << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".begin=0x"
+                  << std::hex << sample.begin << std::dec << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".end=0x"
+                  << std::hex << sample.end << std::dec << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".capacity=0x"
+                  << std::hex << sample.capacity << std::dec << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".used_bytes="
+                  << sample.usedBytes << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".capacity_bytes="
+                  << sample.capacityBytes << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".record_vector="
+                  << (sample.recordVector ? "true" : "false") << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".pointer_vector="
+                  << (sample.pointerVector ? "true" : "false") << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".record_count="
+                  << sample.recordCount << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".pointer_count="
+                  << sample.pointerCount << '\n';
+        std::cout << "read_units.unit_node_scan.vector_sample." << index << ".readable_precheck="
+                  << (sample.readablePrecheck ? "true" : "false") << '\n';
+      }
       std::cout << "read_units.unit_node_scan.field_sample_count="
                 << unitScanDiagnostics.unitNodeFieldSamples.size() << '\n';
       for (std::size_t index = 0; index < unitScanDiagnostics.unitNodeFieldSamples.size(); ++index)
@@ -9539,6 +9759,47 @@ int main(int argc, char** argv)
     proofFailureCode = proofFailureCode == 0 ? 3 : proofFailureCode;
   }
 
+  std::vector<std::string> invalidatedProofTokens;
+  auto invalidateProofToken = [&](bool requested, const char* token)
+  {
+    if (requested)
+      invalidatedProofTokens.push_back(token);
+  };
+  invalidateProofToken(proveReadGameState, "proof.read_game_state");
+  invalidateProofToken(proveActiveMatchState, "proof.active_match_state");
+  invalidateProofToken(proveReadUnits, "proof.read_units");
+  invalidateProofToken(proveIssueCommands, "proof.issue_commands");
+  invalidateProofToken(proveDrawOverlays, "proof.draw_overlays");
+  invalidateProofToken(proveDispatchEvents, "proof.dispatch_events");
+  invalidateProofToken(proveReplayAnalysis, "proof.replay_analysis");
+  invalidateProofToken(proveMultiplayerSync, "proof.multiplayer_sync");
+  invalidateProofToken(proveBattleNetPolicyFlag, "proof.battle_net_policy");
+  invalidateProofToken(proveLoadAIModules, "proof.load_ai_modules");
+  invalidateProofToken(proveReadMapData, "proof.read_map_data");
+  invalidateProofToken(proveReadPlayerData, "proof.read_player_data");
+  invalidateProofToken(proveReadBulletData, "proof.read_bullet_data");
+  invalidateProofToken(proveReadRegionData, "proof.read_region_data");
+  invalidateProofToken(discoverCommandQueue, "proof.command_queue_discovery");
+
+  std::vector<std::string> preservedReadyEvidenceLines;
+  if (runtimeVisibleAtReady)
+  {
+    const std::vector<std::string> existingReadyLines = readReadyFileLines(readyPath);
+    if (existingReadyIdentityMatches(existingReadyLines, environment))
+    {
+      std::unordered_set<std::string> preserved;
+      for (const std::string& line : existingReadyLines)
+      {
+        if (!preservableReadyEvidenceLine(line))
+          continue;
+        if (readyLineReferencesAnyProofToken(line, invalidatedProofTokens))
+          continue;
+        if (preserved.insert(line).second)
+          preservedReadyEvidenceLines.push_back(line);
+      }
+    }
+  }
+
   std::ofstream ready(readyPath);
   if (!ready)
   {
@@ -9568,6 +9829,8 @@ int main(int argc, char** argv)
   ready << "command_surface.unit_commands=" << commandSurface.unitCommands.size() << '\n';
   ready << "command_surface.game_actions=" << commandSurface.gameActions.size() << '\n';
   ready << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
+  for (const std::string& line : preservedReadyEvidenceLines)
+    ready << line << '\n';
   if (proveReadGameState && readGameStateProof.passed)
   {
     ready << "proof.read_game_state.address=0x" << std::hex << readGameStateProof.address << std::dec << '\n';

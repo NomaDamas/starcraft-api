@@ -45,6 +45,12 @@ namespace
     unsetEnvValue("STARCRAFT_API_EXTRA_ARGS");
   }
 
+  void clearBridgeDiscoveryEnv()
+  {
+    unsetEnvValue("STARCRAFT_API_EXECUTOR_BRIDGE_DISCOVERY_DIR");
+    unsetEnvValue("STARCRAFT_API_EXECUTOR_BRIDGE_DIR");
+  }
+
   void writeFile(const std::filesystem::path& path, const std::string& content)
   {
     std::filesystem::create_directories(path.parent_path());
@@ -83,6 +89,7 @@ namespace
 int main()
 {
   clearWindowedLaunchEnv();
+  clearBridgeDiscoveryEnv();
 
   const std::filesystem::path tempRoot =
     std::filesystem::temp_directory_path() / "starcraft-api-runtime-installation-test";
@@ -207,6 +214,60 @@ int main()
   assert(resolvedEnvironment.version == "2.0.13-test");
   assert(resolvedEnvironment.executablePath == installation.executablePath);
   assert(resolvedEnvironment.processId == 4430);
+  assert(resolvedEnvironment.executorBridgePath.empty());
+
+  const std::filesystem::path autoBridgeRoot = tempRoot / "auto-bridge";
+  writeFile(
+    autoBridgeRoot / "ready",
+    "protocol=starcraft-api-file-bridge-v1\n"
+    "product=starcraft-remastered\n"
+    "version=2.0.13-test\n"
+    "mode=validated-runtime-adapter\n"
+    "process_id=4430\n"
+    "executable=" + installation.executablePath + "\n"
+    "proof.attach=passed\n");
+  setEnvValue("STARCRAFT_API_EXECUTOR_BRIDGE_DISCOVERY_DIR", autoBridgeRoot.string());
+  RuntimeEnvironment autoBridgeEnvironment = unresolvedEnvironment;
+  const RuntimeEnvironment resolvedAutoBridgeEnvironment =
+    resolveRuntimeEnvironment(autoBridgeEnvironment);
+  assert(resolvedAutoBridgeEnvironment.executorBridgePath == autoBridgeRoot.string());
+
+  writeFile(
+    autoBridgeRoot / "ready",
+    "protocol=starcraft-api-file-bridge-v1\n"
+    "product=starcraft-remastered\n"
+    "version=2.0.13-test\n"
+    "mode=validated-runtime-adapter\n"
+    "process_id=4431\n"
+    "executable=" + installation.executablePath + "\n"
+    "proof.attach=passed\n");
+  RuntimeEnvironment staleAutoBridgeEnvironment = unresolvedEnvironment;
+  const RuntimeEnvironment resolvedStaleAutoBridgeEnvironment =
+    resolveRuntimeEnvironment(staleAutoBridgeEnvironment);
+  assert(resolvedStaleAutoBridgeEnvironment.executorBridgePath.empty());
+  clearBridgeDiscoveryEnv();
+
+  writeFile(
+    processSnapshot,
+    "4428 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net --game=s1 --gamepath="
+      + installRoot.string()
+      + "/\n");
+  writeFile(
+    autoBridgeRoot / "ready",
+    "protocol=starcraft-api-file-bridge-v1\n"
+    "product=starcraft-remastered\n"
+    "version=2.0.13-test\n"
+    "mode=validated-runtime-adapter\n"
+    "process_id=4430\n"
+    "executable=" + installation.executablePath + "\n"
+    "proof.attach=passed\n");
+  setEnvValue("STARCRAFT_API_EXECUTOR_BRIDGE_DISCOVERY_DIR", autoBridgeRoot.string());
+  RuntimeEnvironment noPidBridgeEnvironment = unresolvedEnvironment;
+  const RuntimeEnvironment resolvedNoPidBridgeEnvironment =
+    resolveRuntimeEnvironment(noPidBridgeEnvironment);
+  assert(resolvedNoPidBridgeEnvironment.processId == 0);
+  assert(resolvedNoPidBridgeEnvironment.executorBridgePath.empty());
+  clearBridgeDiscoveryEnv();
 
   writeFile(
     processSnapshot,

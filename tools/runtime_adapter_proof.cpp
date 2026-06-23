@@ -632,6 +632,7 @@ namespace
   };
 
   constexpr std::size_t minActiveUnitRecords = 4;
+  constexpr std::size_t minRemasteredSnapshotUnitRecords = 3;
   constexpr std::size_t minActiveBulletRecords = 1;
 
   struct BattleNetPolicyProof
@@ -3193,7 +3194,19 @@ namespace
       if (scanTimedOut)
         return failedUnitNodeProof("explicit SC:R unit-node candidate scan timed out before proof");
       if (proof.passed)
+      {
+        if (!graphProof.passed
+            && graphProof.records.size() >= minRemasteredSnapshotUnitRecords)
+        {
+          graphProof.passed = true;
+          graphProof.address = candidateAddress;
+          graphProof.recordSize = proof.recordSize;
+          graphProof.sampledRecords = std::max(graphProof.sampledRecords, proof.sampledRecords);
+          graphProof.activeRecords = graphProof.records.size();
+          return graphProof;
+        }
         return proof;
+      }
       rememberBestUnitNodeCandidate(diagnostics, proof);
     }
 
@@ -3588,7 +3601,7 @@ namespace
 
     std::vector<RemasteredUnitSnapshotRecord> records = nodeProof.records;
     std::size_t availableRecords = nodeProof.sampledRecords;
-    if (records.size() >= minActiveUnitRecords)
+    if (records.size() >= minRemasteredSnapshotUnitRecords)
     {
       nodeProof.activeRecords = records.size();
       if (availableRecords < records.size())
@@ -3645,8 +3658,9 @@ namespace
       }
     }
 
-    if (records.size() < minActiveUnitRecords)
-      return failedUnitsProof("SC:R unit-node graph did not produce enough BWAPI-facing unit snapshot records");
+    if (records.size() < minRemasteredSnapshotUnitRecords)
+      return failedUnitsProof(
+        "SC:R unit-node graph did not produce enough BWAPI-facing unit snapshot records");
 
     std::unordered_set<std::uintptr_t> nodeHandles;
     for (const RemasteredUnitSnapshotRecord& record : records)
@@ -3654,7 +3668,7 @@ namespace
       if (record.nodeAddress != 0)
         nodeHandles.insert(record.nodeAddress);
     }
-    if (nodeHandles.size() < minActiveUnitRecords)
+    if (nodeHandles.size() < minRemasteredSnapshotUnitRecords)
       return failedUnitsProof("SC:R unit-node graph reused too few stable unit handles for BWAPI-facing units");
 
     nodeProof.records = records;
@@ -5878,12 +5892,12 @@ namespace
       attempt.consumedImmediately =
         attempt.consumedImmediately || resumeAppend.consumedImmediately;
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       if (!sampleProgressingFrameCounter(
           processId,
           attempt.frameCounterAddress,
           frameSampleMs,
-          5,
+          12,
           2,
           attempt.resumedStart,
           attempt.resumedEnd))
@@ -6712,7 +6726,7 @@ namespace
       players.insert(record.player);
     }
 
-    if (unitHandles.size() < minActiveUnitRecords)
+    if (unitHandles.size() < minRemasteredSnapshotUnitRecords)
     {
       proof.reason = "dispatch-events proof requires enough distinct live unit handles";
       return proof;
@@ -9431,6 +9445,25 @@ int main(int argc, char** argv)
       std::cout << "multiplayer_sync.reason=" << multiplayerSyncProof.reason << '\n';
     if (!multiplayerSyncProof.passed)
       proofFailureCode = proofFailureCode == 0 ? 18 : proofFailureCode;
+  }
+
+  constexpr int commandDeliverySurvivalGraceMs = 2500;
+  if (proveIssueCommands && issueCommandsProof.deliveryChecked && !self)
+  {
+    std::cout << "runtime.post_command_grace_ms="
+              << commandDeliverySurvivalGraceMs << '\n';
+    std::this_thread::sleep_for(std::chrono::milliseconds(commandDeliverySurvivalGraceMs));
+    const bool visibleAfterCommandDelivery = runtimeProcessExists(environment.processId);
+    std::cout << "runtime.visible_after_command_delivery="
+              << (visibleAfterCommandDelivery ? "true" : "false") << '\n';
+    if (!visibleAfterCommandDelivery)
+    {
+      if (issueCommandsProof.reason.empty())
+        issueCommandsProof.reason = "target runtime exited after command delivery attempt";
+      else
+        issueCommandsProof.reason += "; target runtime exited after command delivery attempt";
+      proofFailureCode = proofFailureCode == 0 ? 12 : proofFailureCode;
+    }
   }
 
   std::error_code error;

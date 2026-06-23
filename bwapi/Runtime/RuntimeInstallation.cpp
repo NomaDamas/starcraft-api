@@ -44,6 +44,142 @@ namespace BWAPI::Runtime
       return {};
     }
 
+    bool readKeyValueLine(
+      const std::filesystem::path& path,
+      const std::string& key,
+      std::string& value)
+    {
+      std::ifstream input(path);
+      const std::string prefix = key + '=';
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line.rfind(prefix, 0) == 0)
+        {
+          value = line.substr(prefix.size());
+          return true;
+        }
+      }
+      return false;
+    }
+
+    bool readyFileHasLine(const std::filesystem::path& path, const std::string& expected)
+    {
+      std::ifstream input(path);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line == expected)
+          return true;
+      }
+      return false;
+    }
+
+    std::string normalizedPathString(const std::string& path)
+    {
+      if (path.empty())
+        return {};
+      return std::filesystem::path(path).lexically_normal().string();
+    }
+
+    bool liveBridgeMatchesEnvironment(
+      const RuntimeEnvironment& environment,
+      const std::filesystem::path& bridgePath)
+    {
+      std::error_code error;
+      if (!std::filesystem::is_directory(bridgePath, error) || error)
+        return false;
+
+      const std::filesystem::path readyPath = bridgePath / RuntimeExecutorBridgeReadyFile;
+      if (!std::filesystem::is_regular_file(readyPath, error) || error)
+        return false;
+      if (!readyFileHasLine(readyPath, std::string("protocol=") + RuntimeExecutorBridgeProtocol))
+        return false;
+
+      std::string value;
+      if (!readKeyValueLine(readyPath, "mode", value)
+          || value != RuntimeExecutorBridgeValidatedAdapterMode)
+        return false;
+
+      if (environment.product != Product::Unknown)
+      {
+        if (!readKeyValueLine(readyPath, "product", value)
+            || parseProduct(value) != environment.product)
+          return false;
+      }
+
+      if (!environment.version.empty())
+      {
+        if (!readKeyValueLine(readyPath, "version", value)
+            || value != environment.version)
+          return false;
+      }
+
+      if (environment.processId > 0)
+      {
+        if (!readKeyValueLine(readyPath, "process_id", value))
+          return false;
+        char* end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol(value.c_str(), &end, 10);
+        if (errno != 0 || end == value.c_str() || *end != '\0'
+            || parsed != environment.processId)
+          return false;
+      }
+
+      if (!environment.executablePath.empty())
+      {
+        if (!readKeyValueLine(readyPath, "executable", value)
+            || normalizedPathString(value) != normalizedPathString(environment.executablePath))
+          return false;
+      }
+
+      return true;
+    }
+
+    std::vector<std::filesystem::path> liveBridgeCandidatePaths()
+    {
+      std::vector<std::filesystem::path> candidates;
+
+      const std::string explicitDiscoveryDir =
+        getenvString("STARCRAFT_API_EXECUTOR_BRIDGE_DISCOVERY_DIR");
+      if (!explicitDiscoveryDir.empty())
+        candidates.emplace_back(explicitDiscoveryDir);
+
+      candidates.emplace_back("/tmp/starcraft-api-live-bridge");
+
+      std::error_code error;
+      const std::filesystem::path tempBridge =
+        std::filesystem::temp_directory_path(error) / "starcraft-api-live-bridge";
+      if (!error)
+        candidates.push_back(tempBridge);
+
+      std::vector<std::filesystem::path> unique;
+      for (const std::filesystem::path& candidate : candidates)
+      {
+        const std::filesystem::path normalized = candidate.lexically_normal();
+        if (std::find(unique.begin(), unique.end(), normalized) == unique.end())
+          unique.push_back(normalized);
+      }
+      return unique;
+    }
+
+    std::string findMatchingLiveBridgePath(const RuntimeEnvironment& environment)
+    {
+      // A live bridge is bound to one concrete process. If no current
+      // StarCraft PID was resolved, a stale /tmp bridge must not be adopted
+      // just because product/version/executable metadata still matches.
+      if (environment.processId <= 0)
+        return {};
+
+      for (const std::filesystem::path& bridgePath : liveBridgeCandidatePaths())
+      {
+        if (liveBridgeMatchesEnvironment(environment, bridgePath))
+          return bridgePath.string();
+      }
+      return {};
+    }
+
     std::vector<std::string> splitExtraLaunchArguments(const std::string& value)
     {
       std::vector<std::string> arguments;
@@ -2334,6 +2470,9 @@ namespace BWAPI::Runtime
       if (!processIds.empty())
         environment.processId = processIds.front();
     }
+
+    if (environment.executorBridgePath.empty())
+      environment.executorBridgePath = findMatchingLiveBridgePath(environment);
 
     return environment;
   }

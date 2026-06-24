@@ -198,6 +198,22 @@ file(WRITE "${bridge_dir}/ready"
   "version=test-build\n"
   "executable=${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest\n"
   "mode=validated-runtime-adapter\n"
+  "resident.adapter=active\n"
+  "resident.adapter.abi=starcraft-api-resident-adapter-v1\n"
+  "resident.adapter.process_id=123\n"
+  "resident.adapter.heartbeat=20\n"
+  "resident.proof.read_game_state.source=resident\n"
+  "resident.proof.read_game_state.process_id=123\n"
+  "resident.proof.read_game_state.heartbeat=20\n"
+  "resident.proof.read_game_state.sample_count=3\n"
+  "resident.proof.read_game_state.frame_samples=10,11,12\n"
+  "resident.proof.read_game_state.tick_samples=100,116,132\n"
+  "resident.proof.active_match.source=resident\n"
+  "resident.proof.active_match.process_id=123\n"
+  "resident.proof.active_match.heartbeat=20\n"
+  "resident.proof.active_match.mode=match\n"
+  "resident.proof.active_match.unit_activity_count=3\n"
+  "resident.proof.active_match.evidence=resident-frame-unit-activity\n"
   "command.receiver=active\n"
   "command.sink=runtime-command-queue-v1\n"
   "contract.binding.shared-memory-client-transport=transport|proof.attach=passed\n"
@@ -233,11 +249,13 @@ endif()
 
 foreach(needle
     "executor.bridge_mode=validated-runtime-adapter"
-    "executor.behavior_proof.missing_count=1"
+    "executor.behavior_proof.missing_count=3"
+    "executor.behavior_proof.missing=proof.read_game_state=passed"
+    "executor.behavior_proof.missing=proof.active_match_state=passed"
     "executor.behavior_proof.missing=proof.multiplayer_sync=passed"
     "readiness.blocking_gap=executor-behavior-proof-complete"
     "implementation_gap.category.transport.count=1"
-    "implementation_gap.category.executor-behavior-proof.count=1")
+    "implementation_gap.category.executor-behavior-proof.count=3")
   string(FIND "${bridge_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "gap report bridge proof output missing '${needle}'\n${bridge_output}")

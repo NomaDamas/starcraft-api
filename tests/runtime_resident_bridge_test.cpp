@@ -4,17 +4,52 @@
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
 #include <BWAPI/Runtime/RuntimeResidentLoader.h>
 
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace BWAPI::Runtime;
 
 namespace
 {
+  std::atomic<std::uint32_t> residentFrameCounter{ 402 };
+  std::array<unsigned char, 64> activeUnitEvidence = {
+    0x42, 0x57, 0x41, 0x50, 0x49, 0x2d, 0x55, 0x4e
+  };
+
+  struct ResidentFrameCounterTicker
+  {
+    std::atomic<bool> running{ true };
+    std::thread thread;
+
+    ResidentFrameCounterTicker()
+      : thread([this]()
+        {
+          while (running.load(std::memory_order_relaxed))
+          {
+            residentFrameCounter.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+        })
+    {
+    }
+
+    ~ResidentFrameCounterTicker()
+    {
+      running.store(false, std::memory_order_relaxed);
+      if (thread.joinable())
+        thread.join();
+    }
+  };
+
   std::string fixturePath(const std::string& name)
   {
     return std::string(STARCRAFT_API_TEST_FIXTURE_DIR) + "/" + name;
@@ -68,11 +103,71 @@ namespace
       makeRuntimeResidentAdapterReadyLines(environment, heartbeat),
       extraLines);
   }
+
+  std::vector<std::string> residentStateProofLines(
+    const RuntimeEnvironment& environment,
+    std::uint64_t heartbeat,
+    std::uint64_t activeUnitCount = 4,
+    const std::string& activeMode = "match",
+    bool includeLiveReadAddress = true,
+    bool includeActiveUnitEvidence = true,
+    std::uintptr_t activeUnitAddress = 0)
+  {
+    const std::vector<RuntimeResidentGameStateSample> samples = {
+      { 400, 10000 },
+      { 401, 10016 },
+      { 402, 10032 }
+    };
+    std::vector<std::string> lines =
+      makeRuntimeResidentReadGameStateProofReadyLines(environment, heartbeat, samples);
+    if (includeLiveReadAddress)
+    {
+      lines.push_back(
+        "proof.read_game_state.address="
+        + std::to_string(reinterpret_cast<std::uintptr_t>(&residentFrameCounter)));
+    }
+    const std::vector<std::string> activeLines =
+      makeRuntimeResidentActiveMatchProofReadyLines(
+        environment,
+        heartbeat,
+        activeUnitCount,
+        activeMode);
+    lines.insert(lines.end(), activeLines.begin(), activeLines.end());
+    if (includeActiveUnitEvidence)
+    {
+      const std::uintptr_t unitAddress =
+        activeUnitAddress == 0
+          ? reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data())
+          : activeUnitAddress;
+      lines.push_back("proof.read_units=passed");
+      lines.push_back("proof.read_units.address=" + std::to_string(unitAddress));
+      lines.push_back("proof.read_units.record_size=64");
+      lines.push_back("proof.read_units.active_records=" + std::to_string(activeUnitCount));
+      lines.push_back("proof.active_match_state.evidence=active-unit-node-snapshot");
+      lines.push_back("proof.active_match_state.active_records=" + std::to_string(activeUnitCount));
+      lines.push_back(
+        "proof.active_match_state.unit_node_address="
+        + std::to_string(unitAddress));
+      lines.push_back("proof.active_match_state.unit_node_record_size=64");
+    }
+    return lines;
+  }
+
+  bool hasMissingProof(
+    const RuntimeExecutorPreflightResult& preflight,
+    const std::string& proof)
+  {
+    return std::find(
+      preflight.missingBehaviorProofs.begin(),
+      preflight.missingBehaviorProofs.end(),
+      proof) != preflight.missingBehaviorProofs.end();
+  }
 }
 
 int main(int argc, char** argv)
 {
   assert(argc > 0);
+  ResidentFrameCounterTicker ticker;
   const std::string selfExecutable = std::filesystem::absolute(argv[0]).lexically_normal().string();
   const std::filesystem::path bridgePath =
     makeBridgePath("starcraft-api-runtime-resident-bridge-test");
@@ -98,6 +193,122 @@ int main(int argc, char** argv)
   assert(preflight.executorAvailable);
   assert(!preflight.errors.empty());
   assert(preflight.missingBehaviorProofs.size() == requiredRuntimeExecutorBehaviorProofs().size());
+
+  writeReadyFile(environment, 9, residentStateProofLines(environment, 9));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  RuntimeResidentStateProofValidationResult stateProof =
+    validateRuntimeResidentStateProofs(
+      environment,
+      bridgePath / RuntimeExecutorBridgeReadyFile,
+      resident);
+  assert(stateProof.readGameStateValid);
+  assert(stateProof.activeMatchValid);
+  assert(stateProof.samples.size() == 3);
+  assert(stateProof.activeUnitCount == 4);
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  assert(preflight.executorAvailable);
+  assert(!hasMissingProof(preflight, "proof.read_game_state=passed"));
+  assert(!hasMissingProof(preflight, "proof.active_match_state=passed"));
+
+  writeReadyFile(environment, 10, { "proof.active_match_state=passed" });
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(!stateProof.activeMatchValid);
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  assert(hasMissingProof(preflight, "proof.active_match_state=passed"));
+  assert(!preflight.errors.empty());
+
+  writeReadyFile(environment, 11, residentStateProofLines(environment, 10));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(!stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
+  writeReadyFile(environment, 12, residentStateProofLines(environment, 12, 4, "menu"));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
+  writeReadyFile(
+    environment,
+    13,
+    residentStateProofLines(environment, 13, 4, "match", false, true));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(!stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
+  writeReadyFile(
+    environment,
+    14,
+    residentStateProofLines(environment, 14, 4, "match", true, false));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
+  writeReadyFile(
+    environment,
+    15,
+    residentStateProofLines(environment, 15, 4, "match", true, true, 1));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
+  writeReadyFile(
+    environment,
+    16,
+    residentStateProofLines(
+      environment,
+      16,
+      4,
+      "match",
+      true,
+      true,
+      reinterpret_cast<std::uintptr_t>(&residentFrameCounter)));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
 
   writeReadyFile(environment, 7, { "proof.issue_commands=passed" });
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);

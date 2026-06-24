@@ -664,6 +664,47 @@ foreach(path
     message(FATAL_ERROR "SC:R unit-node proof expected snapshot is missing: ${path}")
   endif()
 endforeach()
+set(unit_node_snapshot_failure_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-unit-node-snapshot-failure-bridge")
+file(REMOVE_RECURSE "${unit_node_snapshot_failure_bridge_dir}")
+file(MAKE_DIRECTORY "${unit_node_snapshot_failure_bridge_dir}/units.snapshot.tsv")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${unit_node_snapshot_failure_bridge_dir}"
+    --prove-read-units
+    --self-unit-node-fixture
+  RESULT_VARIABLE unit_node_snapshot_failure_result
+  OUTPUT_VARIABLE unit_node_snapshot_failure_output
+  ERROR_VARIABLE unit_node_snapshot_failure_error
+)
+if(unit_node_snapshot_failure_result EQUAL 0)
+  message(FATAL_ERROR "expected derived unit-node read-units proof to fail when units snapshot cannot be written\nstdout:\n${unit_node_snapshot_failure_output}\nstderr:\n${unit_node_snapshot_failure_error}")
+endif()
+foreach(needle
+    "read_units.derived_snapshot=true"
+    "read_units.snapshot.success=false")
+  string(FIND "${unit_node_snapshot_failure_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "unit-node snapshot failure output missing '${needle}'\n${unit_node_snapshot_failure_output}")
+  endif()
+endforeach()
+set(unit_node_snapshot_failure_ready_file "${unit_node_snapshot_failure_bridge_dir}/ready")
+if(NOT EXISTS "${unit_node_snapshot_failure_ready_file}")
+  message(FATAL_ERROR "failed unit-node snapshot proof must still write partial ready file")
+endif()
+file(READ "${unit_node_snapshot_failure_ready_file}" unit_node_snapshot_failure_ready)
+foreach(forbidden
+    "proof.read_units=passed"
+    "proof.active_match_state=passed")
+  string(FIND "${unit_node_snapshot_failure_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "failed unit-node snapshot proof must not claim '${forbidden}'\n${unit_node_snapshot_failure_ready}")
+  endif()
+endforeach()
+
 file(READ "${unit_node_bridge_dir}/unit_diagnostics.snapshot.tsv" unit_node_diagnostics_snapshot)
 foreach(needle
     "read_units_passed\ttrue"
@@ -1002,6 +1043,19 @@ file(READ "${combined_ready_file}" combined_ready)
 string(FIND "${combined_ready}" "proof.read_units=passed" combined_units_index)
 if(combined_units_index EQUAL -1)
   message(FATAL_ERROR "combined proof must preserve passing read-units proof\n${combined_ready}")
+endif()
+string(FIND "${combined_ready}" "proof.read_game_state=passed" combined_read_state_index)
+if(NOT combined_read_state_index EQUAL -1)
+  foreach(needle
+      "resident.adapter=active"
+      "resident.proof.read_game_state.source=resident"
+      "resident.proof.read_game_state.frame_samples="
+      "resident.proof.read_game_state.tick_samples=")
+    string(FIND "${combined_ready}" "${needle}" resident_read_state_index)
+    if(resident_read_state_index EQUAL -1)
+      message(FATAL_ERROR "combined read-game-state proof missing resident payload '${needle}'\n${combined_ready}")
+    endif()
+  endforeach()
 endif()
 
 set(dispatch_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-dispatch-bridge")

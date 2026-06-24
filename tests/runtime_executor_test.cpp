@@ -4,6 +4,7 @@
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -18,6 +20,36 @@ using namespace BWAPI::Runtime;
 
 namespace
 {
+  std::atomic<std::uint32_t> residentFrameCounter{ 102 };
+  std::array<unsigned char, 64> activeUnitEvidence = {
+    0x42, 0x57, 0x41, 0x50, 0x49, 0x2d, 0x55, 0x4e
+  };
+
+  struct ResidentFrameCounterTicker
+  {
+    std::atomic<bool> running{ true };
+    std::thread thread;
+
+    ResidentFrameCounterTicker()
+      : thread([this]()
+        {
+          while (running.load(std::memory_order_relaxed))
+          {
+            residentFrameCounter.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+        })
+    {
+    }
+
+    ~ResidentFrameCounterTicker()
+    {
+      running.store(false, std::memory_order_relaxed);
+      if (thread.joinable())
+        thread.join();
+    }
+  };
+
   std::string fixturePath(const std::string& name)
   {
     return std::string(STARCRAFT_API_TEST_FIXTURE_DIR) + "/" + name;
@@ -57,6 +89,49 @@ namespace
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
   }
 
+  std::uint64_t nextResidentProofHeartbeat()
+  {
+    static std::uint64_t heartbeat = 20;
+    return heartbeat++;
+  }
+
+  void writeResidentStateProofs(std::ofstream& ready, int processId, const std::string& executable)
+  {
+    RuntimeEnvironment residentEnvironment = remasteredEnvironment(executable);
+    residentEnvironment.processId = processId;
+    const std::uint64_t heartbeat = nextResidentProofHeartbeat();
+    const std::vector<RuntimeResidentGameStateSample> samples = {
+      { 100, 1000 },
+      { 101, 1016 },
+      { 102, 1032 }
+    };
+    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(residentEnvironment, heartbeat))
+      ready << line << '\n';
+    for (const std::string& line : makeRuntimeResidentReadGameStateProofReadyLines(
+           residentEnvironment,
+           heartbeat,
+           samples))
+      ready << line << '\n';
+    ready << "proof.read_game_state.address="
+          << reinterpret_cast<std::uintptr_t>(&residentFrameCounter) << '\n';
+    for (const std::string& line : makeRuntimeResidentActiveMatchProofReadyLines(
+           residentEnvironment,
+           heartbeat,
+           4,
+           "match"))
+      ready << line << '\n';
+    ready << "proof.read_units=passed\n";
+    ready << "proof.read_units.address="
+          << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
+    ready << "proof.read_units.record_size=64\n";
+    ready << "proof.read_units.active_records=4\n";
+    ready << "proof.active_match_state.evidence=active-unit-node-snapshot\n";
+    ready << "proof.active_match_state.active_records=4\n";
+    ready << "proof.active_match_state.unit_node_address="
+          << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
+    ready << "proof.active_match_state.unit_node_record_size=64\n";
+  }
+
   void writeBootstrapReadyFile(
     const std::filesystem::path& bridgePath,
     int processId,
@@ -82,6 +157,7 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
+    writeResidentStateProofs(ready, processId, executable);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -98,6 +174,7 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
+    writeResidentStateProofs(ready, processId, executable);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
     {
       if (std::string(proof.id) != "multiplayer-sync")
@@ -123,6 +200,7 @@ namespace
           << bytesInQueueAddress << '\n';
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|" << evidenceProof << ':'
           << turnBufferAddress << '\n';
+    writeResidentStateProofs(ready, processId, executable);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -139,6 +217,7 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId + 100000, executable);
     writeRuntimeCommandQueueSink(ready);
+    writeResidentStateProofs(ready, processId + 100000, executable);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -147,6 +226,7 @@ namespace
 int main(int argc, char** argv)
 {
   assert(argc > 0);
+  ResidentFrameCounterTicker ticker;
   const std::string selfExecutable = std::filesystem::absolute(argv[0]).lexically_normal().string();
 
   const std::vector<RuntimeExecutorBehaviorProof>& proofs = requiredRuntimeExecutorBehaviorProofs();
@@ -251,23 +331,60 @@ int main(int argc, char** argv)
   assert(acceptedPositionField != nullptr && acceptedPositionField->resolved);
   assert(acceptedPositionField->evidence == "proof.read_units=passed:cunit-position");
 
-  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   {
-    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
-    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(bridgeEnvironment, 20))
-      ready << line << '\n';
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "proof.read_game_state=passed\n";
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
+    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:bwgame-layout\n";
+    ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
   }
+  RuntimeContract rejectedFakeGameStateProof =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedGameStateBinding =
+    findRuntimeBinding(rejectedFakeGameStateProof, "BW::BWDATA::Game", BindingKind::DataAddress);
+  const StructureLayout* rejectedGameStateLayout =
+    findStructureLayout(rejectedFakeGameStateProof, "BW::BWGame");
+  const StructureField* rejectedElapsedFrames =
+    findStructureField(rejectedFakeGameStateProof, "BW::BWGame", "elapsedFrames");
+  assert(rejectedGameStateBinding != nullptr && !rejectedGameStateBinding->resolved);
+  assert(rejectedGameStateLayout != nullptr && rejectedGameStateLayout->size == 0);
+  assert(rejectedElapsedFrames != nullptr && !rejectedElapsedFrames->resolved);
+
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    writeResidentStateProofs(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
+    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:bwgame-layout\n";
+    ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
+  }
+  RuntimeContract acceptedResidentGameStateProof =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* acceptedGameStateBinding =
+    findRuntimeBinding(acceptedResidentGameStateProof, "BW::BWDATA::Game", BindingKind::DataAddress);
+  const StructureLayout* acceptedGameStateLayout =
+    findStructureLayout(acceptedResidentGameStateProof, "BW::BWGame");
+  const StructureField* acceptedElapsedFrames =
+    findStructureField(acceptedResidentGameStateProof, "BW::BWGame", "elapsedFrames");
+  assert(acceptedGameStateBinding != nullptr && acceptedGameStateBinding->resolved);
+  assert(acceptedGameStateLayout != nullptr && acceptedGameStateLayout->size == 256);
+  assert(acceptedElapsedFrames != nullptr && acceptedElapsedFrames->resolved);
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult freshResidentPreflight =
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(freshResidentPreflight.executorAvailable);
   assert(freshResidentPreflight.errors.empty());
 
-  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
-  {
-    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
-    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(bridgeEnvironment, 20))
-      ready << line << '\n';
-  }
   const std::filesystem::path readyPath = bridgePath / RuntimeExecutorBridgeReadyFile;
   std::error_code timestampError;
   const std::filesystem::file_time_type rewrittenTime =
@@ -318,7 +435,9 @@ int main(int argc, char** argv)
   assert(staleProcessPreflight.targetLocated);
   assert(!staleProcessPreflight.executorAvailable);
   assert(staleProcessPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
-  assert(staleProcessPreflight.missingBehaviorProofs.empty());
+  assert(staleProcessPreflight.missingBehaviorProofs.size() == 2);
+  assert(staleProcessPreflight.missingBehaviorProofs[0] == "proof.read_game_state=passed");
+  assert(staleProcessPreflight.missingBehaviorProofs[1] == "proof.active_match_state=passed");
   assert(!staleProcessPreflight.errors.empty());
 
   writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);

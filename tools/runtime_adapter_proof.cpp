@@ -5,6 +5,7 @@
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
+#include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <algorithm>
 #include <array>
@@ -52,7 +53,7 @@ namespace
       << "  --self                   prove attach against this CLI process\n"
       << "  --prove-read-game-state  prove live state reads by finding a changing runtime counter\n"
       << "  --prove-active-match-state\n"
-      << "                           prove the target is in an active match/replay, not menu/login\n"
+      << "                           prove active match/replay state; requires resident read-game-state proof\n"
       << "  --prove-read-units       prove live unit reads by finding a BWAPI-compatible CUnit array\n"
       << "  --self-unit-fixture      allocate a self-test CUnit array before --prove-read-units\n"
       << "  --self-unit-node-fixture allocate a self-test SC:R unit-node graph before --prove-read-units\n"
@@ -167,6 +168,13 @@ namespace
     return nullptr;
   }
 
+  std::uint64_t steadyTickMilliseconds()
+  {
+    return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+  }
+
   struct LiveCounterProof
   {
     bool passed = false;
@@ -175,7 +183,28 @@ namespace
     std::uint32_t second = 0;
     std::uint32_t third = 0;
     std::string reason;
+    std::uint64_t firstTick = 0;
+    std::uint64_t secondTick = 0;
+    std::uint64_t thirdTick = 0;
   };
+
+  bool hasResidentGameStateProofTicks(const LiveCounterProof& proof)
+  {
+    return proof.passed
+      && proof.firstTick > 0
+      && proof.secondTick > proof.firstTick
+      && proof.thirdTick > proof.secondTick;
+  }
+
+  std::vector<RuntimeResidentGameStateSample> makeResidentGameStateSamples(
+    const LiveCounterProof& proof)
+  {
+    return {
+      { proof.first, proof.firstTick },
+      { proof.second, proof.secondTick },
+      { proof.third, proof.thirdTick }
+    };
+  }
 
   struct FrameCounterCandidate
   {
@@ -10149,18 +10178,21 @@ namespace
         proof.reason = "unable to read explicit frame counter first sample";
         return proof;
       }
+      proof.firstTick = steadyTickMilliseconds();
       std::this_thread::sleep_for(std::chrono::milliseconds(sampleDelayMs));
       if (!readFrameCounterAt(processId, address, proof.second))
       {
         proof.reason = "unable to read explicit frame counter second sample";
         return proof;
       }
+      proof.secondTick = steadyTickMilliseconds();
       std::this_thread::sleep_for(std::chrono::milliseconds(sampleDelayMs));
       if (!readFrameCounterAt(processId, address, proof.third))
       {
         proof.reason = "unable to read explicit frame counter third sample";
         return proof;
       }
+      proof.thirdTick = steadyTickMilliseconds();
       if (frameCounterConfidencePassed(proof.first, proof.second, proof.third, sampleDelayMs))
       {
         proof.passed = true;
@@ -12200,6 +12232,8 @@ namespace
       std::uint32_t first = 0;
       std::uint32_t second = 0;
       std::uint32_t third = 0;
+      std::uint64_t firstTick = 0;
+      std::uint64_t secondTick = 0;
       int regionPriority = 3;
       int score = std::numeric_limits<int>::max();
     };
@@ -12207,6 +12241,7 @@ namespace
     {
       std::uintptr_t address = 0;
       int regionPriority = 3;
+      std::uint64_t tick = 0;
       std::vector<unsigned char> bytes;
     };
 
@@ -12289,6 +12324,7 @@ namespace
         snapshot.address = region.address + regionOffset;
         snapshot.regionPriority =
           unitScanRegionPriority(region, executablePath, targetImageBase);
+        snapshot.tick = steadyTickMilliseconds();
         snapshot.bytes = std::move(first.bytes);
         snapshots.push_back(std::move(snapshot));
         if (diagnostics != nullptr)
@@ -12319,6 +12355,7 @@ namespace
       RuntimeMemoryReadResult second = readProcessMemory(processId, snapshot.address, snapshot.bytes.size());
       if (!second.success || second.bytesRead != snapshot.bytes.size())
         continue;
+      const std::uint64_t secondTick = steadyTickMilliseconds();
 
       for (std::size_t offset = 0; offset + sizeof(std::uint32_t) <= snapshot.bytes.size(); offset += sizeof(std::uint32_t))
       {
@@ -12336,6 +12373,8 @@ namespace
           candidate.address = snapshot.address + offset;
           candidate.first = firstValue;
           candidate.second = secondValue;
+          candidate.firstTick = snapshot.tick;
+          candidate.secondTick = secondTick;
           candidate.regionPriority = snapshot.regionPriority;
           candidates.push_back(candidate);
           if (diagnostics != nullptr)
@@ -12393,6 +12432,7 @@ namespace
         readProcessMemory(processId, candidate.address, sizeof(std::uint32_t));
       if (!third.success || third.bytesRead != sizeof(std::uint32_t))
         continue;
+      const std::uint64_t thirdTick = steadyTickMilliseconds();
       const std::uint32_t thirdValue = readU32(third.bytes, 0);
 
       const int score =
@@ -12435,6 +12475,9 @@ namespace
             thirdValue,
             {}
           };
+          bestProof.firstTick = candidate.firstTick;
+          bestProof.secondTick = candidate.secondTick;
+          bestProof.thirdTick = thirdTick;
           bestScore = score;
         }
       }
@@ -14138,14 +14181,14 @@ int main(int argc, char** argv)
 
     if (proveActiveMatchState)
     {
-      const bool frameGatePassed = !proveReadGameState || readGameStateProof.passed;
+      const bool frameGatePassed = hasResidentGameStateProofTicks(readGameStateProof);
       const bool replayMetadataAvailable =
         frameGatePassed
         && replayLaunchDetected
         && mapDataProof.passed
         && !mapDataProof.replayPath.empty()
         && mapDataProof.replayFileSize > 0;
-      const bool liveUnitProofAvailable = readUnitsProof.passed || activeUnitNodeProof.passed;
+      const bool liveUnitProofAvailable = readUnitsProof.passed;
       const bool activeMatchProven =
         !self
         && frameGatePassed
@@ -14153,9 +14196,7 @@ int main(int argc, char** argv)
       const char* activeMatchEvidence =
         readUnitsProof.passed
           ? (readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records")
-          : (activeUnitNodeProof.passed
-            ? "active-unit-node-anchor"
-            : "none");
+          : "none";
       std::cout << "active_match_state.in_game=" << (activeMatchProven ? "true" : "false") << '\n';
       std::cout << "active_match_state.evidence=" << activeMatchEvidence << '\n';
       if (replayMetadataAvailable)
@@ -14164,25 +14205,24 @@ int main(int argc, char** argv)
         std::cout << "active_match_state.replay_metadata_scope=diagnostic-only-not-active-match-proof\n";
       }
       if (!frameGatePassed)
-        std::cout << "active_match_state.reason=active match proof requires live frame progression\n";
+        std::cout << "active_match_state.reason=active match proof requires resident live frame/tick progression\n";
       else if (!liveUnitProofAvailable)
-        std::cout << "active_match_state.reason=active match proof requires a BWAPI-facing live unit snapshot or active unit-node anchor\n";
+        std::cout << "active_match_state.reason=active match proof requires validated read-units evidence\n";
       if (readUnitsProof.passed)
       {
         std::cout << "active_match_state.active_records=" << readUnitsProof.activeRecords << '\n';
-        std::cout << "active_match_state.unit_array_address=0x"
-                  << std::hex << readUnitsProof.address << std::dec << '\n';
-      }
-      else if (activeUnitNodeProof.passed)
-      {
-        std::cout << "active_match_state.active_records=" << activeUnitNodeProof.activeRecords << '\n';
-        std::cout << "active_match_state.unit_node_address=0x"
-                  << std::hex << activeUnitNodeProof.address << std::dec << '\n';
-        if (activeUnitNodeProof.vectorAddress != 0)
-          std::cout << "active_match_state.unit_node_vector_address=0x"
-                    << std::hex << activeUnitNodeProof.vectorAddress << std::dec << '\n';
-        std::cout << "active_match_state.unit_node_record_size="
-                  << activeUnitNodeProof.recordSize << '\n';
+        if (readUnitsProof.derivedSnapshot)
+        {
+          std::cout << "active_match_state.unit_node_address=0x"
+                    << std::hex << readUnitsProof.address << std::dec << '\n';
+          std::cout << "active_match_state.unit_node_record_size="
+                    << readUnitsProof.recordSize << '\n';
+        }
+        else
+        {
+          std::cout << "active_match_state.unit_array_address=0x"
+                    << std::hex << readUnitsProof.address << std::dec << '\n';
+        }
       }
       else if (replayMetadataAvailable)
       {
@@ -14588,7 +14628,7 @@ int main(int argc, char** argv)
       proveActiveMatchState
       && !proveReadUnits
       && !self
-      && (!proveReadGameState || readGameStateProof.passed)
+      && hasResidentGameStateProofTicks(readGameStateProof)
       && replayLaunchDetected
       && mapDataProof.passed
       && !mapDataProof.replayPath.empty()
@@ -15109,8 +15149,8 @@ int main(int argc, char** argv)
   const bool activeMatchReadyForDiagnostics =
     proveActiveMatchState
     && !self
-    && (!proveReadGameState || readGameStateProof.passed)
-    && (readUnitsProof.passed || activeUnitNodeProof.passed);
+    && hasResidentGameStateProofTicks(readGameStateProof)
+    && readUnitsProof.passed;
 
   if (proveDrawOverlays)
   {
@@ -15545,8 +15585,10 @@ int main(int argc, char** argv)
     if (requested)
       invalidatedProofTokens.push_back(token);
   };
-  invalidateProofToken(proveReadGameState, "proof.read_game_state");
-  invalidateProofToken(proveActiveMatchState, "proof.active_match_state");
+  // Resident state proofs carry a heartbeat tied to this ready-file update.
+  // Never preserve stale read/active-match proof lines across proof runs.
+  invalidatedProofTokens.push_back("proof.read_game_state");
+  invalidatedProofTokens.push_back("proof.active_match_state");
   invalidateProofToken(proveReadUnits, "proof.read_units");
   invalidateProofToken(proveIssueCommands, "proof.issue_commands");
   invalidateProofToken(proveDrawOverlays, "proof.draw_overlays");
@@ -15611,8 +15653,21 @@ int main(int argc, char** argv)
   ready << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
   for (const std::string& line : preservedReadyEvidenceLines)
     ready << line << '\n';
-  if (proveReadGameState && readGameStateProof.passed)
+  const bool residentReadGameStateReady =
+    proveReadGameState
+    && readGameStateProof.passed
+    && hasResidentGameStateProofTicks(readGameStateProof);
+  const std::uint64_t residentProofHeartbeat =
+    residentReadGameStateReady ? readGameStateProof.thirdTick : 0;
+  if (residentReadGameStateReady)
   {
+    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(environment, residentProofHeartbeat))
+      ready << line << '\n';
+    for (const std::string& line : makeRuntimeResidentReadGameStateProofReadyLines(
+           environment,
+           residentProofHeartbeat,
+           makeResidentGameStateSamples(readGameStateProof)))
+      ready << line << '\n';
     ready << "proof.read_game_state.address=0x" << std::hex << readGameStateProof.address << std::dec << '\n';
     ready << "proof.read_game_state.samples="
           << readGameStateProof.first << ','
@@ -15628,45 +15683,45 @@ int main(int argc, char** argv)
     ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
     ready << readGameStateBehaviorProof->readyFileLine << '\n';
   }
-  const bool activeMatchReady =
-    proveActiveMatchState
-    && !self
-    && (!proveReadGameState || readGameStateProof.passed)
-    && (readUnitsProof.passed || activeUnitNodeProof.passed);
-  if (activeMatchReady)
-  {
-    const char* activeMatchEvidence =
-      readUnitsProof.passed
-        ? (readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records")
-        : "active-unit-node-anchor";
-    ready << "proof.active_match_state.evidence="
-          << activeMatchEvidence << '\n';
-    ready << "proof.active_match_state.active_records="
-          << (readUnitsProof.passed ? readUnitsProof.activeRecords : activeUnitNodeProof.activeRecords)
-          << '\n';
-    if (readUnitsProof.passed)
-    {
-      ready << "proof.active_match_state.unit_array_address=0x"
-            << std::hex << readUnitsProof.address << std::dec << '\n';
-    }
-    else if (activeUnitNodeProof.passed)
-    {
-      ready << "proof.active_match_state.unit_node_address=0x"
-            << std::hex << activeUnitNodeProof.address << std::dec << '\n';
-      if (activeUnitNodeProof.vectorAddress != 0)
-        ready << "proof.active_match_state.unit_node_vector_address=0x"
-              << std::hex << activeUnitNodeProof.vectorAddress << std::dec << '\n';
-      ready << "proof.active_match_state.unit_node_record_size="
-            << activeUnitNodeProof.recordSize << '\n';
-      ready << "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.active_match_state=passed\n";
-    }
-    ready << activeMatchStateBehaviorProof->readyFileLine << '\n';
-  }
   const bool readUnitsReady =
     proveReadUnits
     && readUnitsProof.passed
     && (!readUnitsProof.derivedSnapshot || unitSnapshotWritten)
-    && (!self || !proveActiveMatchState || activeMatchReady);
+    && (!self || !proveActiveMatchState);
+  const bool activeMatchReady =
+    proveActiveMatchState
+    && !self
+    && residentReadGameStateReady
+    && readUnitsReady;
+  if (activeMatchReady)
+  {
+    const char* activeMatchEvidence =
+      readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records";
+    ready << "proof.active_match_state.evidence="
+          << activeMatchEvidence << '\n';
+    ready << "proof.active_match_state.active_records="
+          << readUnitsProof.activeRecords << '\n';
+    if (readUnitsProof.derivedSnapshot)
+    {
+      ready << "proof.active_match_state.unit_node_address=0x"
+            << std::hex << readUnitsProof.address << std::dec << '\n';
+      ready << "proof.active_match_state.unit_node_record_size="
+            << readUnitsProof.recordSize << '\n';
+      ready << "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.active_match_state=passed\n";
+    }
+    else
+    {
+      ready << "proof.active_match_state.unit_array_address=0x"
+            << std::hex << readUnitsProof.address << std::dec << '\n';
+    }
+    for (const std::string& line : makeRuntimeResidentActiveMatchProofReadyLines(
+           environment,
+           residentProofHeartbeat,
+           readUnitsProof.activeRecords,
+           "match"))
+      ready << line << '\n';
+    ready << activeMatchStateBehaviorProof->readyFileLine << '\n';
+  }
   if (readUnitsReady)
   {
     ready << "proof.read_units.address=0x" << std::hex << readUnitsProof.address << std::dec << '\n';
@@ -16053,7 +16108,7 @@ int main(int argc, char** argv)
   std::cout << "bridge.ready=" << readyPath.string() << '\n';
   if (runtimeVisibleAtReady)
     std::cout << attachProof->readyFileLine << '\n';
-  if (proveReadGameState && readGameStateProof.passed)
+  if (residentReadGameStateReady)
     std::cout << readGameStateBehaviorProof->readyFileLine << '\n';
   if (activeMatchReady)
     std::cout << activeMatchStateBehaviorProof->readyFileLine << '\n';

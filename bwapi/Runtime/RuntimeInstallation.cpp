@@ -526,13 +526,17 @@ namespace BWAPI::Runtime
       return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
     }
 
-    bool commandStartsWithPath(const std::string& command, const std::string& path)
+    std::string normalizePathSeparators(std::string value)
+    {
+      std::replace(value.begin(), value.end(), '\\', '/');
+      return value;
+    }
+
+    bool trimmedCommandStartsWithPath(std::string_view trimmed, const std::string& path)
     {
       if (path.empty())
         return false;
 
-      const std::size_t first = command.find_first_not_of(" \t\r\n");
-      const std::string trimmed = first == std::string::npos ? std::string() : command.substr(first);
       if (startsWith(trimmed, path))
         return trimmed.size() == path.size() || std::isspace(static_cast<unsigned char>(trimmed[path.size()])) != 0;
 
@@ -547,6 +551,20 @@ namespace BWAPI::Runtime
       }
 
       return false;
+    }
+
+    bool commandStartsWithPath(const std::string& command, const std::string& path)
+    {
+      const std::size_t first = command.find_first_not_of(" \t\r\n");
+      const std::string trimmed = first == std::string::npos ? std::string() : command.substr(first);
+      if (trimmedCommandStartsWithPath(trimmed, path))
+        return true;
+
+      const std::string normalizedTrimmed = normalizePathSeparators(trimmed);
+      const std::string normalizedPath = normalizePathSeparators(path);
+      if (normalizedTrimmed == trimmed && normalizedPath == path)
+        return false;
+      return trimmedCommandStartsWithPath(normalizedTrimmed, normalizedPath);
     }
 
     std::string trimLeft(std::string value)

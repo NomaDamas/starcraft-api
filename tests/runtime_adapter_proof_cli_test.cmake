@@ -1099,9 +1099,11 @@ endif()
 set(policy_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-bridge")
 set(policy_root "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-root")
 set(policy_executable "${STARCRAFT_RUNTIME_ADAPTER_PROOF}")
+set(policy_snapshot_executable "${policy_executable}")
+string(REPLACE "\\" "/" policy_snapshot_executable "${policy_snapshot_executable}")
 set(policy_process_snapshot "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-processes.snapshot")
 file(REMOVE_RECURSE "${policy_bridge_dir}" "${policy_root}")
-file(WRITE "${policy_process_snapshot}" "123 1 ${policy_executable} -launch -uid s1\n")
+file(WRITE "${policy_process_snapshot}" "123 1 ${policy_snapshot_executable} -launch -uid s1\n")
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env

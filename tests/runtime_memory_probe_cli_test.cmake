@@ -38,6 +38,75 @@ foreach(needle
   endif()
 endforeach()
 
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_MEMORY_PROBE}"
+    --self
+    --scan-u32-counters
+    --find-writable-only
+    --find-non-executable-only
+    --counter-max-scan-mb 1
+    --counter-sample-delay-ms 1
+    --counter-result-limit 2
+    --require-open
+    --require-access
+  RESULT_VARIABLE counter_scan_result
+  OUTPUT_VARIABLE counter_scan_output
+  ERROR_VARIABLE counter_scan_error
+)
+if(NOT counter_scan_result EQUAL 0)
+  message(FATAL_ERROR "expected self counter scan to run\nstdout:\n${counter_scan_output}\nstderr:\n${counter_scan_error}")
+endif()
+
+foreach(needle
+    "memory.counter_scan.requested=true"
+    "memory.counter_scan.scan_success=true"
+    "memory.counter_scan.sample_delay_ms=1"
+    "memory.counter_scan.max_scan_bytes=1048576"
+    "memory.counter_scan.filter.writable_only=true"
+    "memory.counter_scan.filter.non_executable_only=true"
+    "memory.counter_scan.candidate_regions="
+    "memory.counter_scan.scanned_regions="
+    "memory.counter_scan.preliminary_count="
+    "memory.counter_scan.validated_count="
+    "memory.counter_scan.printed_count=")
+  string(FIND "${counter_scan_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "counter-scan memory probe output missing '${needle}'\n${counter_scan_output}")
+  endif()
+endforeach()
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_MEMORY_PROBE}"
+    --self
+    --region-list
+    --region-list-limit 2
+    --require-open
+    --require-access
+  RESULT_VARIABLE region_list_result
+  OUTPUT_VARIABLE region_list_output
+  ERROR_VARIABLE region_list_error
+)
+if(NOT region_list_result EQUAL 0)
+  message(FATAL_ERROR "expected self region list to pass\nstdout:\n${region_list_output}\nstderr:\n${region_list_error}")
+endif()
+
+foreach(needle
+    "memory.region_list.requested=true"
+    "memory.region_list.success=true"
+    "memory.region_list.region.0.address=0x"
+    "memory.region_list.region.0.end=0x"
+    "memory.region_list.region.0.readable="
+    "memory.region_list.region.0.writable="
+    "memory.region_list.region.0.executable="
+    "memory.region_list.match_count="
+    "memory.region_list.printed_count="
+    "memory.region_list.limit=2")
+  string(FIND "${region_list_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "region-list memory probe output missing '${needle}'\n${region_list_output}")
+  endif()
+endforeach()
+
 string(FIND "${find_output}" "memory.find.match.count=0" zero_match_index)
 if(NOT zero_match_index EQUAL -1)
   message(FATAL_ERROR "filtered self memory find did not locate the fixture\n${find_output}")

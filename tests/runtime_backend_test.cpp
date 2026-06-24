@@ -36,9 +36,9 @@ int main()
   assert(remasteredProbe.capabilities.empty());
   RuntimeCommandSurface remasteredSurface = makeBWAPICommandSurface();
   assert(remasteredProbe.implementedApiSurfaceMethods == makeRemasteredParityContract("unknown").requiredApiSurfaceMethods);
-  assert(remasteredProbe.implementedCommandSurfaceEntries == 0);
-  assert(remasteredProbe.implementedUnitCommands.empty());
-  assert(remasteredProbe.implementedGameActions.empty());
+  assert(remasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
+  assert(remasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
+  assert(remasteredProbe.implementedGameActions == remasteredSurface.gameActions);
   assert(remasteredBackend->state() == RuntimeSessionState::Closed);
   RuntimeOpenResult remasteredOpen = remasteredBackend->open();
   assert(!remasteredOpen.opened);
@@ -77,9 +77,9 @@ int main()
   assert(hasCapability(proofBackedRemasteredProbe, Capability::SharedMemoryClient));
   assert(hasCapability(proofBackedRemasteredProbe, Capability::ReadGameState));
   assert(!hasCapability(proofBackedRemasteredProbe, Capability::ReadUnitData));
-  assert(proofBackedRemasteredProbe.implementedCommandSurfaceEntries == 0);
-  assert(proofBackedRemasteredProbe.implementedUnitCommands.empty());
-  assert(proofBackedRemasteredProbe.implementedGameActions.empty());
+  assert(proofBackedRemasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
+  assert(proofBackedRemasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
+  assert(proofBackedRemasteredProbe.implementedGameActions == remasteredSurface.gameActions);
 
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);

@@ -7,9 +7,11 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #if defined(__APPLE__)
@@ -24,6 +26,9 @@ namespace
       << "usage: starcraft-runtime-input --process-id <pid> --keys <sequence> [options]\n"
       << "  --process-id <pid>      target StarCraft process id\n"
       << "  --keys <sequence>       comma/space separated key tokens, e.g. \"s enter c\"\n"
+      << "  --clicks <sequence>     macOS mouse clicks as button:x:y tokens; x/y are 0..1 window-relative\n"
+      << "                           e.g. \"left:0.35:0.45 right:0.70:0.55\"\n"
+      << "  --hid-events            also post events through the foreground HID event tap\n"
       << "  --delay-ms <ms>         delay between keys (default: 150)\n"
       << "  --post-timeout-ms <ms>  maximum time to wait for each key post (default: 3000)\n"
       << "  --allow-untrusted       send even when macOS Accessibility trust is unavailable\n"
@@ -70,7 +75,127 @@ namespace
     return tokens;
   }
 
+  struct ClickToken
+  {
+    std::string button;
+    double x = 0.0;
+    double y = 0.0;
+  };
+
+  bool parseNormalizedDouble(const std::string& value, double& output)
+  {
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end == value.c_str() || *end != '\0' || parsed < 0.0 || parsed > 1.0)
+      return false;
+    output = parsed;
+    return true;
+  }
+
+  bool parseClickToken(const std::string& token, ClickToken& output)
+  {
+    const std::size_t firstColon = token.find(':');
+    if (firstColon == std::string::npos)
+      return false;
+    const std::size_t secondColon = token.find(':', firstColon + 1);
+    if (secondColon == std::string::npos || token.find(':', secondColon + 1) != std::string::npos)
+      return false;
+
+    output.button = lower(token.substr(0, firstColon));
+    if (output.button != "left" && output.button != "right")
+      return false;
+    return parseNormalizedDouble(token.substr(firstColon + 1, secondColon - firstColon - 1), output.x)
+      && parseNormalizedDouble(token.substr(secondColon + 1), output.y);
+  }
+
+  std::vector<ClickToken> splitClickSequence(const std::string& sequence, std::string& reason)
+  {
+    std::vector<ClickToken> clicks;
+    for (const std::string& token : splitKeySequence(sequence))
+    {
+      ClickToken click;
+      if (!parseClickToken(token, click))
+      {
+        reason = "unsupported click token: " + token;
+        return {};
+      }
+      clicks.push_back(click);
+    }
+    return clicks;
+  }
+
 #if defined(__APPLE__)
+  struct TargetWindow
+  {
+    CGRect bounds = CGRectZero;
+  };
+
+  std::optional<TargetWindow> findTargetWindowWithOptions(
+    int processId,
+    CGWindowListOption options)
+  {
+    CFArrayRef windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID);
+    if (windows == nullptr)
+      return std::nullopt;
+
+    std::optional<TargetWindow> result;
+    double bestArea = 0.0;
+    double bestLayerPenalty = std::numeric_limits<double>::max();
+    const CFIndex count = CFArrayGetCount(windows);
+    for (CFIndex i = 0; i < count; ++i)
+    {
+      CFDictionaryRef window =
+        static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(windows, i));
+      if (window == nullptr)
+        continue;
+
+      int64_t ownerPid = 0;
+      CFNumberRef ownerPidRef =
+        static_cast<CFNumberRef>(CFDictionaryGetValue(window, kCGWindowOwnerPID));
+      if (ownerPidRef == nullptr
+          || !CFNumberGetValue(ownerPidRef, kCFNumberSInt64Type, &ownerPid)
+          || ownerPid != processId)
+        continue;
+
+      int64_t layer = 0;
+      CFNumberRef layerRef =
+        static_cast<CFNumberRef>(CFDictionaryGetValue(window, kCGWindowLayer));
+      if (layerRef != nullptr)
+        CFNumberGetValue(layerRef, kCFNumberSInt64Type, &layer);
+
+      CFDictionaryRef boundsRef =
+        static_cast<CFDictionaryRef>(CFDictionaryGetValue(window, kCGWindowBounds));
+      CGRect bounds = CGRectZero;
+      if (boundsRef == nullptr || !CGRectMakeWithDictionaryRepresentation(boundsRef, &bounds))
+        continue;
+      if (bounds.size.width <= 0 || bounds.size.height <= 0)
+        continue;
+
+      const double area = bounds.size.width * bounds.size.height;
+      const double layerPenalty = layer == 0 ? 0.0 : 1.0;
+      if (!result.has_value()
+          || layerPenalty < bestLayerPenalty
+          || (layerPenalty == bestLayerPenalty && area > bestArea))
+      {
+        result = TargetWindow { bounds };
+        bestArea = area;
+        bestLayerPenalty = layerPenalty;
+      }
+    }
+
+    CFRelease(windows);
+    return result;
+  }
+
+  std::optional<TargetWindow> findTargetWindow(int processId)
+  {
+    std::optional<TargetWindow> result =
+      findTargetWindowWithOptions(processId, kCGWindowListOptionOnScreenOnly);
+    if (result.has_value())
+      return result;
+    return findTargetWindowWithOptions(processId, kCGWindowListOptionAll);
+  }
+
   bool macFunctionKeyCode(const std::string& token, CGKeyCode& code)
   {
     if (token.size() < 2 || token[0] != 'f')
@@ -200,7 +325,7 @@ namespace
     return false;
   }
 
-  bool postKeyToPid(int processId, CGKeyCode code, std::string& reason)
+  bool postKeyToPid(int processId, CGKeyCode code, bool hidEvents, std::string& reason)
   {
     CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
     if (source == nullptr)
@@ -222,8 +347,16 @@ namespace
       return false;
     }
 
-    CGEventPostToPid(static_cast<pid_t>(processId), keyDown);
-    CGEventPostToPid(static_cast<pid_t>(processId), keyUp);
+    if (hidEvents)
+    {
+      CGEventPost(kCGHIDEventTap, keyDown);
+      CGEventPost(kCGHIDEventTap, keyUp);
+    }
+    else
+    {
+      CGEventPostToPid(static_cast<pid_t>(processId), keyDown);
+      CGEventPostToPid(static_cast<pid_t>(processId), keyUp);
+    }
     CFRelease(keyDown);
     CFRelease(keyUp);
     CFRelease(source);
@@ -233,16 +366,17 @@ namespace
   bool postKeyToPidWithTimeout(
     int processId,
     CGKeyCode code,
+    bool hidEvents,
     int timeoutMs,
     std::string& reason)
   {
     auto completion = std::make_shared<std::promise<std::pair<bool, std::string>>>();
     std::future<std::pair<bool, std::string>> future = completion->get_future();
     std::thread(
-      [completion, processId, code]()
+      [completion, processId, code, hidEvents]()
       {
         std::string postReason;
-        const bool posted = postKeyToPid(processId, code, postReason);
+        const bool posted = postKeyToPid(processId, code, hidEvents, postReason);
         try
         {
           completion->set_value({ posted, postReason });
@@ -262,6 +396,95 @@ namespace
     reason = result.second;
     return result.first;
   }
+
+  bool postClickToPid(
+    int processId,
+    const TargetWindow& window,
+    const ClickToken& click,
+    bool hidEvents,
+    std::string& reason)
+  {
+    CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    if (source == nullptr)
+    {
+      reason = "CGEventSourceCreate failed";
+      return false;
+    }
+
+    const CGPoint point = CGPointMake(
+      window.bounds.origin.x + window.bounds.size.width * click.x,
+      window.bounds.origin.y + window.bounds.size.height * click.y);
+    const bool right = click.button == "right";
+    const CGMouseButton button = right ? kCGMouseButtonRight : kCGMouseButtonLeft;
+    const CGEventType downType = right ? kCGEventRightMouseDown : kCGEventLeftMouseDown;
+    const CGEventType upType = right ? kCGEventRightMouseUp : kCGEventLeftMouseUp;
+
+    CGEventRef mouseDown = CGEventCreateMouseEvent(source, downType, point, button);
+    CGEventRef mouseUp = CGEventCreateMouseEvent(source, upType, point, button);
+    if (mouseDown == nullptr || mouseUp == nullptr)
+    {
+      if (mouseDown != nullptr)
+        CFRelease(mouseDown);
+      if (mouseUp != nullptr)
+        CFRelease(mouseUp);
+      CFRelease(source);
+      reason = "CGEventCreateMouseEvent failed";
+      return false;
+    }
+
+    CGEventSetIntegerValueField(mouseDown, kCGMouseEventClickState, 1);
+    CGEventSetIntegerValueField(mouseUp, kCGMouseEventClickState, 1);
+    if (hidEvents)
+    {
+      CGWarpMouseCursorPosition(point);
+      CGEventPost(kCGHIDEventTap, mouseDown);
+      CGEventPost(kCGHIDEventTap, mouseUp);
+    }
+    else
+    {
+      CGEventPostToPid(static_cast<pid_t>(processId), mouseDown);
+      CGEventPostToPid(static_cast<pid_t>(processId), mouseUp);
+    }
+    CFRelease(mouseDown);
+    CFRelease(mouseUp);
+    CFRelease(source);
+    return true;
+  }
+
+  bool postClickToPidWithTimeout(
+    int processId,
+    const TargetWindow& window,
+    const ClickToken& click,
+    bool hidEvents,
+    int timeoutMs,
+    std::string& reason)
+  {
+    auto completion = std::make_shared<std::promise<std::pair<bool, std::string>>>();
+    std::future<std::pair<bool, std::string>> future = completion->get_future();
+    std::thread(
+      [completion, processId, window, click, hidEvents]()
+      {
+        std::string postReason;
+        const bool posted = postClickToPid(processId, window, click, hidEvents, postReason);
+        try
+        {
+          completion->set_value({ posted, postReason });
+        }
+        catch (const std::future_error&)
+        {
+        }
+      }).detach();
+
+    if (future.wait_for(std::chrono::milliseconds(timeoutMs)) != std::future_status::ready)
+    {
+      reason = "timed out while posting mouse input to target process";
+      return false;
+    }
+
+    const std::pair<bool, std::string> result = future.get();
+    reason = result.second;
+    return result.first;
+  }
 #endif
 }
 
@@ -272,7 +495,9 @@ int main(int argc, char** argv)
   int postTimeoutMs = 3000;
   bool dryRun = false;
   bool allowUntrusted = false;
+  bool hidEvents = false;
   std::string sequence;
+  std::string clickSequence;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -292,6 +517,11 @@ int main(int argc, char** argv)
       allowUntrusted = true;
       continue;
     }
+    if (arg == "--hid-events")
+    {
+      hidEvents = true;
+      continue;
+    }
     if (arg == "--process-id")
     {
       if (i + 1 >= argc || !parsePositiveInt(argv[++i], processId))
@@ -309,6 +539,16 @@ int main(int argc, char** argv)
         return 64;
       }
       sequence = argv[++i];
+      continue;
+    }
+    if (arg == "--clicks")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--clicks requires a sequence\n";
+        return 64;
+      }
+      clickSequence = argv[++i];
       continue;
     }
     if (arg == "--delay-ms")
@@ -339,24 +579,35 @@ int main(int argc, char** argv)
     std::cerr << "process id is required\n";
     return 64;
   }
-  if (sequence.empty())
+  if (sequence.empty() && clickSequence.empty())
   {
-    std::cerr << "key sequence is required\n";
+    std::cerr << "key or click sequence is required\n";
     return 64;
   }
 
   const std::vector<std::string> tokens = splitKeySequence(sequence);
-  if (tokens.empty())
+  if (!sequence.empty() && tokens.empty())
   {
     std::cerr << "key sequence did not contain any tokens\n";
     return 64;
   }
+  std::string clickParseReason;
+  const std::vector<ClickToken> clicks = splitClickSequence(clickSequence, clickParseReason);
+  if (!clickSequence.empty() && clicks.empty())
+  {
+    std::cerr << clickParseReason << '\n';
+    return 65;
+  }
 
   std::cout << "input.process_id=" << processId << '\n';
-  std::cout << "input.token_count=" << tokens.size() << '\n';
+  std::cout << "input.token_count=" << (tokens.size() + clicks.size()) << '\n';
   std::cout << "input.post_timeout_ms=" << postTimeoutMs << '\n';
+  std::cout << "input.hid_events=" << (hidEvents ? "true" : "false") << '\n';
   for (std::size_t i = 0; i < tokens.size(); ++i)
     std::cout << "input.token." << i << '=' << tokens[i] << '\n';
+  for (std::size_t i = 0; i < clicks.size(); ++i)
+    std::cout << "input.click." << i << '='
+              << clicks[i].button << ':' << clicks[i].x << ':' << clicks[i].y << '\n';
   const bool processVisible = BWAPI::Runtime::runtimeProcessExists(processId);
   std::cout << "input.process_visible=" << (processVisible ? "true" : "false") << '\n';
   if (!processVisible)
@@ -378,6 +629,19 @@ int main(int argc, char** argv)
       return 65;
     }
     keyCodes.push_back(code);
+  }
+  std::optional<TargetWindow> targetWindow;
+  if (!clicks.empty())
+  {
+    targetWindow = findTargetWindow(processId);
+    std::cout << "input.window_found=" << (targetWindow.has_value() ? "true" : "false") << '\n';
+    if (targetWindow.has_value())
+    {
+      std::cout << "input.window.x=" << targetWindow->bounds.origin.x << '\n';
+      std::cout << "input.window.y=" << targetWindow->bounds.origin.y << '\n';
+      std::cout << "input.window.width=" << targetWindow->bounds.size.width << '\n';
+      std::cout << "input.window.height=" << targetWindow->bounds.size.height << '\n';
+    }
   }
 
   if (dryRun)
@@ -401,7 +665,27 @@ int main(int argc, char** argv)
   for (CGKeyCode code : keyCodes)
   {
     std::string reason;
-    if (!postKeyToPidWithTimeout(processId, code, postTimeoutMs, reason))
+    if (!postKeyToPidWithTimeout(processId, code, hidEvents, postTimeoutMs, reason))
+    {
+      std::cout << "input.sent=" << sent << '\n';
+      std::cout << "input.success=false\n";
+      std::cout << "input.reason=" << reason << '\n';
+      return 2;
+    }
+    ++sent;
+    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+  }
+  if (!clicks.empty() && !targetWindow.has_value())
+  {
+    std::cout << "input.sent=" << sent << '\n';
+    std::cout << "input.success=false\n";
+    std::cout << "input.reason=target process window was not found\n";
+    return 2;
+  }
+  for (const ClickToken& click : clicks)
+  {
+    std::string reason;
+    if (!postClickToPidWithTimeout(processId, *targetWindow, click, hidEvents, postTimeoutMs, reason))
     {
       std::cout << "input.sent=" << sent << '\n';
       std::cout << "input.success=false\n";

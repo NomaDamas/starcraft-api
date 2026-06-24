@@ -264,6 +264,7 @@ namespace BWAPI::Runtime
         region.readable = windowsPageReadable(info.Protect);
         region.writable = windowsPageWritable(info.Protect);
         region.executable = windowsPageExecutable(info.Protect);
+        region.userTag = static_cast<int>(info.Type);
         result.regions.push_back(region);
       }
 
@@ -317,6 +318,28 @@ namespace BWAPI::Runtime
         region.readable = (info.protection & VM_PROT_READ) != 0;
         region.writable = (info.protection & VM_PROT_WRITE) != 0;
         region.executable = (info.protection & VM_PROT_EXECUTE) != 0;
+
+        mach_vm_address_t extendedAddress = address;
+        mach_vm_size_t extendedSize = 0;
+        vm_region_extended_info_data_t extendedInfo;
+        mach_msg_type_number_t extendedCount = VM_REGION_EXTENDED_INFO_COUNT;
+        mach_port_t extendedObjectName = MACH_PORT_NULL;
+        const kern_return_t extendedResult = mach_vm_region(
+          task,
+          &extendedAddress,
+          &extendedSize,
+          VM_REGION_EXTENDED_INFO,
+          reinterpret_cast<vm_region_info_t>(&extendedInfo),
+          &extendedCount,
+          &extendedObjectName);
+        if (extendedObjectName != MACH_PORT_NULL)
+          mach_port_deallocate(mach_task_self(), extendedObjectName);
+        if (extendedResult == KERN_SUCCESS)
+        {
+          region.userTag = static_cast<int>(extendedInfo.user_tag);
+          region.shareMode = static_cast<int>(extendedInfo.share_mode);
+        }
+
         char mappedPath[PROC_PIDPATHINFO_MAXSIZE] = {};
         if (proc_regionfilename(processId, address, mappedPath, sizeof(mappedPath)) > 0)
           region.mappedPath = mappedPath;

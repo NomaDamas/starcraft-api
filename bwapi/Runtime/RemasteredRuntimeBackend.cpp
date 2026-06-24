@@ -68,60 +68,13 @@ namespace BWAPI::Runtime
         addCapabilityIfMissing(result, capability);
     }
 
-    bool preflightHasCapability(
-      const RuntimeExecutorPreflightResult& preflight,
-      Capability capability)
-    {
-      return std::find(
-        preflight.provenCapabilities.begin(),
-        preflight.provenCapabilities.end(),
-        capability) != preflight.provenCapabilities.end();
-    }
-
     void addBuiltInApiSurface(RuntimeProbeResult& result, const RuntimeContract& contract)
     {
       result.implementedApiSurfaceMethods = contract.requiredApiSurfaceMethods;
     }
 
-    std::filesystem::path bridgeReadyFilePath(const RuntimeEnvironment& environment)
+    void addBuiltInCommandSurface(RuntimeProbeResult& result)
     {
-      return std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
-    }
-
-    bool readyFileContainsLine(const std::filesystem::path& path, const std::string& expected)
-    {
-      std::ifstream input(path);
-      std::string line;
-      while (std::getline(input, line))
-      {
-        if (line == expected)
-          return true;
-      }
-      return false;
-    }
-
-    bool hasValidatedCommandSurfaceProof(
-      const RuntimeEnvironment& environment,
-      const RuntimeExecutorPreflightResult& preflight)
-    {
-      if (preflight.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode)
-        return false;
-      if (environment.executorBridgePath.empty())
-        return false;
-      return readyFileContainsLine(
-        bridgeReadyFilePath(environment),
-        RuntimeExecutorBridgeCommandSurfaceLine);
-    }
-
-    void addValidatedCommandSurface(
-      RuntimeProbeResult& result,
-      const RuntimeEnvironment& environment,
-      const RuntimeExecutorPreflightResult& preflight)
-    {
-      if (!preflightHasCapability(preflight, Capability::IssueCommands)
-          && !hasValidatedCommandSurfaceProof(environment, preflight))
-        return;
-
       const RuntimeCommandSurface surface = makeBWAPICommandSurface();
       result.implementedUnitCommands = surface.unitCommands;
       result.implementedGameActions = surface.gameActions;
@@ -165,6 +118,8 @@ namespace BWAPI::Runtime
     }
     if (!manifestLoaded)
       addBuiltInApiSurface(result, contract);
+    if (!manifestLoaded)
+      addBuiltInCommandSurface(result);
     contract = applyRuntimeExecutorBridgeContractProofs(environment_, contract);
 
     const RuntimeMemoryAccessResult memoryAccess = openProcessMemoryAccess(environment_.processId);
@@ -173,8 +128,6 @@ namespace BWAPI::Runtime
 
     RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment_, contract);
     addValidatedBridgeCapabilities(result, preflight);
-    if (!manifestLoaded)
-      addValidatedCommandSurface(result, environment_, preflight);
 
     result.supported = true;
     result.supported = canClaimProductionSupport(result, contract)

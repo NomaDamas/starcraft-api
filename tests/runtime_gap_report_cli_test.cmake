@@ -51,11 +51,6 @@ foreach(needle
     "diagnosis.game_process_count=0"
     "diagnosis.blocker_count=1"
     "implementation_gap.0.category=backend"
-    "implementation_gap.1.category=command-surface"
-    "implementation_gap.1.id=BWAPI.command-action-entries"
-    "implementation_gap.category.command-surface.count=1"
-    "implementation_gap.category.unit-command.count=44"
-    "implementation_gap.category.game-action.count=28"
     "category=data-address"
     "id=BW::BWDATA::Game"
     "category=executor-preflight"
@@ -63,6 +58,19 @@ foreach(needle
   string(FIND "${output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "gap report output missing '${needle}'\n${output}")
+  endif()
+endforeach()
+
+foreach(forbidden
+    "implementation_gap.category.command-surface.count="
+    "implementation_gap.category.unit-command.count="
+    "implementation_gap.category.game-action.count="
+    "category=command-surface"
+    "category=unit-command"
+    "category=game-action")
+  string(FIND "${output}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "gap report output should not include command surface implementation gap '${forbidden}'\n${output}")
   endif()
 endforeach()
 

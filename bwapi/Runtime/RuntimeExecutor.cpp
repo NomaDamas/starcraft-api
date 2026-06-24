@@ -186,6 +186,15 @@ namespace BWAPI::Runtime
         || readyFileHasDirectRuntimeCommandQueueSink(readyPath);
     }
 
+    bool readyFileHasSharedMemoryClientTransportProof(const std::filesystem::path& readyPath)
+    {
+      return fileContainsLine(readyPath, "proof.attach=passed")
+        && readyFileHasProofBackedBinding(
+          readyPath,
+          "shared-memory-client-transport",
+          BindingKind::Transport);
+    }
+
     std::vector<std::string> splitPipe(const std::string& value)
     {
       std::vector<std::string> parts;
@@ -494,6 +503,14 @@ namespace BWAPI::Runtime
         result.errors.push_back(
           "runtime executor bridge is stale because the selected runtime process is not visible");
         return true;
+      }
+      if (memoryRequired
+          && !result.memoryAccessible
+          && readyFileHasSharedMemoryClientTransportProof(readyPath))
+      {
+        result.memoryAccessible = true;
+        result.memoryAccessReason =
+          "validated runtime adapter bridge reported proof.attach=passed";
       }
       if (memoryRequired && !result.memoryAccessible)
       {

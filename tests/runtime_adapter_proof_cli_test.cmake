@@ -148,7 +148,22 @@ foreach(needle
     "kind"
     "bytes_in_queue_address"
     "buffer_begin"
-    "capacity_bytes")
+    "capacity_bytes"
+    "counter_offset"
+    "prefix_entropy_milli"
+    "prefix_hex"
+    "activity_changed_byte_total"
+    "activity_min_used_bytes"
+    "activity_max_used_bytes"
+    "activity_selector_first_hex"
+    "activity_selector_last_hex"
+    "activity_buffer_first_hex"
+    "activity_buffer_last_hex"
+    "live_write_safe"
+    "live_write_reason"
+    "region_class"
+    "buffer_region_class"
+    "buffer_region_path")
   string(FIND "${command_queue_snapshot_content}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "command queue discovery snapshot missing '${needle}'\n${command_queue_snapshot_content}")
@@ -663,6 +678,75 @@ endforeach()
 
 file(REMOVE_RECURSE "${unit_node_bridge_dir}")
 
+set(compact_unit_node_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-compact-unit-node-bridge")
+file(REMOVE_RECURSE "${compact_unit_node_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${compact_unit_node_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --self-compact-unit-node-fixture
+  RESULT_VARIABLE compact_unit_node_result
+  OUTPUT_VARIABLE compact_unit_node_output
+  ERROR_VARIABLE compact_unit_node_error
+)
+if(NOT compact_unit_node_result EQUAL 0)
+  message(FATAL_ERROR "expected compact SC:R unit-node read-units proof to pass with self fixture\nstdout:\n${compact_unit_node_output}\nstderr:\n${compact_unit_node_error}")
+endif()
+foreach(needle
+    "read_units.unit_node_candidate_address.count=1"
+    "read_units.unit_array=true"
+    "read_units.record_size=40"
+    "read_units.layout=scr-compact-unit-node-object-graph"
+    "read_units.derived_snapshot=true"
+    "read_units.hit_points_resolved=true"
+    "read_units.scan.snapshot.success=true"
+    "proof.read_units=passed")
+  string(FIND "${compact_unit_node_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "compact SC:R unit-node proof output missing '${needle}'\n${compact_unit_node_output}")
+  endif()
+endforeach()
+
+set(compact_unit_node_ready_file "${compact_unit_node_bridge_dir}/ready")
+if(NOT EXISTS "${compact_unit_node_ready_file}")
+  message(FATAL_ERROR "compact SC:R unit-node proof did not write ready file")
+endif()
+file(READ "${compact_unit_node_ready_file}" compact_unit_node_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_units.record_size=40"
+    "proof.read_units.layout=scr-compact-unit-node-object-graph"
+    "proof.read_units.derived_snapshot=true"
+    "proof.read_units.id_source=stable-node-handle|compact-node sprite metadata"
+    "proof.read_units.position_source=unit-node+0x10|8 compact-xy"
+    "proof.read_units.hit_points_source=sprite+0x80 hp-raw"
+    "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv"
+    "proof.read_units=passed")
+  string(FIND "${compact_unit_node_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "compact SC:R unit-node ready file missing '${needle}'\n${compact_unit_node_ready}")
+  endif()
+endforeach()
+
+file(READ "${compact_unit_node_bridge_dir}/unit_diagnostics.snapshot.tsv" compact_unit_node_diagnostics_snapshot)
+foreach(needle
+    "read_units_passed\ttrue"
+    "unit_node_passed\ttrue"
+    "unit_node_record_size\t40"
+    "unit_node_active_records\t")
+  string(FIND "${compact_unit_node_diagnostics_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "compact SC:R unit-node diagnostics snapshot missing '${needle}'\n${compact_unit_node_diagnostics_snapshot}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${compact_unit_node_bridge_dir}")
+
 set(player_projection_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-player-projection-bridge")
 file(REMOVE_RECURSE "${player_projection_bridge_dir}")
 
@@ -1061,6 +1145,43 @@ foreach(needle
 endforeach()
 
 file(REMOVE_RECURSE "${policy_bridge_dir}" "${policy_root}")
+
+set(policy_multi_main_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-multi-main-bridge")
+file(REMOVE_RECURSE "${policy_multi_main_bridge_dir}")
+file(WRITE "${policy_process_snapshot}"
+  "123 1 ${policy_executable} -launch -uid s1\n"
+  "5501 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net\n"
+  "5502 1 /Applications/Battle.net.app/Contents/MacOS/Battle.net\n")
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "STARCRAFT_API_PROCESS_SNAPSHOT=${policy_process_snapshot}"
+    "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+      --self
+      --product starcraft-remastered
+      --version test-build
+      --executable "${policy_executable}"
+      --bridge "${policy_multi_main_bridge_dir}"
+      --prove-battle-net-policy
+  RESULT_VARIABLE policy_multi_main_result
+  OUTPUT_VARIABLE policy_multi_main_output
+  ERROR_VARIABLE policy_multi_main_error
+)
+if(NOT policy_multi_main_result EQUAL 0)
+  message(FATAL_ERROR "expected Battle.net policy proof to pass with one game and multiple Battle.net main processes\nstdout:\n${policy_multi_main_output}\nstderr:\n${policy_multi_main_error}")
+endif()
+foreach(needle
+    "battle_net_policy.ready_for_attach=true"
+    "battle_net_policy.game_process_count=1"
+    "battle_net_policy.battle_net_main_count=2"
+    "battle_net_policy.blocker_count=0"
+    "proof.battle_net_policy=passed")
+  string(FIND "${policy_multi_main_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "Battle.net policy multi-main output missing '${needle}'\n${policy_multi_main_output}")
+  endif()
+endforeach()
+file(REMOVE_RECURSE "${policy_multi_main_bridge_dir}")
 
 set(ai_module_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-ai-module-bridge")
 file(REMOVE_RECURSE "${ai_module_bridge_dir}")

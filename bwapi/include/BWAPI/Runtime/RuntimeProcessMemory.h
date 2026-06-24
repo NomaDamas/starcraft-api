@@ -43,6 +43,8 @@ namespace BWAPI::Runtime
     bool readable = false;
     bool writable = false;
     bool executable = false;
+    int userTag = -1;
+    int shareMode = -1;
     std::string mappedPath;
   };
 

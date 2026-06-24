@@ -24,6 +24,12 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <libproc.h>
+#include <signal.h>
+#include <sys/proc_info.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #else
 #include <signal.h>
 #include <sys/wait.h>
@@ -914,12 +920,93 @@ namespace BWAPI::Runtime
       return processes;
     }
 
+#if defined(__APPLE__)
+    std::string commandLineForDarwinProcess(int processId, const std::string& executablePath)
+    {
+      RuntimeProcessCommandLineResult commandLine = inspectRuntimeProcessCommandLine(processId);
+      if (!commandLine.inspected || commandLine.arguments.empty())
+        return executablePath;
+
+      std::ostringstream command;
+      for (std::size_t index = 0; index < commandLine.arguments.size(); ++index)
+      {
+        if (index > 0)
+          command << ' ';
+        command << commandLine.arguments[index];
+      }
+      return command.str().empty() ? executablePath : command.str();
+    }
+
+    std::vector<RuntimeObservedProcess> collectDarwinObservedProcesses(
+      const RuntimeInstallation& installation)
+    {
+      std::vector<RuntimeObservedProcess> processes;
+      int byteCount = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
+      if (byteCount <= 0)
+        return processes;
+
+      std::vector<pid_t> processIds(static_cast<std::size_t>(byteCount) / sizeof(pid_t) + 1024);
+      byteCount = proc_listpids(
+        PROC_ALL_PIDS,
+        0,
+        processIds.data(),
+        static_cast<int>(processIds.size() * sizeof(pid_t)));
+      if (byteCount <= 0)
+        return processes;
+
+      const std::size_t count = std::min(
+        processIds.size(),
+        static_cast<std::size_t>(byteCount) / sizeof(pid_t));
+      for (std::size_t index = 0; index < count; ++index)
+      {
+        const int processId = static_cast<int>(processIds[index]);
+        if (processId <= 0)
+          continue;
+
+        const std::string executablePath = runtimeProcessExecutablePath(processId);
+        if (executablePath.empty())
+          continue;
+
+        RuntimeObservedProcess process;
+        process.processId = processId;
+        process.parentProcessId = 0;
+        process.command = executablePath;
+        process.category = categorizeProcessCommand(installation, process.command);
+        if (process.category == "battle.net-main"
+            || process.category == "battle.net-support"
+            || process.category.empty())
+        {
+          process.command = commandLineForDarwinProcess(processId, executablePath);
+          process.category = categorizeProcessCommand(installation, process.command);
+        }
+
+        proc_bsdinfo info;
+        std::memset(&info, 0, sizeof(info));
+        const int infoBytes = proc_pidinfo(
+          processId,
+          PROC_PIDTBSDINFO,
+          0,
+          &info,
+          static_cast<int>(sizeof(info)));
+        if (infoBytes == static_cast<int>(sizeof(info)))
+          process.parentProcessId = static_cast<int>(info.pbi_ppid);
+
+        if (isRelevantObservedProcess(process))
+          processes.push_back(process);
+      }
+      return processes;
+    }
+#endif
+
     std::vector<RuntimeObservedProcess> collectPosixObservedProcesses(const RuntimeInstallation& installation)
     {
       const std::string snapshotPath = getenvString("STARCRAFT_API_PROCESS_SNAPSHOT");
       if (!snapshotPath.empty())
         return collectSnapshotObservedProcesses(installation, snapshotPath);
 
+#if defined(__APPLE__)
+      return collectDarwinObservedProcesses(installation);
+#else
       std::vector<RuntimeObservedProcess> processes;
       FILE* pipe = popen("ps -axo pid=,ppid=,command= 2>/dev/null", "r");
       if (pipe == nullptr)
@@ -935,6 +1022,7 @@ namespace BWAPI::Runtime
 
       pclose(pipe);
       return processes;
+#endif
     }
 
     std::vector<int> processIdsForCategory(

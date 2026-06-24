@@ -94,10 +94,106 @@ namespace BWAPI::Runtime
       return startsWith(evidence, "proof.");
     }
 
+    std::string evidenceProofLine(const std::string& evidence)
+    {
+      if (!isProductionEvidence(evidence))
+        return {};
+
+      const std::size_t separator = evidence.find(':');
+      if (separator == std::string::npos)
+        return evidence;
+      return evidence.substr(0, separator);
+    }
+
+    std::string expectedProductionProofForBinding(
+      const std::string& name,
+      BindingKind kind)
+    {
+      switch (kind)
+      {
+      case BindingKind::DataAddress:
+        if (name == "BW::BWDATA::Game")
+          return "proof.read_game_state=passed";
+        if (name == "BW::BWDATA::Players")
+          return "proof.read_player_data=passed";
+        if (name == "BW::BWDATA::UnitNodeTable")
+          return "proof.read_units=passed";
+        if (name == "BW::BWDATA::BulletNodeTable")
+          return "proof.read_bullet_data=passed";
+        if (name == "BW::BWDATA::MapTileArray")
+          return "proof.read_map_data=passed";
+        return {};
+      case BindingKind::FunctionAddress:
+        if (name == "BW::BWFXN_ExecuteGameTriggers")
+          return "proof.dispatch_events=passed";
+        return {};
+      case BindingKind::ImportedFunction:
+        if (name == "Storm::SNetReceiveMessage" || name == "Storm::SNetSendTurn")
+          return "proof.multiplayer_sync=passed";
+        return {};
+      case BindingKind::HookPoint:
+        if (name == "draw-game-layer-hook")
+          return "proof.draw_overlays=passed";
+        return {};
+      case BindingKind::CommandQueue:
+        if (name == "BW::BWDATA::sgdwBytesInCmdQueue" || name == "BW::BWDATA::TurnBuffer")
+          return "proof.issue_commands=passed";
+        return {};
+      case BindingKind::Transport:
+        if (name == "ai-module-loader")
+          return "proof.load_ai_modules=passed";
+        if (name == "shared-memory-client-transport")
+          return "proof.attach=passed";
+        return {};
+      case BindingKind::StructureLayout:
+        return {};
+      }
+      return {};
+    }
+
+    std::string expectedProductionProofForStructure(const std::string& name)
+    {
+      if (name == "BW::BWGame")
+        return "proof.read_game_state=passed";
+      if (name == "BW::CUnit")
+        return "proof.read_units=passed";
+      if (name == "BW::CBullet")
+        return "proof.read_bullet_data=passed";
+      if (name == "BW::PlayerInfo")
+        return "proof.read_player_data=passed";
+      if (name == "BW::ReplayHeader")
+        return "proof.replay_analysis=passed";
+      return {};
+    }
+
+    std::string expectedProductionProofForField(
+      const std::string& structureName,
+      const std::string& fieldName)
+    {
+      if (structureName == "BW::BWGame")
+      {
+        if (fieldName == "players" || fieldName == "alliance")
+          return "proof.read_player_data=passed";
+        if (fieldName == "elapsedFrames")
+          return "proof.read_game_state=passed";
+        return {};
+      }
+      if (structureName == "BW::CUnit")
+        return "proof.read_units=passed";
+      if (structureName == "BW::CBullet")
+        return "proof.read_bullet_data=passed";
+      if (structureName == "BW::PlayerInfo")
+        return "proof.read_player_data=passed";
+      if (structureName == "BW::ReplayHeader")
+        return "proof.replay_analysis=passed";
+      return {};
+    }
+
     void addProductionEvidenceError(
       std::vector<std::string>& errors,
       const std::string& subject,
-      const std::string& evidence)
+      const std::string& evidence,
+      const std::string& expectedProof)
     {
       if (evidence.empty())
       {
@@ -110,7 +206,22 @@ namespace BWAPI::Runtime
         return;
       }
       if (!isProductionEvidence(evidence))
+      {
         errors.push_back(subject + " evidence is not a production proof: " + evidence);
+        return;
+      }
+
+      const std::string proofLine = evidenceProofLine(evidence);
+      if (expectedProof.empty())
+      {
+        errors.push_back(subject + " has no accepted production proof mapping: " + proofLine);
+        return;
+      }
+      if (proofLine != expectedProof)
+      {
+        errors.push_back(
+          subject + " uses wrong production proof: " + proofLine + "; expected " + expectedProof);
+      }
     }
   }
 
@@ -406,7 +517,8 @@ namespace BWAPI::Runtime
         addProductionEvidenceError(
           errors,
           "resolved binding " + binding.name,
-          binding.evidence);
+          binding.evidence,
+          expectedProductionProofForBinding(binding.name, binding.kind));
       }
     }
 
@@ -417,7 +529,8 @@ namespace BWAPI::Runtime
         addProductionEvidenceError(
           errors,
           "resolved structure layout " + structure.name,
-          structure.evidence);
+          structure.evidence,
+          expectedProductionProofForStructure(structure.name));
       }
       for (const StructureField& field : structure.fields)
       {
@@ -426,7 +539,8 @@ namespace BWAPI::Runtime
           addProductionEvidenceError(
             errors,
             "resolved structure field " + structure.name + "." + field.name,
-            field.evidence);
+            field.evidence,
+            expectedProductionProofForField(structure.name, field.name));
         }
       }
     }

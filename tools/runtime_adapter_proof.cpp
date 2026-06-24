@@ -13715,7 +13715,12 @@ int main(int argc, char** argv)
   bool remasteredUnitNodeSnapshotAttempted = false;
   std::string remasteredUnitNodeSnapshotFailure;
   if (self && selfUnitFixture)
+  {
     unitFixture = makeSelfUnitFixture();
+    if (unitCandidateAddresses.empty())
+      unitCandidateAddresses.push_back(
+        reinterpret_cast<std::uintptr_t>(unitFixture.records.front().data()));
+  }
   if (self && selfUnitNodeFixture)
   {
     initializeSelfUnitNodeFixture(unitNodeFixture);

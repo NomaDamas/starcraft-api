@@ -209,7 +209,11 @@ resident.adapter.process_id=<selected-runtime-pid>
 resident.adapter.heartbeat=<monotonic-counter>
 ```
 
-The resident bridge validator rejects duplicate resident keys, unsupported ABI major versions, stale or malformed heartbeats, wrong process ids, wrong product/version, and executable mismatches. The resident queue ABI uses a fixed header with `magic=SCAQ`, `abiMajor=1`, `headerBytes`, `recordBytes`, `kind`, `capacityRecords`, `writeSequence`, `readSequence`, and `heartbeat`. Queue headers are rejected when the kind does not match the expected command/state/event/overlay/proof queue, the record or capacity size is zero, the read sequence is ahead of the write sequence, the queued distance exceeds capacity, or the heartbeat is stale.
+The resident bridge validator rejects duplicate resident and runtime identity keys, unsupported ABI major versions, stale or malformed heartbeats, stale ready-file timestamps, wrong process ids, wrong product/version, and executable mismatches. The resident queue ABI uses a fixed header with `magic=SCAQ`, `abiMajor=1`, `headerBytes`, `recordBytes`, `kind`, `capacityRecords`, `writeSequence`, `readSequence`, and `heartbeat`. Queue headers are rejected when the kind does not match the expected command/state/event/overlay/proof queue, the record or capacity size is zero, the read sequence is ahead of the write sequence, the queued distance exceeds capacity, or the heartbeat is stale. Queue records also carry a fixed record header with `headerBytes`, `kind`, `payloadBytes`, and `sequence`; malformed record kind, size, payload bounds, and sequence windows are rejected before any payload-specific parser can run.
+
+`starcraft-api-resident.dylib` is the macOS resident module target for this ABI. At this stage it only exports the ABI entry points and loader planning validates the selected platform/product/process/executable/bridge/adapter path. Actual in-process loading and live behavior proof are later issues; the target existing is not itself attach, command, overlay, or sync proof.
+
+Ready-file contract evidence also remains fail-closed. `fixture:`, `unit-test:`, `mock:`, `self-fixture:`, `diagnostic.*`, `static-anchor:`, and `scr-platform-anchor:` evidence is not accepted as production binding evidence. `proof.*` evidence must also have the matching proof line in the same ready file. This keeps mock harnesses and diagnostic anchors from resolving production contract bindings.
 
 Resident metadata is not behavior evidence. It must not emit or imply these production proof lines:
 

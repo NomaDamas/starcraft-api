@@ -37,8 +37,8 @@ namespace
   {
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
   }
 
   void writeLiveContractProofs(std::ofstream& ready)
@@ -54,6 +54,10 @@ namespace
     ready << "contract.binding.draw-game-layer-hook=hook-point|proof.draw_overlays=passed:draw-game-layer-hook\n";
     ready << "contract.binding.ai-module-loader=transport|proof.load_ai_modules=passed:ai-module-loader\n";
     ready << "contract.binding.shared-memory-client-transport=transport|proof.attach=passed:shared-memory-client\n";
+    ready << "proof.read_map_data=passed\n";
+    ready << "proof.read_player_data=passed\n";
+    ready << "proof.read_bullet_data=passed\n";
+    ready << "proof.read_region_data=passed\n";
   }
 
   void writeBootstrapReadyFile(

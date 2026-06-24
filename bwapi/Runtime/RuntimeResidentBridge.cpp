@@ -1,11 +1,17 @@
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
+#include <chrono>
+#include <climits>
 #include <fstream>
 #include <sstream>
 #include <utility>
 
 namespace BWAPI::Runtime
 {
+  static_assert(CHAR_BIT == 8, "resident adapter ABI requires 8-bit bytes");
+  static_assert(sizeof(RuntimeResidentQueueHeader) == 40, "resident queue header ABI size changed");
+  static_assert(sizeof(RuntimeResidentRecordHeader) == 16, "resident record header ABI size changed");
+
   namespace
   {
     std::string readyValue(const std::filesystem::path& path, const std::string& key)
@@ -87,6 +93,30 @@ namespace BWAPI::Runtime
     {
       errors.push_back(std::move(error));
     }
+
+    void validateReadyFileFreshness(
+      const std::filesystem::path& readyPath,
+      RuntimeResidentBridgeValidationOptions options,
+      std::vector<std::string>& errors)
+    {
+      if (options.maximumReadyFileAgeMs == 0)
+        return;
+
+      std::error_code error;
+      const std::filesystem::file_time_type modified =
+        std::filesystem::last_write_time(readyPath, error);
+      if (error)
+      {
+        addError(errors, "resident adapter ready file timestamp is unavailable");
+        return;
+      }
+
+      const auto now = std::filesystem::file_time_type::clock::now();
+      const auto maximumAge =
+        std::chrono::milliseconds(static_cast<long long>(options.maximumReadyFileAgeMs));
+      if (modified + maximumAge < now)
+        addError(errors, "resident adapter heartbeat file is stale");
+    }
   }
 
   const char* toString(RuntimeResidentQueueKind kind)
@@ -136,15 +166,21 @@ namespace BWAPI::Runtime
       result.warnings.push_back("resident adapter lines are not present");
       return result;
     }
+    result.present = true;
     for (const std::string& key : {
            "resident.adapter",
            "resident.adapter.abi",
            "resident.adapter.heartbeat",
-           "resident.adapter.process_id" })
+           "resident.adapter.process_id",
+           "product",
+           "version",
+           "process_id",
+           "executable" })
     {
       if (readyKeyCount(readyPath, key) > 1)
         addError(result.errors, "resident adapter ready file has duplicate key: " + key);
     }
+    validateReadyFileFreshness(readyPath, options, result.errors);
     result.active = state == "active";
     if (!result.active)
       addError(result.errors, "resident adapter state is not active");
@@ -226,11 +262,41 @@ namespace BWAPI::Runtime
     if (header.capacityRecords == 0)
       addError(result.errors, "resident queue capacity is zero");
     if (header.readSequence > header.writeSequence)
+    {
       addError(result.errors, "resident queue read sequence is ahead of write sequence");
-    if (header.writeSequence - header.readSequence > header.capacityRecords)
+    }
+    else if (header.writeSequence - header.readSequence > header.capacityRecords)
+    {
       addError(result.errors, "resident queue sequence distance exceeds capacity");
+    }
     if (header.heartbeat < options.minimumHeartbeat)
       addError(result.errors, "resident queue heartbeat is stale");
+
+    result.valid = result.errors.empty();
+    return result;
+  }
+
+  RuntimeResidentQueueValidationResult validateRuntimeResidentRecordHeader(
+    const RuntimeResidentQueueHeader& queue,
+    const RuntimeResidentRecordHeader& record,
+    RuntimeResidentQueueKind expectedKind)
+  {
+    RuntimeResidentQueueValidationResult result;
+
+    if (record.headerBytes < sizeof(RuntimeResidentRecordHeader))
+      addError(result.errors, "resident queue record header is truncated");
+    if (record.kind != static_cast<std::uint16_t>(expectedKind))
+      addError(result.errors, "resident queue record kind does not match expected queue");
+    if (queue.recordBytes < sizeof(RuntimeResidentRecordHeader))
+    {
+      addError(result.errors, "resident queue record size cannot contain a record header");
+    }
+    else if (record.payloadBytes > queue.recordBytes - sizeof(RuntimeResidentRecordHeader))
+    {
+      addError(result.errors, "resident queue record payload exceeds record capacity");
+    }
+    if (record.sequence < queue.readSequence || record.sequence >= queue.writeSequence)
+      addError(result.errors, "resident queue record sequence is outside the readable window");
 
     result.valid = result.errors.empty();
     return result;

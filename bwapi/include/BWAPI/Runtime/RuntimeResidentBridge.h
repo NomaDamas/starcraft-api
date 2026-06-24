@@ -35,14 +35,24 @@ namespace BWAPI::Runtime
     std::uint64_t heartbeat = 0;
   };
 
+  struct RuntimeResidentRecordHeader
+  {
+    std::uint16_t headerBytes = sizeof(RuntimeResidentRecordHeader);
+    std::uint16_t kind = static_cast<std::uint16_t>(RuntimeResidentQueueKind::Command);
+    std::uint32_t payloadBytes = 0;
+    std::uint64_t sequence = 0;
+  };
+
   struct RuntimeResidentBridgeValidationOptions
   {
     std::uint64_t minimumHeartbeat = 1;
+    std::uint64_t maximumReadyFileAgeMs = 30000;
   };
 
   struct RuntimeResidentBridgeValidationResult
   {
     bool valid = false;
+    bool present = false;
     bool active = false;
     std::string abi;
     std::uint64_t heartbeat = 0;
@@ -78,4 +88,9 @@ namespace BWAPI::Runtime
     const RuntimeResidentQueueHeader& header,
     RuntimeResidentQueueKind expectedKind,
     RuntimeResidentBridgeValidationOptions options = {});
+
+  RuntimeResidentQueueValidationResult validateRuntimeResidentRecordHeader(
+    const RuntimeResidentQueueHeader& queue,
+    const RuntimeResidentRecordHeader& record,
+    RuntimeResidentQueueKind expectedKind);
 }

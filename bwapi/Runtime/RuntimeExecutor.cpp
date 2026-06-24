@@ -70,6 +70,20 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    std::size_t readyKeyCount(const std::filesystem::path& path, const std::string& key)
+    {
+      std::ifstream input(path);
+      const std::string prefix = key + '=';
+      std::size_t count = 0;
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line.rfind(prefix, 0) == 0)
+          ++count;
+      }
+      return count;
+    }
+
     std::string readReadyValue(const std::filesystem::path& path, const std::string& key)
     {
       std::ifstream input(path);
@@ -81,6 +95,49 @@ namespace BWAPI::Runtime
           return line.substr(prefix.size());
       }
       return {};
+    }
+
+    bool startsWith(const std::string& value, const char* prefix)
+    {
+      return value.rfind(prefix, 0) == 0;
+    }
+
+    bool productionEvidenceAllowed(const std::string& evidence)
+    {
+      if (evidence.empty())
+        return false;
+      for (const char* prefix : {
+             "fixture:",
+             "unit-test:",
+             "mock:",
+             "self-fixture:",
+             "diagnostic.",
+             "static-anchor:",
+             "scr-platform-anchor:" })
+      {
+        if (startsWith(evidence, prefix))
+          return false;
+      }
+      return startsWith(evidence, "proof.") || startsWith(evidence, "live-proof:");
+    }
+
+    std::string evidenceProofLine(const std::string& evidence)
+    {
+      if (!startsWith(evidence, "proof."))
+        return {};
+
+      const std::size_t separator = evidence.find(':');
+      if (separator == std::string::npos)
+        return evidence;
+      return evidence.substr(0, separator);
+    }
+
+    bool readyFileContainsEvidenceProof(
+      const std::filesystem::path& readyPath,
+      const std::string& evidence)
+    {
+      const std::string proofLine = evidenceProofLine(evidence);
+      return proofLine.empty() || fileContainsLine(readyPath, proofLine);
     }
 
     std::string contractBindingReadyKey(const std::string& name)
@@ -99,7 +156,8 @@ namespace BWAPI::Runtime
         return false;
 
       const std::string evidence = value.substr(prefix.size());
-      return !evidence.empty() && evidence.rfind("fixture:", 0) != 0;
+      return productionEvidenceAllowed(evidence)
+        && readyFileContainsEvidenceProof(readyPath, evidence);
     }
 
     bool parseAddressValue(const std::string& value, std::uintptr_t& parsed)
@@ -130,7 +188,8 @@ namespace BWAPI::Runtime
         return false;
 
       const std::string evidence = value.substr(prefix.size());
-      if (evidence.empty() || evidence.rfind("fixture:", 0) == 0)
+      if (!productionEvidenceAllowed(evidence)
+          || !readyFileContainsEvidenceProof(readyPath, evidence))
         return false;
 
       const std::size_t separator = evidence.rfind(':');
@@ -271,10 +330,32 @@ namespace BWAPI::Runtime
       return {};
     }
 
-    void applyBindingProof(RuntimeContract& contract, const std::string& name, const std::string& value)
+    bool bridgeReadyFileHasDuplicateIdentityKeys(
+      const std::filesystem::path& readyPath,
+      std::string& duplicateKey)
+    {
+      for (const char* key : { "protocol", "product", "version", "mode", "process_id", "executable" })
+      {
+        if (readyKeyCount(readyPath, key) > 1)
+        {
+          duplicateKey = key;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    void applyBindingProof(
+      RuntimeContract& contract,
+      const std::filesystem::path& readyPath,
+      const std::string& name,
+      const std::string& value)
     {
       const std::vector<std::string> parts = splitPipe(value);
       if (parts.size() != 2 || parts[1].empty())
+        return;
+      if (!productionEvidenceAllowed(parts[1])
+          || !readyFileContainsEvidenceProof(readyPath, parts[1]))
         return;
 
       BindingKind kind = BindingKind::DataAddress;
@@ -477,6 +558,13 @@ namespace BWAPI::Runtime
         result.errors.push_back("runtime executor bridge ready file has an unsupported protocol");
         return true;
       }
+      std::string duplicateKey;
+      if (bridgeReadyFileHasDuplicateIdentityKeys(readyPath, duplicateKey))
+      {
+        result.errors.push_back(
+          "runtime executor bridge ready file has duplicate identity key: " + duplicateKey);
+        return true;
+      }
       if (!fileContainsLine(readyPath, std::string("product=") + toString(environment.product)))
       {
         result.errors.push_back("runtime executor bridge ready file product does not match the selected runtime");
@@ -498,7 +586,7 @@ namespace BWAPI::Runtime
 
       RuntimeResidentBridgeValidationResult resident =
         validateRuntimeResidentBridgeReadyFile(environment, readyPath);
-      if (resident.active && !resident.valid)
+      if (resident.present && !resident.valid)
       {
         for (const std::string& residentError : resident.errors)
           result.errors.push_back(residentError);
@@ -817,7 +905,10 @@ namespace BWAPI::Runtime
 
     std::error_code error;
     const std::filesystem::path readyPath = readyFilePath(environment);
-    if (!std::filesystem::exists(readyPath, error) || error)
+      if (!std::filesystem::exists(readyPath, error) || error)
+        return contract;
+    std::string duplicateKey;
+    if (bridgeReadyFileHasDuplicateIdentityKeys(readyPath, duplicateKey))
       return contract;
     if (!bridgeReadyFileMatchesRuntime(environment, readyPath))
       return contract;
@@ -839,7 +930,7 @@ namespace BWAPI::Runtime
       constexpr const char* fieldPrefix = "contract.field.";
 
       if (key.rfind(bindingPrefix, 0) == 0)
-        applyBindingProof(contract, key.substr(std::char_traits<char>::length(bindingPrefix)), value);
+        applyBindingProof(contract, readyPath, key.substr(std::char_traits<char>::length(bindingPrefix)), value);
       else if (key.rfind(structurePrefix, 0) == 0)
         applyStructureProof(contract, key.substr(std::char_traits<char>::length(structurePrefix)), value);
       else if (key.rfind(fieldPrefix, 0) == 0)
@@ -1023,6 +1114,13 @@ namespace BWAPI::Runtime
       result.errors.push_back(result.reason);
       return result;
     }
+    std::string duplicateKey;
+    if (bridgeReadyFileHasDuplicateIdentityKeys(readyPath, duplicateKey))
+    {
+      result.reason = "runtime executor bridge ready file has duplicate identity key: " + duplicateKey;
+      result.errors.push_back(result.reason);
+      return result;
+    }
     if (!fileContainsLine(readyPath, std::string("product=") + toString(environment.product)))
     {
       result.reason = "runtime executor bridge ready file product does not match the selected runtime";
@@ -1041,6 +1139,17 @@ namespace BWAPI::Runtime
     if (!identityError.empty())
     {
       rejectSubmit(result, identityError);
+      return result;
+    }
+
+    RuntimeResidentBridgeValidationResult resident =
+      validateRuntimeResidentBridgeReadyFile(environment, readyPath);
+    if (resident.present && !resident.valid)
+    {
+      result.reason = resident.errors.empty()
+        ? "runtime resident adapter metadata is invalid"
+        : resident.errors.front();
+      result.errors.insert(result.errors.end(), resident.errors.begin(), resident.errors.end());
       return result;
     }
 

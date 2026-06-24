@@ -51,8 +51,8 @@ namespace
   {
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
   }
 
   void writeBootstrapReadyFile(
@@ -116,9 +116,9 @@ namespace
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test-direct:"
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:"
           << bytesInQueueAddress << '\n';
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test-direct:"
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:"
           << turnBufferAddress << '\n';
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';

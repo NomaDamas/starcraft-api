@@ -81,6 +81,7 @@ add_library(starcraft_runtime STATIC
   "${BWAPI_ROOT}/Runtime/RuntimeProcessMemory.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeReadiness.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeResidentBridge.cpp"
+  "${BWAPI_ROOT}/Runtime/RuntimeResidentLoader.cpp"
   "${BWAPI_ROOT}/Runtime/UnsupportedRuntimeBackend.cpp"
 )
 
@@ -99,6 +100,21 @@ target_link_libraries(starcraft_api
 add_library(StarCraftAPI::public ALIAS bwapi_public)
 add_library(StarCraftAPI::runtime ALIAS starcraft_runtime)
 add_library(StarCraftAPI::api ALIAS starcraft_api)
+
+if(APPLE)
+  add_library(starcraft-api-resident MODULE
+    "${BWAPI_ROOT}/Runtime/RuntimeResidentAdapterEntry.cpp"
+  )
+  target_link_libraries(starcraft-api-resident
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+  set_target_properties(starcraft-api-resident PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "starcraft-api-resident"
+    SUFFIX ".dylib"
+  )
+endif()
 
 if(STARCRAFT_API_BUILD_TOOLS)
   add_executable(starcraft-runtime-probe
@@ -203,6 +219,10 @@ if(STARCRAFT_API_BUILD_TOOLS)
         /usr/bin/codesign --force --sign - --entitlements
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
         $<TARGET_FILE:starcraft-runtime-input>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-api-resident>
       DEPENDS
         starcraft-runtime-memory-probe
         starcraft-runtime-adapter-proof
@@ -212,6 +232,7 @@ if(STARCRAFT_API_BUILD_TOOLS)
         starcraft-runtime-launch
         starcraft-runtime-binary-anchors
         starcraft-runtime-input
+        starcraft-api-resident
       COMMENT "Ad-hoc signing runtime debug tools with macOS debugger entitlements"
       VERBATIM
     )

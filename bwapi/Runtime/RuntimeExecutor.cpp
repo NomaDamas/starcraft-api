@@ -136,10 +136,20 @@ namespace BWAPI::Runtime
 
     bool readyFileContainsEvidenceProof(
       const std::filesystem::path& readyPath,
-      const std::string& evidence)
+      const std::string& evidence,
+      const RuntimeResidentStateProofValidationResult* residentStateProof = nullptr)
     {
       const std::string proofLine = evidenceProofLine(evidence);
-      return !proofLine.empty() && fileContainsLine(readyPath, proofLine);
+      if (proofLine.empty() || !fileContainsLine(readyPath, proofLine))
+        return false;
+      if (residentStateProof != nullptr)
+      {
+        if (proofLine == "proof.read_game_state=passed")
+          return residentStateProof->readGameStateValid;
+        if (proofLine == "proof.active_match_state=passed")
+          return residentStateProof->activeMatchValid;
+      }
+      return true;
     }
 
     bool proofLineMatches(const std::string& evidence, const char* expectedProofLine)
@@ -546,7 +556,8 @@ namespace BWAPI::Runtime
       RuntimeContract& contract,
       const std::filesystem::path& readyPath,
       const std::string& name,
-      const std::string& value)
+      const std::string& value,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
       const std::vector<std::string> parts = splitPipe(value);
       if (parts.size() != 2 || parts[1].empty())
@@ -556,7 +567,7 @@ namespace BWAPI::Runtime
       if (!parseBindingKind(parts[0], kind))
         return;
       if (!productionEvidenceAllowedForBinding(name, kind, parts[1])
-          || !readyFileContainsEvidenceProof(readyPath, parts[1]))
+          || !readyFileContainsEvidenceProof(readyPath, parts[1], residentStateProof))
         return;
 
       auto it = std::find_if(
@@ -577,13 +588,14 @@ namespace BWAPI::Runtime
       RuntimeContract& contract,
       const std::filesystem::path& readyPath,
       const std::string& name,
-      const std::string& value)
+      const std::string& value,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
       const std::vector<std::string> parts = splitPipe(value);
       if (parts.size() != 2 || parts[1].empty())
         return;
       if (!productionEvidenceAllowedForStructure(name, parts[1])
-          || !readyFileContainsEvidenceProof(readyPath, parts[1]))
+          || !readyFileContainsEvidenceProof(readyPath, parts[1], residentStateProof))
         return;
 
       std::size_t size = 0;
@@ -608,7 +620,8 @@ namespace BWAPI::Runtime
       RuntimeContract& contract,
       const std::filesystem::path& readyPath,
       const std::string& name,
-      const std::string& value)
+      const std::string& value,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
       const std::size_t separator = name.rfind('.');
       if (separator == std::string::npos || separator == 0 || separator + 1 >= name.size())
@@ -620,7 +633,7 @@ namespace BWAPI::Runtime
       if (parts.size() != 3 || parts[2].empty())
         return;
       if (!productionEvidenceAllowedForField(structureName, fieldName, parts[2])
-          || !readyFileContainsEvidenceProof(readyPath, parts[2]))
+          || !readyFileContainsEvidenceProof(readyPath, parts[2], residentStateProof))
         return;
 
       std::size_t offset = 0;
@@ -657,16 +670,52 @@ namespace BWAPI::Runtime
     bool validateProductionBridgeProof(
       const std::filesystem::path& readyPath,
       RuntimeExecutorPreflightResult& result,
+      const RuntimeResidentStateProofValidationResult& residentStateProof,
       bool requireBehaviorProofs = true)
     {
       result.executorBridgeMode = readReadyValue(readyPath, "mode");
       result.missingBehaviorProofs.clear();
       result.provenCapabilities.clear();
+      bool residentStateProofErrorsReported = false;
       for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       {
         if (!fileContainsLine(readyPath, proof.readyFileLine))
         {
           result.missingBehaviorProofs.push_back(proof.readyFileLine);
+          continue;
+        }
+
+        if (std::string(proof.id) == "read-game-state"
+            && !residentStateProof.readGameStateValid)
+        {
+          result.missingBehaviorProofs.push_back(proof.readyFileLine);
+          result.errors.push_back(
+            "runtime executor bridge read-game-state proof is missing valid resident frame/tick samples");
+          if (!residentStateProofErrorsReported)
+          {
+            result.errors.insert(
+              result.errors.end(),
+              residentStateProof.errors.begin(),
+              residentStateProof.errors.end());
+            residentStateProofErrorsReported = true;
+          }
+          continue;
+        }
+
+        if (std::string(proof.id) == "active-match-state"
+            && !residentStateProof.activeMatchValid)
+        {
+          result.missingBehaviorProofs.push_back(proof.readyFileLine);
+          result.errors.push_back(
+            "runtime executor bridge active-match-state proof is missing valid resident match activity");
+          if (!residentStateProofErrorsReported)
+          {
+            result.errors.insert(
+              result.errors.end(),
+              residentStateProof.errors.begin(),
+              residentStateProof.errors.end());
+            residentStateProofErrorsReported = true;
+          }
           continue;
         }
 
@@ -807,8 +856,10 @@ namespace BWAPI::Runtime
       }
       if (!validateResidentHeartbeatProgression(readyPath, resident, result.errors))
         return true;
+      RuntimeResidentStateProofValidationResult residentStateProof =
+        validateRuntimeResidentStateProofs(environment, readyPath, resident);
 
-      if (!validateProductionBridgeProof(readyPath, result, false))
+      if (!validateProductionBridgeProof(readyPath, result, residentStateProof, false))
         return true;
 
       if (!result.processIdentified)
@@ -1120,8 +1171,8 @@ namespace BWAPI::Runtime
 
     std::error_code error;
     const std::filesystem::path readyPath = readyFilePath(environment);
-      if (!std::filesystem::exists(readyPath, error) || error)
-        return contract;
+    if (!std::filesystem::exists(readyPath, error) || error)
+      return contract;
     std::string duplicateKey;
     if (bridgeReadyFileHasDuplicateIdentityKeys(readyPath, duplicateKey))
       return contract;
@@ -1129,6 +1180,11 @@ namespace BWAPI::Runtime
       return contract;
     if (!validateBridgeRuntimeIdentity(environment, readyPath).empty())
       return contract;
+
+    RuntimeResidentBridgeValidationResult resident =
+      validateRuntimeResidentBridgeReadyFile(environment, readyPath);
+    RuntimeResidentStateProofValidationResult residentStateProof =
+      validateRuntimeResidentStateProofs(environment, readyPath, resident);
 
     std::ifstream input(readyPath);
     std::string line;
@@ -1145,19 +1201,26 @@ namespace BWAPI::Runtime
       constexpr const char* fieldPrefix = "contract.field.";
 
       if (key.rfind(bindingPrefix, 0) == 0)
-        applyBindingProof(contract, readyPath, key.substr(std::char_traits<char>::length(bindingPrefix)), value);
+        applyBindingProof(
+          contract,
+          readyPath,
+          key.substr(std::char_traits<char>::length(bindingPrefix)),
+          value,
+          &residentStateProof);
       else if (key.rfind(structurePrefix, 0) == 0)
         applyStructureProof(
           contract,
           readyPath,
           key.substr(std::char_traits<char>::length(structurePrefix)),
-          value);
+          value,
+          &residentStateProof);
       else if (key.rfind(fieldPrefix, 0) == 0)
         applyFieldProof(
           contract,
           readyPath,
           key.substr(std::char_traits<char>::length(fieldPrefix)),
-          value);
+          value,
+          &residentStateProof);
     }
 
     return contract;

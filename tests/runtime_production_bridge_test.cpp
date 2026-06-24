@@ -3,17 +3,54 @@
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 #include <BWAPI/Runtime/RuntimeReadiness.h>
+#include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
+#include <array>
+#include <atomic>
 #include <cassert>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 using namespace BWAPI::Runtime;
 
 namespace
 {
+  std::atomic<std::uint32_t> residentFrameCounter{ 802 };
+  std::array<unsigned char, 64> activeUnitEvidence = {
+    0x42, 0x57, 0x41, 0x50, 0x49, 0x2d, 0x55, 0x4e
+  };
+
+  struct ResidentFrameCounterTicker
+  {
+    std::atomic<bool> running{ true };
+    std::thread thread;
+
+    ResidentFrameCounterTicker()
+      : thread([this]()
+        {
+          while (running.load(std::memory_order_relaxed))
+          {
+            residentFrameCounter.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+        })
+    {
+    }
+
+    ~ResidentFrameCounterTicker()
+    {
+      running.store(false, std::memory_order_relaxed);
+      if (thread.joinable())
+        thread.join();
+    }
+  };
+
   std::string fixturePath(const std::string& name)
   {
     return std::string(STARCRAFT_API_TEST_FIXTURE_DIR) + "/" + name;
@@ -39,6 +76,52 @@ namespace
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
+  }
+
+  std::uint64_t nextResidentProofHeartbeat()
+  {
+    static std::uint64_t heartbeat = 30;
+    return heartbeat++;
+  }
+
+  void writeResidentStateProofs(std::ofstream& ready, int processId, const std::string& executable)
+  {
+    RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
+    environment.product = Product::StarCraftRemastered;
+    environment.version = "test-build";
+    environment.processId = processId;
+    environment.executablePath = executable;
+    const std::uint64_t heartbeat = nextResidentProofHeartbeat();
+    const std::vector<RuntimeResidentGameStateSample> samples = {
+      { 800, 40000 },
+      { 801, 40016 },
+      { 802, 40032 }
+    };
+    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(environment, heartbeat))
+      ready << line << '\n';
+    for (const std::string& line : makeRuntimeResidentReadGameStateProofReadyLines(
+           environment,
+           heartbeat,
+           samples))
+      ready << line << '\n';
+    ready << "proof.read_game_state.address="
+          << reinterpret_cast<std::uintptr_t>(&residentFrameCounter) << '\n';
+    for (const std::string& line : makeRuntimeResidentActiveMatchProofReadyLines(
+           environment,
+           heartbeat,
+           6,
+           "match"))
+      ready << line << '\n';
+    ready << "proof.read_units=passed\n";
+    ready << "proof.read_units.address="
+          << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
+    ready << "proof.read_units.record_size=64\n";
+    ready << "proof.read_units.active_records=6\n";
+    ready << "proof.active_match_state.evidence=active-unit-node-snapshot\n";
+    ready << "proof.active_match_state.active_records=6\n";
+    ready << "proof.active_match_state.unit_node_address="
+          << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
+    ready << "proof.active_match_state.unit_node_record_size=64\n";
   }
 
   void writeLiveContractProofs(std::ofstream& ready, bool includeRegionDataProof = true)
@@ -112,6 +195,7 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
+    writeResidentStateProofs(ready, processId, executable);
     if (includeLiveContractProofs)
       writeLiveContractProofs(ready, omittedBehaviorProof != "read-region-data");
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
@@ -133,6 +217,7 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
+    writeResidentStateProofs(ready, processId, executable);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
     {
       if (std::string(proof.id) != "multiplayer-sync")
@@ -144,6 +229,7 @@ namespace
 int main(int argc, char** argv)
 {
   assert(argc > 0);
+  ResidentFrameCounterTicker ticker;
   const std::string selfExecutable = std::filesystem::absolute(argv[0]).lexically_normal().string();
 
   RuntimeManifestLoadResult manifest = loadRuntimeManifestFile(fixturePath("remastered-complete.manifest"));

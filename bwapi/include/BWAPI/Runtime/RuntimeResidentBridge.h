@@ -67,16 +67,50 @@ namespace BWAPI::Runtime
     std::vector<std::string> errors;
   };
 
+  struct RuntimeResidentGameStateSample
+  {
+    std::uint64_t frame = 0;
+    std::uint64_t tick = 0;
+  };
+
+  struct RuntimeResidentStateProofValidationResult
+  {
+    bool readGameStateProofPresent = false;
+    bool activeMatchProofPresent = false;
+    bool readGameStateValid = false;
+    bool activeMatchValid = false;
+    std::vector<RuntimeResidentGameStateSample> samples;
+    std::uint64_t activeUnitCount = 0;
+    std::string activeMatchMode;
+    std::vector<std::string> errors;
+  };
+
   const char* toString(RuntimeResidentQueueKind kind);
 
   std::vector<std::string> makeRuntimeResidentAdapterReadyLines(
     const RuntimeEnvironment& environment,
     std::uint64_t heartbeat);
 
+  std::vector<std::string> makeRuntimeResidentReadGameStateProofReadyLines(
+    const RuntimeEnvironment& environment,
+    std::uint64_t heartbeat,
+    const std::vector<RuntimeResidentGameStateSample>& samples);
+
+  std::vector<std::string> makeRuntimeResidentActiveMatchProofReadyLines(
+    const RuntimeEnvironment& environment,
+    std::uint64_t heartbeat,
+    std::uint64_t activeUnitCount,
+    const std::string& mode);
+
   RuntimeResidentBridgeValidationResult validateRuntimeResidentBridgeReadyFile(
     const RuntimeEnvironment& environment,
     const std::filesystem::path& readyPath,
     RuntimeResidentBridgeValidationOptions options = {});
+
+  RuntimeResidentStateProofValidationResult validateRuntimeResidentStateProofs(
+    const RuntimeEnvironment& environment,
+    const std::filesystem::path& readyPath,
+    const RuntimeResidentBridgeValidationResult& resident);
 
   RuntimeResidentQueueHeader makeRuntimeResidentQueueHeader(
     RuntimeResidentQueueKind kind,

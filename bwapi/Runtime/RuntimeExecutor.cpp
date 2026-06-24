@@ -6,6 +6,7 @@
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -113,12 +114,13 @@ namespace BWAPI::Runtime
              "self-fixture:",
              "diagnostic.",
              "static-anchor:",
-             "scr-platform-anchor:" })
+             "scr-platform-anchor:",
+             "static-layout:" })
       {
         if (startsWith(evidence, prefix))
           return false;
       }
-      return startsWith(evidence, "proof.") || startsWith(evidence, "live-proof:");
+      return startsWith(evidence, "proof.");
     }
 
     std::string evidenceProofLine(const std::string& evidence)
@@ -137,7 +139,103 @@ namespace BWAPI::Runtime
       const std::string& evidence)
     {
       const std::string proofLine = evidenceProofLine(evidence);
-      return proofLine.empty() || fileContainsLine(readyPath, proofLine);
+      return !proofLine.empty() && fileContainsLine(readyPath, proofLine);
+    }
+
+    bool proofLineMatches(const std::string& evidence, const char* expectedProofLine)
+    {
+      return evidenceProofLine(evidence) == expectedProofLine;
+    }
+
+    bool productionEvidenceAllowedForBinding(
+      const std::string& name,
+      BindingKind kind,
+      const std::string& evidence)
+    {
+      if (!productionEvidenceAllowed(evidence))
+        return false;
+
+      switch (kind)
+      {
+      case BindingKind::DataAddress:
+        if (name == "BW::BWDATA::Game")
+          return proofLineMatches(evidence, "proof.read_game_state=passed");
+        if (name == "BW::BWDATA::Players")
+          return proofLineMatches(evidence, "proof.read_player_data=passed");
+        if (name == "BW::BWDATA::UnitNodeTable")
+          return proofLineMatches(evidence, "proof.read_units=passed");
+        if (name == "BW::BWDATA::BulletNodeTable")
+          return proofLineMatches(evidence, "proof.read_bullet_data=passed");
+        if (name == "BW::BWDATA::MapTileArray")
+          return proofLineMatches(evidence, "proof.read_map_data=passed");
+        return false;
+      case BindingKind::FunctionAddress:
+        return name == "BW::BWFXN_ExecuteGameTriggers"
+          && proofLineMatches(evidence, "proof.dispatch_events=passed");
+      case BindingKind::ImportedFunction:
+        return (name == "Storm::SNetReceiveMessage" || name == "Storm::SNetSendTurn")
+          && proofLineMatches(evidence, "proof.multiplayer_sync=passed");
+      case BindingKind::HookPoint:
+        return name == "draw-game-layer-hook"
+          && proofLineMatches(evidence, "proof.draw_overlays=passed");
+      case BindingKind::CommandQueue:
+        return (name == "BW::BWDATA::sgdwBytesInCmdQueue" || name == "BW::BWDATA::TurnBuffer")
+          && proofLineMatches(evidence, "proof.issue_commands=passed");
+      case BindingKind::Transport:
+        if (name == "ai-module-loader")
+          return proofLineMatches(evidence, "proof.load_ai_modules=passed");
+        if (name == "shared-memory-client-transport")
+          return proofLineMatches(evidence, "proof.attach=passed");
+        return false;
+      case BindingKind::StructureLayout:
+        return false;
+      }
+      return false;
+    }
+
+    bool productionEvidenceAllowedForStructure(
+      const std::string& name,
+      const std::string& evidence)
+    {
+      if (!productionEvidenceAllowed(evidence))
+        return false;
+      if (name == "BW::BWGame")
+        return proofLineMatches(evidence, "proof.read_game_state=passed");
+      if (name == "BW::CUnit")
+        return proofLineMatches(evidence, "proof.read_units=passed");
+      if (name == "BW::CBullet")
+        return proofLineMatches(evidence, "proof.read_bullet_data=passed");
+      if (name == "BW::PlayerInfo")
+        return proofLineMatches(evidence, "proof.read_player_data=passed");
+      if (name == "BW::ReplayHeader")
+        return proofLineMatches(evidence, "proof.replay_analysis=passed");
+      return false;
+    }
+
+    bool productionEvidenceAllowedForField(
+      const std::string& structureName,
+      const std::string& fieldName,
+      const std::string& evidence)
+    {
+      if (!productionEvidenceAllowed(evidence))
+        return false;
+      if (structureName == "BW::BWGame")
+      {
+        if (fieldName == "players" || fieldName == "alliance")
+          return proofLineMatches(evidence, "proof.read_player_data=passed");
+        if (fieldName == "elapsedFrames")
+          return proofLineMatches(evidence, "proof.read_game_state=passed");
+        return false;
+      }
+      if (structureName == "BW::CUnit")
+        return proofLineMatches(evidence, "proof.read_units=passed");
+      if (structureName == "BW::CBullet")
+        return proofLineMatches(evidence, "proof.read_bullet_data=passed");
+      if (structureName == "BW::PlayerInfo")
+        return proofLineMatches(evidence, "proof.read_player_data=passed");
+      if (structureName == "BW::ReplayHeader")
+        return proofLineMatches(evidence, "proof.replay_analysis=passed");
+      return false;
     }
 
     std::string contractBindingReadyKey(const std::string& name)
@@ -156,7 +254,7 @@ namespace BWAPI::Runtime
         return false;
 
       const std::string evidence = value.substr(prefix.size());
-      return productionEvidenceAllowed(evidence)
+      return productionEvidenceAllowedForBinding(name, kind, evidence)
         && readyFileContainsEvidenceProof(readyPath, evidence);
     }
 
@@ -345,6 +443,105 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    std::filesystem::path residentHeartbeatStatePath(const std::filesystem::path& readyPath)
+    {
+      return readyPath.parent_path() / ".resident-heartbeat-state";
+    }
+
+    bool readyFileModifiedMs(const std::filesystem::path& readyPath, long long& modifiedMs)
+    {
+      std::error_code error;
+      const std::filesystem::file_time_type modified =
+        std::filesystem::last_write_time(readyPath, error);
+      if (error)
+        return false;
+      modifiedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        modified.time_since_epoch()).count();
+      return true;
+    }
+
+    bool readResidentHeartbeatState(
+      const std::filesystem::path& path,
+      int& processId,
+      std::uint64_t& heartbeat,
+      long long& readyModifiedMs)
+    {
+      std::ifstream input(path);
+      if (!input)
+        return false;
+
+      std::string line;
+      while (std::getline(input, line))
+      {
+        const std::size_t separator = line.find('=');
+        if (separator == std::string::npos)
+          continue;
+        const std::string key = line.substr(0, separator);
+        const std::string value = line.substr(separator + 1);
+        try
+        {
+          if (key == "process_id")
+            processId = std::stoi(value);
+          else if (key == "heartbeat")
+            heartbeat = static_cast<std::uint64_t>(std::stoull(value));
+          else if (key == "ready_mtime_ms")
+            readyModifiedMs = std::stoll(value);
+        }
+        catch (...)
+        {
+          return false;
+        }
+      }
+      return processId > 0 && heartbeat > 0;
+    }
+
+    void writeResidentHeartbeatState(
+      const std::filesystem::path& path,
+      const RuntimeResidentBridgeValidationResult& resident,
+      long long readyModifiedMs)
+    {
+      std::ofstream output(path);
+      if (!output)
+        return;
+      output << "process_id=" << resident.processId << '\n';
+      output << "heartbeat=" << resident.heartbeat << '\n';
+      output << "ready_mtime_ms=" << readyModifiedMs << '\n';
+    }
+
+    bool validateResidentHeartbeatProgression(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentBridgeValidationResult& resident,
+      std::vector<std::string>& errors)
+    {
+      if (!resident.present || !resident.valid)
+        return true;
+
+      long long readyModifiedMs = 0;
+      if (!readyFileModifiedMs(readyPath, readyModifiedMs))
+        return true;
+
+      int previousProcessId = 0;
+      std::uint64_t previousHeartbeat = 0;
+      long long previousReadyModifiedMs = 0;
+      const std::filesystem::path statePath = residentHeartbeatStatePath(readyPath);
+      if (readResidentHeartbeatState(
+            statePath,
+            previousProcessId,
+            previousHeartbeat,
+            previousReadyModifiedMs)
+          && previousProcessId == resident.processId
+          && readyModifiedMs > previousReadyModifiedMs
+          && resident.heartbeat <= previousHeartbeat)
+      {
+        errors.push_back("resident adapter heartbeat did not advance after ready file update");
+        return false;
+      }
+
+      if (resident.heartbeat > previousHeartbeat || readyModifiedMs > previousReadyModifiedMs)
+        writeResidentHeartbeatState(statePath, resident, readyModifiedMs);
+      return true;
+    }
+
     void applyBindingProof(
       RuntimeContract& contract,
       const std::filesystem::path& readyPath,
@@ -354,12 +551,12 @@ namespace BWAPI::Runtime
       const std::vector<std::string> parts = splitPipe(value);
       if (parts.size() != 2 || parts[1].empty())
         return;
-      if (!productionEvidenceAllowed(parts[1])
-          || !readyFileContainsEvidenceProof(readyPath, parts[1]))
-        return;
 
       BindingKind kind = BindingKind::DataAddress;
       if (!parseBindingKind(parts[0], kind))
+        return;
+      if (!productionEvidenceAllowedForBinding(name, kind, parts[1])
+          || !readyFileContainsEvidenceProof(readyPath, parts[1]))
         return;
 
       auto it = std::find_if(
@@ -376,10 +573,17 @@ namespace BWAPI::Runtime
       it->evidence = parts[1];
     }
 
-    void applyStructureProof(RuntimeContract& contract, const std::string& name, const std::string& value)
+    void applyStructureProof(
+      RuntimeContract& contract,
+      const std::filesystem::path& readyPath,
+      const std::string& name,
+      const std::string& value)
     {
       const std::vector<std::string> parts = splitPipe(value);
       if (parts.size() != 2 || parts[1].empty())
+        return;
+      if (!productionEvidenceAllowedForStructure(name, parts[1])
+          || !readyFileContainsEvidenceProof(readyPath, parts[1]))
         return;
 
       std::size_t size = 0;
@@ -397,9 +601,14 @@ namespace BWAPI::Runtime
         return;
 
       it->size = size;
+      it->evidence = parts[1];
     }
 
-    void applyFieldProof(RuntimeContract& contract, const std::string& name, const std::string& value)
+    void applyFieldProof(
+      RuntimeContract& contract,
+      const std::filesystem::path& readyPath,
+      const std::string& name,
+      const std::string& value)
     {
       const std::size_t separator = name.rfind('.');
       if (separator == std::string::npos || separator == 0 || separator + 1 >= name.size())
@@ -409,6 +618,9 @@ namespace BWAPI::Runtime
       const std::string fieldName = name.substr(separator + 1);
       const std::vector<std::string> parts = splitPipe(value);
       if (parts.size() != 3 || parts[2].empty())
+        return;
+      if (!productionEvidenceAllowedForField(structureName, fieldName, parts[2])
+          || !readyFileContainsEvidenceProof(readyPath, parts[2]))
         return;
 
       std::size_t offset = 0;
@@ -439,6 +651,7 @@ namespace BWAPI::Runtime
       fieldIt->resolved = true;
       fieldIt->offset = offset;
       fieldIt->size = size;
+      fieldIt->evidence = parts[2];
     }
 
     bool validateProductionBridgeProof(
@@ -592,6 +805,8 @@ namespace BWAPI::Runtime
           result.errors.push_back(residentError);
         return true;
       }
+      if (!validateResidentHeartbeatProgression(readyPath, resident, result.errors))
+        return true;
 
       if (!validateProductionBridgeProof(readyPath, result, false))
         return true;
@@ -932,9 +1147,17 @@ namespace BWAPI::Runtime
       if (key.rfind(bindingPrefix, 0) == 0)
         applyBindingProof(contract, readyPath, key.substr(std::char_traits<char>::length(bindingPrefix)), value);
       else if (key.rfind(structurePrefix, 0) == 0)
-        applyStructureProof(contract, key.substr(std::char_traits<char>::length(structurePrefix)), value);
+        applyStructureProof(
+          contract,
+          readyPath,
+          key.substr(std::char_traits<char>::length(structurePrefix)),
+          value);
       else if (key.rfind(fieldPrefix, 0) == 0)
-        applyFieldProof(contract, key.substr(std::char_traits<char>::length(fieldPrefix)), value);
+        applyFieldProof(
+          contract,
+          readyPath,
+          key.substr(std::char_traits<char>::length(fieldPrefix)),
+          value);
     }
 
     return contract;
@@ -1150,6 +1373,13 @@ namespace BWAPI::Runtime
         ? "runtime resident adapter metadata is invalid"
         : resident.errors.front();
       result.errors.insert(result.errors.end(), resident.errors.begin(), resident.errors.end());
+      return result;
+    }
+    if (!validateResidentHeartbeatProgression(readyPath, resident, result.errors))
+    {
+      result.reason = result.errors.empty()
+        ? "runtime resident adapter heartbeat is stale"
+        : result.errors.front();
       return result;
     }
 

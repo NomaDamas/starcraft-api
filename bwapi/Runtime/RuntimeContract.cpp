@@ -171,11 +171,13 @@ namespace BWAPI::Runtime
     for (auto& structure : contract.structures)
     {
       structure.size = 0;
+      structure.evidence.clear();
       for (auto& structureField : structure.fields)
       {
         structureField.offset = 0;
         structureField.size = 0;
         structureField.resolved = false;
+        structureField.evidence.clear();
       }
     }
     return contract;
@@ -305,13 +307,38 @@ namespace BWAPI::Runtime
 
   bool contractContainsFixtureEvidence(const RuntimeContract& contract)
   {
-    return std::any_of(
+    const auto fixtureEvidence = [](const std::string& evidence)
+    {
+      return startsWith(evidence, "fixture:")
+        || startsWith(evidence, "unit-test:")
+        || startsWith(evidence, "mock:")
+        || startsWith(evidence, "self-fixture:")
+        || startsWith(evidence, "diagnostic.")
+        || startsWith(evidence, "static-anchor:")
+        || startsWith(evidence, "scr-platform-anchor:")
+        || startsWith(evidence, "static-layout:");
+    };
+
+    if (std::any_of(
       contract.bindings.begin(),
       contract.bindings.end(),
-      [](const RuntimeBinding& binding)
+      [&](const RuntimeBinding& binding)
       {
-        return binding.resolved && startsWith(binding.evidence, "fixture:");
-      });
+        return binding.resolved && fixtureEvidence(binding.evidence);
+      }))
+      return true;
+
+    for (const StructureLayout& structure : contract.structures)
+    {
+      if (structure.size != 0 && fixtureEvidence(structure.evidence))
+        return true;
+      for (const StructureField& field : structure.fields)
+      {
+        if (field.resolved && fixtureEvidence(field.evidence))
+          return true;
+      }
+    }
+    return false;
   }
 
   bool hasCapability(const RuntimeProbeResult& probe, Capability capability)

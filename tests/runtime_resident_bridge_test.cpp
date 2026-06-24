@@ -257,6 +257,18 @@ int main(int argc, char** argv)
     record,
     RuntimeResidentQueueKind::Command).valid);
   record.payloadBytes = 8;
+  record.headerBytes = 40;
+  assert(!validateRuntimeResidentRecordHeader(
+    commandQueue,
+    record,
+    RuntimeResidentQueueKind::Command).valid);
+  record.headerBytes = sizeof(RuntimeResidentRecordHeader);
+  record.payloadBytes = 24;
+  assert(!validateRuntimeResidentRecordHeader(
+    commandQueue,
+    record,
+    RuntimeResidentQueueKind::Command).valid);
+  record.payloadBytes = 8;
   record.sequence = 3;
   assert(!validateRuntimeResidentRecordHeader(
     commandQueue,

@@ -291,7 +291,11 @@ namespace BWAPI::Runtime
     {
       addError(result.errors, "resident queue record size cannot contain a record header");
     }
-    else if (record.payloadBytes > queue.recordBytes - sizeof(RuntimeResidentRecordHeader))
+    else if (record.headerBytes > queue.recordBytes)
+    {
+      addError(result.errors, "resident queue record header exceeds record capacity");
+    }
+    else if (record.payloadBytes > queue.recordBytes - record.headerBytes)
     {
       addError(result.errors, "resident queue record payload exceeds record capacity");
     }

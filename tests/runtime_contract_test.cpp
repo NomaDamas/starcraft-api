@@ -54,6 +54,13 @@ int main()
   assert(findStructureField(resolved, "BW::CUnit", "position") != nullptr);
   assert(findStructureField(resolved, "BW::CUnit", "missing") == nullptr);
 
+  RuntimeContract fixtureLayoutEvidence = resolved;
+  fixtureLayoutEvidence.structures.front().evidence = "fixture:bwgame-layout";
+  assert(contractContainsFixtureEvidence(fixtureLayoutEvidence));
+  fixtureLayoutEvidence.structures.front().evidence.clear();
+  fixtureLayoutEvidence.structures.front().fields.front().evidence = "static-layout:bwgame-players";
+  assert(contractContainsFixtureEvidence(fixtureLayoutEvidence));
+
   RuntimeProbeResult incompleteProbe;
   incompleteProbe.supported = true;
   incompleteProbe.capabilities = {

@@ -40,6 +40,7 @@ namespace BWAPI::Runtime
     std::size_t offset = 0;
     std::size_t size = 0;
     bool resolved = false;
+    std::string evidence;
   };
 
   struct StructureLayout
@@ -47,6 +48,7 @@ namespace BWAPI::Runtime
     std::string name;
     std::size_t size = 0;
     BindingRequirement requirement = BindingRequirement::Required;
+    std::string evidence;
     std::vector<StructureField> fields;
   };
 

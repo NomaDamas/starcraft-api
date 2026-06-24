@@ -112,8 +112,5 @@ namespace BWAPI
     constexpr Race None{Enum::None};
     constexpr Race Unknown{Enum::Unknown};
   }
-
   static_assert(sizeof(Race) == sizeof(int), "Expected type to resolve to primitive size.");
-  template <>
-  const std::string Type<Race, Races::Enum::Unknown>::typeNames[Races::Enum::MAX];
 }

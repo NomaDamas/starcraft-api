@@ -1,9 +1,11 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
+#include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -201,6 +203,81 @@ int main(int argc, char** argv)
   assert(bootstrapPreflight.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode);
   assert(!bootstrapPreflight.missingBehaviorProofs.empty());
   assert(!bootstrapPreflight.errors.empty());
+
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "proof.issue_commands=passed\n";
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.issue_commands=passed:wrong-surface\n";
+    ready << "contract.structure.BW::CUnit=336|fixture:cunit-layout\n";
+    ready << "contract.field.BW::CUnit.position=40|4|proof.issue_commands=passed:wrong-surface\n";
+  }
+  RuntimeContract rejectedSemanticProofs =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedGameBinding =
+    findRuntimeBinding(rejectedSemanticProofs, "BW::BWDATA::Game", BindingKind::DataAddress);
+  const StructureLayout* rejectedUnitLayout =
+    findStructureLayout(rejectedSemanticProofs, "BW::CUnit");
+  const StructureField* rejectedPositionField =
+    findStructureField(rejectedSemanticProofs, "BW::CUnit", "position");
+  assert(rejectedGameBinding != nullptr && !rejectedGameBinding->resolved);
+  assert(rejectedUnitLayout != nullptr && rejectedUnitLayout->size == 0);
+  assert(rejectedPositionField != nullptr && !rejectedPositionField->resolved);
+
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "proof.read_units=passed\n";
+    ready << "contract.structure.BW::CUnit=336|proof.read_units=passed:cunit-layout\n";
+    ready << "contract.field.BW::CUnit.position=40|4|proof.read_units=passed:cunit-position\n";
+  }
+  RuntimeContract acceptedSemanticProofs =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const StructureLayout* acceptedUnitLayout =
+    findStructureLayout(acceptedSemanticProofs, "BW::CUnit");
+  const StructureField* acceptedPositionField =
+    findStructureField(acceptedSemanticProofs, "BW::CUnit", "position");
+  assert(acceptedUnitLayout != nullptr && acceptedUnitLayout->size == 336);
+  assert(acceptedUnitLayout->evidence == "proof.read_units=passed:cunit-layout");
+  assert(acceptedPositionField != nullptr && acceptedPositionField->resolved);
+  assert(acceptedPositionField->evidence == "proof.read_units=passed:cunit-position");
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(bridgeEnvironment, 20))
+      ready << line << '\n';
+  }
+  RuntimeExecutorPreflightResult freshResidentPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(freshResidentPreflight.executorAvailable);
+  assert(freshResidentPreflight.errors.empty());
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(bridgeEnvironment, 20))
+      ready << line << '\n';
+  }
+  const std::filesystem::path readyPath = bridgePath / RuntimeExecutorBridgeReadyFile;
+  std::error_code timestampError;
+  const std::filesystem::file_time_type rewrittenTime =
+    std::filesystem::last_write_time(readyPath, timestampError);
+  assert(!timestampError);
+  std::filesystem::last_write_time(readyPath, rewrittenTime + std::chrono::seconds(2), timestampError);
+  assert(!timestampError);
+  RuntimeExecutorPreflightResult replayedResidentPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(!replayedResidentPreflight.executorAvailable);
+  assert(!replayedResidentPreflight.errors.empty());
 
   writePartialValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult partialProofPreflight =

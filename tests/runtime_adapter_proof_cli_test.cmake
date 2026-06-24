@@ -470,13 +470,14 @@ foreach(needle
 endforeach()
 
 file(READ "${map_bridge_dir}/map.snapshot.tsv" map_snapshot)
+string(REPLACE "\\" "/" normalized_map_snapshot "${map_snapshot}")
 foreach(needle
     "source"
     "latest-replay-artifact"
     "${fake_autosave_path}")
-  string(FIND "${map_snapshot}" "${needle}" needle_index)
+  string(FIND "${normalized_map_snapshot}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "map snapshot missing '${needle}'\n${map_snapshot}")
+    message(FATAL_ERROR "map snapshot missing '${needle}'\n${normalized_map_snapshot}")
   endif()
 endforeach()
 

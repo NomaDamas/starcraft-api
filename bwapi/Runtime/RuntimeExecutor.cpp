@@ -3,6 +3,7 @@
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
+#include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -492,6 +493,15 @@ namespace BWAPI::Runtime
       if (!identityError.empty())
       {
         result.errors.push_back(identityError);
+        return true;
+      }
+
+      RuntimeResidentBridgeValidationResult resident =
+        validateRuntimeResidentBridgeReadyFile(environment, readyPath);
+      if (resident.active && !resident.valid)
+      {
+        for (const std::string& residentError : resident.errors)
+          result.errors.push_back(residentError);
         return true;
       }
 

@@ -80,6 +80,7 @@ add_library(starcraft_runtime STATIC
   "${BWAPI_ROOT}/Runtime/RuntimeProcess.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeProcessMemory.cpp"
   "${BWAPI_ROOT}/Runtime/RuntimeReadiness.cpp"
+  "${BWAPI_ROOT}/Runtime/RuntimeResidentBridge.cpp"
   "${BWAPI_ROOT}/Runtime/UnsupportedRuntimeBackend.cpp"
 )
 

@@ -200,6 +200,28 @@ executable=<selected-runtime-executable>
 mode=validated-runtime-adapter
 ```
 
+The Mac SC:R resident adapter foundation adds identity-bound resident metadata without making the bridge production-ready by itself. These lines only prove that a versioned resident bridge is present and current enough to be inspected:
+
+```text
+resident.adapter=active
+resident.adapter.abi=starcraft-api-resident-adapter-v1
+resident.adapter.process_id=<selected-runtime-pid>
+resident.adapter.heartbeat=<monotonic-counter>
+```
+
+The resident bridge validator rejects duplicate resident keys, unsupported ABI major versions, stale or malformed heartbeats, wrong process ids, wrong product/version, and executable mismatches. The resident queue ABI uses a fixed header with `magic=SCAQ`, `abiMajor=1`, `headerBytes`, `recordBytes`, `kind`, `capacityRecords`, `writeSequence`, `readSequence`, and `heartbeat`. Queue headers are rejected when the kind does not match the expected command/state/event/overlay/proof queue, the record or capacity size is zero, the read sequence is ahead of the write sequence, the queued distance exceeds capacity, or the heartbeat is stale.
+
+Resident metadata is not behavior evidence. It must not emit or imply these production proof lines:
+
+```text
+proof.issue_commands=passed
+proof.draw_overlays=passed
+proof.multiplayer_sync=passed
+command.sink=runtime-command-queue-v1
+```
+
+Those lines remain gated by later live in-game behavior proofs.
+
 For `proof.issue_commands=passed` to count, the ready file must also prove that a live executor is receiving commands and that the selected runtime command queue was resolved for this session:
 
 ```text

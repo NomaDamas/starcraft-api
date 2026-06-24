@@ -41,7 +41,7 @@ namespace
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
   }
 
-  void writeLiveContractProofs(std::ofstream& ready)
+  void writeLiveContractProofs(std::ofstream& ready, bool includeRegionDataProof = true)
   {
     ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
     ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:players\n";
@@ -81,7 +81,8 @@ namespace
     ready << "proof.read_map_data=passed\n";
     ready << "proof.read_player_data=passed\n";
     ready << "proof.read_bullet_data=passed\n";
-    ready << "proof.read_region_data=passed\n";
+    if (includeRegionDataProof)
+      ready << "proof.read_region_data=passed\n";
   }
 
   void writeBootstrapReadyFile(
@@ -101,7 +102,8 @@ namespace
     const std::filesystem::path& bridgePath,
     int processId,
     const std::string& executable,
-    bool includeLiveContractProofs = false)
+    bool includeLiveContractProofs = false,
+    const std::string& omittedBehaviorProof = {})
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
@@ -111,9 +113,12 @@ namespace
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
     if (includeLiveContractProofs)
-      writeLiveContractProofs(ready);
+      writeLiveContractProofs(ready, omittedBehaviorProof != "read-region-data");
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-      ready << proof.readyFileLine << '\n';
+    {
+      if (proof.id != omittedBehaviorProof)
+        ready << proof.readyFileLine << '\n';
+    }
   }
 
   void writePartialValidatedAdapterReadyFile(
@@ -203,6 +208,26 @@ int main(int argc, char** argv)
   assert(!opened.opened);
   assert(opened.state == RuntimeSessionState::Failed);
   assert(backend->state() == RuntimeSessionState::Failed);
+
+  writeValidatedAdapterReadyFile(
+    bridgePath,
+    environment.processId,
+    environment.executablePath,
+    true,
+    "read-region-data");
+  backend = createRuntimeBackend(environment);
+  probe = backend->probe();
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  readinessContract = applyRuntimeExecutorBridgeContractProofs(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, readinessContract, preflight);
+
+  assert(!probe.supported);
+  assert(preflight.executorAvailable);
+  assert(preflight.missingBehaviorProofs.size() == 1);
+  assert(preflight.missingBehaviorProofs.front() == "proof.read_region_data=passed");
+  assert(!preflight.errors.empty());
+  assert(!readiness.productionReady);
+  assert(!blockingReadinessGaps(readiness).empty());
 
   writeValidatedAdapterReadyFile(
     bridgePath,

@@ -1248,6 +1248,12 @@ namespace BWAPI::Runtime
         "adapter read BWAPI-compatible unit data from the target runtime"
       },
       {
+        "read-region-data",
+        Capability::ReadRegionData,
+        "proof.read_region_data=passed",
+        "adapter read BWAPI-compatible region data from live map/unit metadata"
+      },
+      {
         "issue-commands",
         Capability::IssueCommands,
         "proof.issue_commands=passed",

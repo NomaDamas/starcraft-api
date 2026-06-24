@@ -508,6 +508,7 @@ execute_process(
 if(NOT units_result EQUAL 0)
   message(FATAL_ERROR "expected read-units proof to pass with self fixture\nstdout:\n${units_output}\nstderr:\n${units_error}")
 endif()
+string(REPLACE "\\" "/" normalized_units_output "${units_output}")
 foreach(needle
     "read_units.candidate_address.count=1"
     "read_units.unit_array=true"
@@ -533,9 +534,9 @@ foreach(needle
     "read_units.scan.best_dump.success=true"
     "read_units.scan.best_dump.path=${units_best_dump}"
     "proof.read_units=passed")
-  string(FIND "${units_output}" "${needle}" needle_index)
+  string(FIND "${normalized_units_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "read-units proof output missing '${needle}'\n${units_output}")
+    message(FATAL_ERROR "read-units proof output missing '${needle}'\n${normalized_units_output}")
   endif()
 endforeach()
 if(NOT EXISTS "${units_best_dump}")

@@ -608,6 +608,14 @@ int main(int argc, char** argv)
   for (std::size_t i = 0; i < clicks.size(); ++i)
     std::cout << "input.click." << i << '='
               << clicks[i].button << ':' << clicks[i].x << ':' << clicks[i].y << '\n';
+  if (dryRun)
+  {
+    std::cout << "input.dry_run=true\n";
+    std::cout << "input.sent=0\n";
+    std::cout << "input.success=true\n";
+    return 0;
+  }
+
   const bool processVisible = BWAPI::Runtime::runtimeProcessExists(processId);
   std::cout << "input.process_visible=" << (processVisible ? "true" : "false") << '\n';
   if (!processVisible)

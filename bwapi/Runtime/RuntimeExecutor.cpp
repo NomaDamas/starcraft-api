@@ -286,7 +286,7 @@ namespace BWAPI::Runtime
         return false;
 
       const std::string evidence = value.substr(prefix.size());
-      if (!productionEvidenceAllowed(evidence)
+      if (!productionEvidenceAllowedForBinding(name, BindingKind::CommandQueue, evidence)
           || !readyFileContainsEvidenceProof(readyPath, evidence))
         return false;
 

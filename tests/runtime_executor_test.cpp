@@ -110,7 +110,8 @@ namespace
     int processId,
     const std::string& executable,
     std::uintptr_t bytesInQueueAddress,
-    std::uintptr_t turnBufferAddress)
+    std::uintptr_t turnBufferAddress,
+    const std::string& evidenceProof = "proof.issue_commands=passed")
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
@@ -118,9 +119,9 @@ namespace
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:"
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|" << evidenceProof << ':'
           << bytesInQueueAddress << '\n';
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:"
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|" << evidenceProof << ':'
           << turnBufferAddress << '\n';
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
@@ -385,6 +386,27 @@ int main(int argc, char** argv)
   assert(directTurnBuffer[0] == 0x10);
   assert(std::filesystem::exists(directBridgePath / "commands.applied.tsv"));
   assert(!std::filesystem::exists(directBridgePath / RuntimeExecutorBridgeCommandFile));
+
+  std::filesystem::path rejectedDirectBridgePath =
+    makeBridgePath("starcraft-api-runtime-executor-rejected-direct-test");
+  RuntimeEnvironment rejectedDirectBridgeEnvironment = bridgeEnvironment;
+  rejectedDirectBridgeEnvironment.executorBridgePath = rejectedDirectBridgePath.string();
+  writeDirectValidatedAdapterReadyFile(
+    rejectedDirectBridgePath,
+    rejectedDirectBridgeEnvironment.processId,
+    rejectedDirectBridgeEnvironment.executablePath,
+    reinterpret_cast<std::uintptr_t>(&directBytesInQueue),
+    reinterpret_cast<std::uintptr_t>(directTurnBuffer.data()),
+    "proof.attach=passed");
+  RuntimeExecutorPreflightResult rejectedDirectBridgePreflight =
+    preflightRuntimeExecutor(rejectedDirectBridgeEnvironment, complete.manifest.contract);
+  assert(!rejectedDirectBridgePreflight.missingBehaviorProofs.empty());
+  assert(rejectedDirectBridgePreflight.missingBehaviorProofs.front() == "proof.issue_commands=passed");
+  assert(!rejectedDirectBridgePreflight.errors.empty());
+  RuntimeExecutorSubmitResult rejectedDirectSubmitted =
+    submitRuntimeCommands(rejectedDirectBridgeEnvironment, { gameAction });
+  assert(!rejectedDirectSubmitted.submitted);
+  assert(!rejectedDirectSubmitted.errors.empty());
 
   writeMismatchedRuntimeIdentityReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorSubmitResult rejectedMismatchedIdentity =

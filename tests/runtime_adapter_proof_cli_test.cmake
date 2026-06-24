@@ -436,15 +436,16 @@ execute_process(
 if(NOT map_result EQUAL 0)
   message(FATAL_ERROR "expected replay-artifact map proof to pass\nstdout:\n${map_output}\nstderr:\n${map_error}")
 endif()
+string(REPLACE "\\" "/" normalized_map_output "${map_output}")
 foreach(needle
     "read_map_data.ready=true"
     "read_map_data.map_name=(2)Astral Balance"
     "read_map_data.source=latest-replay-artifact"
     "read_map_data.replay_path=${fake_autosave_path}"
     "proof.read_map_data=passed")
-  string(FIND "${map_output}" "${needle}" needle_index)
+  string(FIND "${normalized_map_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "map proof output missing '${needle}'\n${map_output}")
+    message(FATAL_ERROR "map proof output missing '${needle}'\n${normalized_map_output}")
   endif()
 endforeach()
 
@@ -453,6 +454,7 @@ if(NOT EXISTS "${map_ready_file}")
   message(FATAL_ERROR "map proof did not write ready file")
 endif()
 file(READ "${map_ready_file}" map_ready)
+string(REPLACE "\\" "/" normalized_map_ready "${map_ready}")
 foreach(needle
     "proof.attach=passed"
     "proof.read_map_data.map_name=(2)Astral Balance"
@@ -461,9 +463,9 @@ foreach(needle
     "proof.read_map_data.replay_path=${fake_autosave_path}"
     "proof.read_map_data.snapshot=map.snapshot.tsv"
     "proof.read_map_data=passed")
-  string(FIND "${map_ready}" "${needle}" needle_index)
+  string(FIND "${normalized_map_ready}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "map proof ready file missing '${needle}'\n${map_ready}")
+    message(FATAL_ERROR "map proof ready file missing '${needle}'\n${normalized_map_ready}")
   endif()
 endforeach()
 

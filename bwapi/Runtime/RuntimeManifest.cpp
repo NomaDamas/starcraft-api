@@ -86,6 +86,11 @@ namespace BWAPI::Runtime
       return tokens;
     }
 
+    bool startsWith(const std::string& value, const std::string& prefix)
+    {
+      return value.rfind(prefix, 0) == 0;
+    }
+
     void addError(RuntimeManifestLoadResult& result, const std::string& sourceName, int line, const std::string& message)
     {
       std::ostringstream output;
@@ -384,6 +389,15 @@ namespace BWAPI::Runtime
         if (binding.evidence.empty())
         {
           addError(result, sourceName, lineNumber, "binding evidence cannot be empty");
+          continue;
+        }
+        if (startsWith(binding.evidence, "proof."))
+        {
+          addError(
+            result,
+            sourceName,
+            lineNumber,
+            "binding evidence cannot use runtime proof evidence; proof.* is only accepted from a validated ready file");
           continue;
         }
 

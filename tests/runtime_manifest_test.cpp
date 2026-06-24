@@ -77,6 +77,16 @@ int main()
   assert(!hasErrorContaining(bootstrapResult, "manifest is missing required unit command"));
   assert(!validateRuntimeContract(bootstrapResult.manifest.contract).valid);
 
+  std::istringstream proofBackedManifest(
+    "product starcraft-remastered\n"
+    "version test-build\n"
+    "api-surface-methods 0\n"
+    "command-surface-entries 0\n"
+    "binding BW::BWDATA::Game data-address required proof.read_game_state=passed\n");
+  RuntimeManifestLoadResult proofBackedResult = loadRuntimeManifest(proofBackedManifest, "proof-backed");
+  assert(!proofBackedResult.loaded);
+  assert(hasErrorContaining(proofBackedResult, "proof.* is only accepted from a validated ready file"));
+
   std::istringstream malformed("product unknown-product\n");
   RuntimeManifestLoadResult malformedResult = loadRuntimeManifest(malformed, "inline");
   assert(!malformedResult.loaded);

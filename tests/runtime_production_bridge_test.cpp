@@ -37,11 +37,11 @@ namespace
   {
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
   }
 
-  void writeLiveContractProofs(std::ofstream& ready)
+  void writeLiveContractProofs(std::ofstream& ready, bool includeRegionDataProof = true)
   {
     ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
     ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:players\n";
@@ -54,6 +54,35 @@ namespace
     ready << "contract.binding.draw-game-layer-hook=hook-point|proof.draw_overlays=passed:draw-game-layer-hook\n";
     ready << "contract.binding.ai-module-loader=transport|proof.load_ai_modules=passed:ai-module-loader\n";
     ready << "contract.binding.shared-memory-client-transport=transport|proof.attach=passed:shared-memory-client\n";
+    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:bwgame-layout\n";
+    ready << "contract.field.BW::BWGame.players=0x00|4|proof.read_player_data=passed:bwgame-players\n";
+    ready << "contract.field.BW::BWGame.alliance=0x04|4|proof.read_player_data=passed:bwgame-alliance\n";
+    ready << "contract.field.BW::BWGame.elapsedFrames=0x08|4|proof.read_game_state=passed:bwgame-elapsed-frames\n";
+    ready << "contract.structure.BW::CUnit=512|proof.read_units=passed:cunit-layout\n";
+    ready << "contract.field.BW::CUnit.id=0x00|4|proof.read_units=passed:cunit-id\n";
+    ready << "contract.field.BW::CUnit.position=0x04|8|proof.read_units=passed:cunit-position\n";
+    ready << "contract.field.BW::CUnit.hitPoints=0x0c|4|proof.read_units=passed:cunit-hit-points\n";
+    ready << "contract.field.BW::CUnit.order=0x10|4|proof.read_units=passed:cunit-order\n";
+    ready << "contract.field.BW::CUnit.player=0x14|4|proof.read_units=passed:cunit-player\n";
+    ready << "contract.structure.BW::CBullet=128|proof.read_bullet_data=passed:cbullet-layout\n";
+    ready << "contract.field.BW::CBullet.position=0x00|8|proof.read_bullet_data=passed:cbullet-position\n";
+    ready << "contract.field.BW::CBullet.velocity=0x08|8|proof.read_bullet_data=passed:cbullet-velocity\n";
+    ready << "contract.field.BW::CBullet.sourceUnit=0x10|8|proof.read_bullet_data=passed:cbullet-source-unit\n";
+    ready << "contract.field.BW::CBullet.target=0x18|8|proof.read_bullet_data=passed:cbullet-target\n";
+    ready << "contract.structure.BW::PlayerInfo=128|proof.read_player_data=passed:player-info-layout\n";
+    ready << "contract.field.BW::PlayerInfo.stormId=0x00|4|proof.read_player_data=passed:player-info-storm-id\n";
+    ready << "contract.field.BW::PlayerInfo.race=0x04|4|proof.read_player_data=passed:player-info-race\n";
+    ready << "contract.field.BW::PlayerInfo.resources=0x08|8|proof.read_player_data=passed:player-info-resources\n";
+    ready << "contract.field.BW::PlayerInfo.supply=0x10|8|proof.read_player_data=passed:player-info-supply\n";
+    ready << "contract.structure.BW::ReplayHeader=256|proof.replay_analysis=passed:replay-header-layout\n";
+    ready << "contract.field.BW::ReplayHeader.mapName=0x00|32|proof.replay_analysis=passed:replay-header-map-name\n";
+    ready << "contract.field.BW::ReplayHeader.frameCount=0x20|4|proof.replay_analysis=passed:replay-header-frame-count\n";
+    ready << "contract.field.BW::ReplayHeader.playerCount=0x24|4|proof.replay_analysis=passed:replay-header-player-count\n";
+    ready << "proof.read_map_data=passed\n";
+    ready << "proof.read_player_data=passed\n";
+    ready << "proof.read_bullet_data=passed\n";
+    if (includeRegionDataProof)
+      ready << "proof.read_region_data=passed\n";
   }
 
   void writeBootstrapReadyFile(
@@ -73,7 +102,8 @@ namespace
     const std::filesystem::path& bridgePath,
     int processId,
     const std::string& executable,
-    bool includeLiveContractProofs = false)
+    bool includeLiveContractProofs = false,
+    const std::string& omittedBehaviorProof = {})
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
@@ -83,9 +113,12 @@ namespace
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
     if (includeLiveContractProofs)
-      writeLiveContractProofs(ready);
+      writeLiveContractProofs(ready, omittedBehaviorProof != "read-region-data");
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-      ready << proof.readyFileLine << '\n';
+    {
+      if (proof.id != omittedBehaviorProof)
+        ready << proof.readyFileLine << '\n';
+    }
   }
 
   void writePartialValidatedAdapterReadyFile(
@@ -131,7 +164,9 @@ int main(int argc, char** argv)
   std::unique_ptr<RuntimeBackend> backend = createRuntimeBackend(environment);
   RuntimeProbeResult probe = backend->probe();
   RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
-  RuntimeReadinessReport readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
+  RuntimeContract readinessContract =
+    applyRuntimeExecutorBridgeContractProofs(environment, manifest.manifest.contract);
+  RuntimeReadinessReport readiness = evaluateProductionReadiness(probe, readinessContract, preflight);
 
   assert(!probe.supported);
   assert(!preflight.executorAvailable);
@@ -143,7 +178,8 @@ int main(int argc, char** argv)
   backend = createRuntimeBackend(environment);
   probe = backend->probe();
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
-  readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
+  readinessContract = applyRuntimeExecutorBridgeContractProofs(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, readinessContract, preflight);
 
   assert(!probe.supported);
   assert(preflight.executorAvailable);
@@ -158,7 +194,8 @@ int main(int argc, char** argv)
   backend = createRuntimeBackend(environment);
   probe = backend->probe();
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
-  readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
+  readinessContract = applyRuntimeExecutorBridgeContractProofs(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, readinessContract, preflight);
 
   assert(!probe.supported);
   assert(probe.reason.find("fixture validation evidence") != std::string::npos);
@@ -176,11 +213,32 @@ int main(int argc, char** argv)
     bridgePath,
     environment.processId,
     environment.executablePath,
+    true,
+    "read-region-data");
+  backend = createRuntimeBackend(environment);
+  probe = backend->probe();
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  readinessContract = applyRuntimeExecutorBridgeContractProofs(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, readinessContract, preflight);
+
+  assert(!probe.supported);
+  assert(preflight.executorAvailable);
+  assert(preflight.missingBehaviorProofs.size() == 1);
+  assert(preflight.missingBehaviorProofs.front() == "proof.read_region_data=passed");
+  assert(!preflight.errors.empty());
+  assert(!readiness.productionReady);
+  assert(!blockingReadinessGaps(readiness).empty());
+
+  writeValidatedAdapterReadyFile(
+    bridgePath,
+    environment.processId,
+    environment.executablePath,
     true);
   backend = createRuntimeBackend(environment);
   probe = backend->probe();
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
-  readiness = evaluateProductionReadiness(probe, manifest.manifest.contract, preflight);
+  readinessContract = applyRuntimeExecutorBridgeContractProofs(environment, manifest.manifest.contract);
+  readiness = evaluateProductionReadiness(probe, readinessContract, preflight);
 
   assert(probe.supported);
   assert(preflight.executorAvailable);

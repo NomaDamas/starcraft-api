@@ -59,9 +59,169 @@ namespace BWAPI::Runtime
       result.errors.push_back(std::move(message));
     }
 
+    void addWarning(ContractValidationResult& result, std::string message)
+    {
+      result.warnings.push_back(std::move(message));
+    }
+
     bool startsWith(const std::string& value, const std::string& prefix)
     {
       return value.rfind(prefix, 0) == 0;
+    }
+
+    bool isNonProductionEvidence(const std::string& evidence)
+    {
+      return evidence == "fixture"
+        || startsWith(evidence, "fixture:")
+        || evidence == "unit-test"
+        || startsWith(evidence, "unit-test:")
+        || evidence == "mock"
+        || startsWith(evidence, "mock:")
+        || evidence == "self-fixture"
+        || startsWith(evidence, "self-fixture:")
+        || evidence == "diagnostic"
+        || startsWith(evidence, "diagnostic.")
+        || evidence == "static-anchor"
+        || startsWith(evidence, "static-anchor:")
+        || evidence == "scr-platform-anchor"
+        || startsWith(evidence, "scr-platform-anchor:")
+        || evidence == "static-layout"
+        || startsWith(evidence, "static-layout:");
+    }
+
+    bool isProductionEvidence(const std::string& evidence)
+    {
+      return startsWith(evidence, "proof.");
+    }
+
+    std::string evidenceProofLine(const std::string& evidence)
+    {
+      if (!isProductionEvidence(evidence))
+        return {};
+
+      const std::size_t separator = evidence.find(':');
+      if (separator == std::string::npos)
+        return evidence;
+      return evidence.substr(0, separator);
+    }
+
+    std::string expectedProductionProofForBinding(
+      const std::string& name,
+      BindingKind kind)
+    {
+      switch (kind)
+      {
+      case BindingKind::DataAddress:
+        if (name == "BW::BWDATA::Game")
+          return "proof.read_game_state=passed";
+        if (name == "BW::BWDATA::Players")
+          return "proof.read_player_data=passed";
+        if (name == "BW::BWDATA::UnitNodeTable")
+          return "proof.read_units=passed";
+        if (name == "BW::BWDATA::BulletNodeTable")
+          return "proof.read_bullet_data=passed";
+        if (name == "BW::BWDATA::MapTileArray")
+          return "proof.read_map_data=passed";
+        return {};
+      case BindingKind::FunctionAddress:
+        if (name == "BW::BWFXN_ExecuteGameTriggers")
+          return "proof.dispatch_events=passed";
+        return {};
+      case BindingKind::ImportedFunction:
+        if (name == "Storm::SNetReceiveMessage" || name == "Storm::SNetSendTurn")
+          return "proof.multiplayer_sync=passed";
+        return {};
+      case BindingKind::HookPoint:
+        if (name == "draw-game-layer-hook")
+          return "proof.draw_overlays=passed";
+        return {};
+      case BindingKind::CommandQueue:
+        if (name == "BW::BWDATA::sgdwBytesInCmdQueue" || name == "BW::BWDATA::TurnBuffer")
+          return "proof.issue_commands=passed";
+        return {};
+      case BindingKind::Transport:
+        if (name == "ai-module-loader")
+          return "proof.load_ai_modules=passed";
+        if (name == "shared-memory-client-transport")
+          return "proof.attach=passed";
+        return {};
+      case BindingKind::StructureLayout:
+        return {};
+      }
+      return {};
+    }
+
+    std::string expectedProductionProofForStructure(const std::string& name)
+    {
+      if (name == "BW::BWGame")
+        return "proof.read_game_state=passed";
+      if (name == "BW::CUnit")
+        return "proof.read_units=passed";
+      if (name == "BW::CBullet")
+        return "proof.read_bullet_data=passed";
+      if (name == "BW::PlayerInfo")
+        return "proof.read_player_data=passed";
+      if (name == "BW::ReplayHeader")
+        return "proof.replay_analysis=passed";
+      return {};
+    }
+
+    std::string expectedProductionProofForField(
+      const std::string& structureName,
+      const std::string& fieldName)
+    {
+      if (structureName == "BW::BWGame")
+      {
+        if (fieldName == "players" || fieldName == "alliance")
+          return "proof.read_player_data=passed";
+        if (fieldName == "elapsedFrames")
+          return "proof.read_game_state=passed";
+        return {};
+      }
+      if (structureName == "BW::CUnit")
+        return "proof.read_units=passed";
+      if (structureName == "BW::CBullet")
+        return "proof.read_bullet_data=passed";
+      if (structureName == "BW::PlayerInfo")
+        return "proof.read_player_data=passed";
+      if (structureName == "BW::ReplayHeader")
+        return "proof.replay_analysis=passed";
+      return {};
+    }
+
+    void addProductionEvidenceError(
+      std::vector<std::string>& errors,
+      const std::string& subject,
+      const std::string& evidence,
+      const std::string& expectedProof)
+    {
+      if (evidence.empty())
+      {
+        errors.push_back(subject + " is missing production proof evidence");
+        return;
+      }
+      if (isNonProductionEvidence(evidence))
+      {
+        errors.push_back(subject + " uses non-production evidence: " + evidence);
+        return;
+      }
+      if (!isProductionEvidence(evidence))
+      {
+        errors.push_back(subject + " evidence is not a production proof: " + evidence);
+        return;
+      }
+
+      const std::string proofLine = evidenceProofLine(evidence);
+      if (expectedProof.empty())
+      {
+        errors.push_back(subject + " has no accepted production proof mapping: " + proofLine);
+        return;
+      }
+      if (proofLine != expectedProof)
+      {
+        errors.push_back(
+          subject + " uses wrong production proof: " + proofLine + "; expected " + expectedProof);
+      }
     }
   }
 
@@ -171,11 +331,13 @@ namespace BWAPI::Runtime
     for (auto& structure : contract.structures)
     {
       structure.size = 0;
+      structure.evidence.clear();
       for (auto& structureField : structure.fields)
       {
         structureField.offset = 0;
         structureField.size = 0;
         structureField.resolved = false;
+        structureField.evidence.clear();
       }
     }
     return contract;
@@ -261,13 +423,13 @@ namespace BWAPI::Runtime
       {
         std::ostringstream message;
         message << "resolved binding is missing validation evidence: " << binding.name;
-        result.warnings.push_back(message.str());
+        addWarning(result, message.str());
       }
-      if (binding.resolved && startsWith(binding.evidence, "fixture:"))
+      if (binding.resolved && isNonProductionEvidence(binding.evidence))
       {
         std::ostringstream message;
-        message << "resolved binding uses fixture validation evidence: " << binding.name;
-        result.warnings.push_back(message.str());
+        message << "resolved binding uses non-production validation evidence: " << binding.name;
+        addWarning(result, message.str());
       }
     }
 
@@ -280,6 +442,10 @@ namespace BWAPI::Runtime
       }
       if (structure.requirement == BindingRequirement::Required && structure.size == 0)
         addError(result, "required structure has no validated size: " + structure.name);
+      if (structure.size != 0 && structure.evidence.empty())
+        addWarning(result, "resolved structure layout is missing validation evidence: " + structure.name);
+      if (structure.size != 0 && isNonProductionEvidence(structure.evidence))
+        addWarning(result, "resolved structure layout uses non-production validation evidence: " + structure.name);
 
       for (const StructureField& structureField : structure.fields)
       {
@@ -296,6 +462,19 @@ namespace BWAPI::Runtime
         {
           addError(result, "resolved structure field has no size: " + structure.name + "." + structureField.name);
         }
+        if (structureField.resolved && structureField.evidence.empty())
+        {
+          addWarning(
+            result,
+            "resolved structure field is missing validation evidence: " + structure.name + "." + structureField.name);
+        }
+        if (structureField.resolved && isNonProductionEvidence(structureField.evidence))
+        {
+          addWarning(
+            result,
+            "resolved structure field uses non-production validation evidence: "
+              + structure.name + "." + structureField.name);
+        }
       }
     }
 
@@ -305,13 +484,68 @@ namespace BWAPI::Runtime
 
   bool contractContainsFixtureEvidence(const RuntimeContract& contract)
   {
-    return std::any_of(
+    if (std::any_of(
       contract.bindings.begin(),
       contract.bindings.end(),
-      [](const RuntimeBinding& binding)
+      [&](const RuntimeBinding& binding)
       {
-        return binding.resolved && startsWith(binding.evidence, "fixture:");
-      });
+        return binding.resolved && isNonProductionEvidence(binding.evidence);
+      }))
+      return true;
+
+    for (const StructureLayout& structure : contract.structures)
+    {
+      if (structure.size != 0 && isNonProductionEvidence(structure.evidence))
+        return true;
+      for (const StructureField& field : structure.fields)
+      {
+        if (field.resolved && isNonProductionEvidence(field.evidence))
+          return true;
+      }
+    }
+    return false;
+  }
+
+  std::vector<std::string> contractProductionEvidenceErrors(const RuntimeContract& contract)
+  {
+    std::vector<std::string> errors;
+
+    for (const RuntimeBinding& binding : contract.bindings)
+    {
+      if (binding.resolved)
+      {
+        addProductionEvidenceError(
+          errors,
+          "resolved binding " + binding.name,
+          binding.evidence,
+          expectedProductionProofForBinding(binding.name, binding.kind));
+      }
+    }
+
+    for (const StructureLayout& structure : contract.structures)
+    {
+      if (structure.size != 0)
+      {
+        addProductionEvidenceError(
+          errors,
+          "resolved structure layout " + structure.name,
+          structure.evidence,
+          expectedProductionProofForStructure(structure.name));
+      }
+      for (const StructureField& field : structure.fields)
+      {
+        if (field.resolved)
+        {
+          addProductionEvidenceError(
+            errors,
+            "resolved structure field " + structure.name + "." + field.name,
+            field.evidence,
+            expectedProductionProofForField(structure.name, field.name));
+        }
+      }
+    }
+
+    return errors;
   }
 
   bool hasCapability(const RuntimeProbeResult& probe, Capability capability)
@@ -327,7 +561,7 @@ namespace BWAPI::Runtime
     const ContractValidationResult validation = validateRuntimeContract(contract);
     if (!validation.valid)
       return false;
-    if (contractContainsFixtureEvidence(contract))
+    if (!contractProductionEvidenceErrors(contract).empty())
       return false;
     if (probe.implementedApiSurfaceMethods < contract.requiredApiSurfaceMethods)
       return false;

@@ -526,13 +526,17 @@ namespace BWAPI::Runtime
       return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
     }
 
-    bool commandStartsWithPath(const std::string& command, const std::string& path)
+    std::string normalizePathSeparators(std::string value)
+    {
+      std::replace(value.begin(), value.end(), '\\', '/');
+      return value;
+    }
+
+    bool trimmedCommandStartsWithPath(std::string_view trimmed, const std::string& path)
     {
       if (path.empty())
         return false;
 
-      const std::size_t first = command.find_first_not_of(" \t\r\n");
-      const std::string trimmed = first == std::string::npos ? std::string() : command.substr(first);
       if (startsWith(trimmed, path))
         return trimmed.size() == path.size() || std::isspace(static_cast<unsigned char>(trimmed[path.size()])) != 0;
 
@@ -547,6 +551,20 @@ namespace BWAPI::Runtime
       }
 
       return false;
+    }
+
+    bool commandStartsWithPath(const std::string& command, const std::string& path)
+    {
+      const std::size_t first = command.find_first_not_of(" \t\r\n");
+      const std::string trimmed = first == std::string::npos ? std::string() : command.substr(first);
+      if (trimmedCommandStartsWithPath(trimmed, path))
+        return true;
+
+      const std::string normalizedTrimmed = normalizePathSeparators(trimmed);
+      const std::string normalizedPath = normalizePathSeparators(path);
+      if (normalizedTrimmed == trimmed && normalizedPath == path)
+        return false;
+      return trimmedCommandStartsWithPath(normalizedTrimmed, normalizedPath);
     }
 
     std::string trimLeft(std::string value)
@@ -883,7 +901,6 @@ namespace BWAPI::Runtime
       return !process.category.empty();
     }
 
-#if !defined(_WIN32)
     bool parseObservedProcessLine(
       const RuntimeInstallation& installation,
       const std::string& line,
@@ -920,6 +937,20 @@ namespace BWAPI::Runtime
       return processes;
     }
 
+    std::vector<int> processIdsFromObservedProcesses(
+      const std::vector<RuntimeObservedProcess>& processes,
+      const std::vector<std::string>& categories)
+    {
+      std::vector<int> processIds;
+      for (const RuntimeObservedProcess& process : processes)
+      {
+        if (lineContainsAny(process.category, categories))
+          processIds.push_back(process.processId);
+      }
+      return processIds;
+    }
+
+#if !defined(_WIN32)
 #if defined(__APPLE__)
     std::string commandLineForDarwinProcess(int processId, const std::string& executablePath)
     {
@@ -1029,13 +1060,7 @@ namespace BWAPI::Runtime
       const RuntimeInstallation& installation,
       const std::vector<std::string>& categories)
     {
-      std::vector<int> processIds;
-      for (const RuntimeObservedProcess& process : collectPosixObservedProcesses(installation))
-      {
-        if (lineContainsAny(process.category, categories))
-          processIds.push_back(process.processId);
-      }
-      return processIds;
+      return processIdsFromObservedProcesses(collectPosixObservedProcesses(installation), categories);
     }
 
     std::vector<int> findPosixProcesses(const RuntimeInstallation& installation)
@@ -1124,18 +1149,33 @@ namespace BWAPI::Runtime
 #if defined(_WIN32)
     std::vector<int> findWindowsProcesses(const RuntimeInstallation& installation)
     {
-      (void)installation;
-      return {};
+      const std::string snapshotPath = getenvString("STARCRAFT_API_PROCESS_SNAPSHOT");
+      if (snapshotPath.empty())
+        return {};
+
+      return processIdsFromObservedProcesses(
+        collectSnapshotObservedProcesses(installation, snapshotPath),
+        { "starcraft-game" });
     }
 
-    std::vector<int> findWindowsBattleNetHandoffProcesses()
+    std::vector<int> findWindowsBattleNetHandoffProcesses(const RuntimeInstallation& installation)
     {
-      return {};
+      const std::string snapshotPath = getenvString("STARCRAFT_API_PROCESS_SNAPSHOT");
+      if (snapshotPath.empty())
+        return {};
+
+      return processIdsFromObservedProcesses(
+        collectSnapshotObservedProcesses(installation, snapshotPath),
+        { "battle.net-handoff" });
     }
 #endif
 
     std::vector<RuntimeObservedProcess> collectObservedProcesses(const RuntimeInstallation& installation)
     {
+      const std::string snapshotPath = getenvString("STARCRAFT_API_PROCESS_SNAPSHOT");
+      if (!snapshotPath.empty())
+        return collectSnapshotObservedProcesses(installation, snapshotPath);
+
 #if defined(_WIN32)
       (void)installation;
       return {};
@@ -2235,7 +2275,7 @@ namespace BWAPI::Runtime
     std::vector<int> findBattleNetHandoffProcesses(const RuntimeInstallation& installation)
     {
 #if defined(_WIN32)
-      return findWindowsBattleNetHandoffProcesses();
+      return findWindowsBattleNetHandoffProcesses(installation);
 #else
       return findPosixBattleNetHandoffProcesses(installation);
 #endif

@@ -198,8 +198,7 @@ execute_process(
   COMMAND "${STARCRAFT_RUNTIME_MEMORY_PROBE}"
     --self
     --find-u64 0x7ffafefdfcfbfafa
-    --find-writable-only
-    --find-non-executable-only
+    --find-target-executable-only
     --find-max-scan-mb 1
     --require-find
   RESULT_VARIABLE absent_result
@@ -212,6 +211,7 @@ endif()
 foreach(needle
     "memory.find.scan_success=true"
     "memory.find.success=false"
+    "memory.find.filter.target_executable_only=true"
     "memory.find.match.count=0")
   string(FIND "${absent_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)

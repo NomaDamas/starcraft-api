@@ -436,15 +436,16 @@ execute_process(
 if(NOT map_result EQUAL 0)
   message(FATAL_ERROR "expected replay-artifact map proof to pass\nstdout:\n${map_output}\nstderr:\n${map_error}")
 endif()
+string(REPLACE "\\" "/" normalized_map_output "${map_output}")
 foreach(needle
     "read_map_data.ready=true"
     "read_map_data.map_name=(2)Astral Balance"
     "read_map_data.source=latest-replay-artifact"
     "read_map_data.replay_path=${fake_autosave_path}"
     "proof.read_map_data=passed")
-  string(FIND "${map_output}" "${needle}" needle_index)
+  string(FIND "${normalized_map_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "map proof output missing '${needle}'\n${map_output}")
+    message(FATAL_ERROR "map proof output missing '${needle}'\n${normalized_map_output}")
   endif()
 endforeach()
 
@@ -453,6 +454,7 @@ if(NOT EXISTS "${map_ready_file}")
   message(FATAL_ERROR "map proof did not write ready file")
 endif()
 file(READ "${map_ready_file}" map_ready)
+string(REPLACE "\\" "/" normalized_map_ready "${map_ready}")
 foreach(needle
     "proof.attach=passed"
     "proof.read_map_data.map_name=(2)Astral Balance"
@@ -461,20 +463,21 @@ foreach(needle
     "proof.read_map_data.replay_path=${fake_autosave_path}"
     "proof.read_map_data.snapshot=map.snapshot.tsv"
     "proof.read_map_data=passed")
-  string(FIND "${map_ready}" "${needle}" needle_index)
+  string(FIND "${normalized_map_ready}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "map proof ready file missing '${needle}'\n${map_ready}")
+    message(FATAL_ERROR "map proof ready file missing '${needle}'\n${normalized_map_ready}")
   endif()
 endforeach()
 
 file(READ "${map_bridge_dir}/map.snapshot.tsv" map_snapshot)
+string(REPLACE "\\" "/" normalized_map_snapshot "${map_snapshot}")
 foreach(needle
     "source"
     "latest-replay-artifact"
     "${fake_autosave_path}")
-  string(FIND "${map_snapshot}" "${needle}" needle_index)
+  string(FIND "${normalized_map_snapshot}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "map snapshot missing '${needle}'\n${map_snapshot}")
+    message(FATAL_ERROR "map snapshot missing '${needle}'\n${normalized_map_snapshot}")
   endif()
 endforeach()
 
@@ -505,6 +508,7 @@ execute_process(
 if(NOT units_result EQUAL 0)
   message(FATAL_ERROR "expected read-units proof to pass with self fixture\nstdout:\n${units_output}\nstderr:\n${units_error}")
 endif()
+string(REPLACE "\\" "/" normalized_units_output "${units_output}")
 foreach(needle
     "read_units.candidate_address.count=1"
     "read_units.unit_array=true"
@@ -530,9 +534,9 @@ foreach(needle
     "read_units.scan.best_dump.success=true"
     "read_units.scan.best_dump.path=${units_best_dump}"
     "proof.read_units=passed")
-  string(FIND "${units_output}" "${needle}" needle_index)
+  string(FIND "${normalized_units_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
-    message(FATAL_ERROR "read-units proof output missing '${needle}'\n${units_output}")
+    message(FATAL_ERROR "read-units proof output missing '${needle}'\n${normalized_units_output}")
   endif()
 endforeach()
 if(NOT EXISTS "${units_best_dump}")
@@ -1095,9 +1099,11 @@ endif()
 set(policy_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-bridge")
 set(policy_root "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-root")
 set(policy_executable "${STARCRAFT_RUNTIME_ADAPTER_PROOF}")
+set(policy_snapshot_executable "${policy_executable}")
+string(REPLACE "\\" "/" policy_snapshot_executable "${policy_snapshot_executable}")
 set(policy_process_snapshot "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-policy-processes.snapshot")
 file(REMOVE_RECURSE "${policy_bridge_dir}" "${policy_root}")
-file(WRITE "${policy_process_snapshot}" "123 1 ${policy_executable} -launch -uid s1\n")
+file(WRITE "${policy_process_snapshot}" "123 1 ${policy_snapshot_executable} -launch -uid s1\n")
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env

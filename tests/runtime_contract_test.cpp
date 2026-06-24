@@ -8,6 +8,60 @@ using namespace BWAPI::Runtime;
 
 namespace
 {
+  std::string productionEvidenceForBinding(const RuntimeBinding& binding)
+  {
+    if (binding.name == "BW::BWDATA::Game")
+      return "proof.read_game_state=passed";
+    if (binding.name == "BW::BWDATA::Players")
+      return "proof.read_player_data=passed";
+    if (binding.name == "BW::BWDATA::UnitNodeTable")
+      return "proof.read_units=passed";
+    if (binding.name == "BW::BWDATA::BulletNodeTable")
+      return "proof.read_bullet_data=passed";
+    if (binding.name == "BW::BWDATA::MapTileArray")
+      return "proof.read_map_data=passed";
+    if (binding.name == "BW::BWFXN_ExecuteGameTriggers")
+      return "proof.dispatch_events=passed";
+    if (binding.name == "Storm::SNetReceiveMessage" || binding.name == "Storm::SNetSendTurn")
+      return "proof.multiplayer_sync=passed";
+    if (binding.name == "draw-game-layer-hook")
+      return "proof.draw_overlays=passed";
+    if (binding.name == "BW::BWDATA::sgdwBytesInCmdQueue" || binding.name == "BW::BWDATA::TurnBuffer")
+      return "proof.issue_commands=passed";
+    if (binding.name == "ai-module-loader")
+      return "proof.load_ai_modules=passed";
+    if (binding.name == "shared-memory-client-transport")
+      return "proof.attach=passed";
+    return "proof.unknown=passed";
+  }
+
+  std::string productionEvidenceForStructure(const std::string& name)
+  {
+    if (name == "BW::BWGame")
+      return "proof.read_game_state=passed";
+    if (name == "BW::CUnit")
+      return "proof.read_units=passed";
+    if (name == "BW::CBullet")
+      return "proof.read_bullet_data=passed";
+    if (name == "BW::PlayerInfo")
+      return "proof.read_player_data=passed";
+    if (name == "BW::ReplayHeader")
+      return "proof.replay_analysis=passed";
+    return "proof.unknown=passed";
+  }
+
+  std::string productionEvidenceForField(const std::string& structureName, const std::string& fieldName)
+  {
+    if (structureName == "BW::BWGame")
+    {
+      if (fieldName == "players" || fieldName == "alliance")
+        return "proof.read_player_data=passed";
+      if (fieldName == "elapsedFrames")
+        return "proof.read_game_state=passed";
+    }
+    return productionEvidenceForStructure(structureName);
+  }
+
   RuntimeContract resolvedContract()
   {
     RuntimeContract contract = makeRemasteredParityContract("test-build");
@@ -15,17 +69,19 @@ namespace
     for (RuntimeBinding& binding : contract.bindings)
     {
       binding.resolved = true;
-      binding.evidence = "unit-test";
+      binding.evidence = productionEvidenceForBinding(binding);
     }
 
     for (StructureLayout& structure : contract.structures)
     {
       structure.size = 1;
+      structure.evidence = productionEvidenceForStructure(structure.name);
       for (StructureField& field : structure.fields)
       {
         field.resolved = true;
         field.offset = 0;
         field.size = 1;
+        field.evidence = productionEvidenceForField(structure.name, field.name);
       }
     }
 
@@ -48,11 +104,45 @@ int main()
   ContractValidationResult resolvedValidation = validateRuntimeContract(resolved);
   assert(resolvedValidation.valid);
   assert(resolvedValidation.errors.empty());
+  assert(contractProductionEvidenceErrors(resolved).empty());
   assert(findRuntimeBinding(resolved, "BW::BWDATA::Game", BindingKind::DataAddress) != nullptr);
   assert(findRuntimeBinding(resolved, "BW::BWDATA::Game", BindingKind::FunctionAddress) == nullptr);
   assert(findStructureLayout(resolved, "BW::CUnit") != nullptr);
   assert(findStructureField(resolved, "BW::CUnit", "position") != nullptr);
   assert(findStructureField(resolved, "BW::CUnit", "missing") == nullptr);
+
+  RuntimeContract fixtureLayoutEvidence = resolved;
+  fixtureLayoutEvidence.structures.front().evidence = "fixture:bwgame-layout";
+  assert(contractContainsFixtureEvidence(fixtureLayoutEvidence));
+  fixtureLayoutEvidence.structures.front().evidence.clear();
+  fixtureLayoutEvidence.structures.front().fields.front().evidence = "static-layout:bwgame-players";
+  assert(contractContainsFixtureEvidence(fixtureLayoutEvidence));
+
+  RuntimeContract bareUnitTestEvidence = resolved;
+  bareUnitTestEvidence.bindings.front().evidence = "unit-test";
+  assert(contractContainsFixtureEvidence(bareUnitTestEvidence));
+  assert(!contractProductionEvidenceErrors(bareUnitTestEvidence).empty());
+
+  RuntimeContract arbitraryEvidence = resolved;
+  arbitraryEvidence.bindings.front().evidence = "manual-review";
+  assert(!contractContainsFixtureEvidence(arbitraryEvidence));
+  assert(!contractProductionEvidenceErrors(arbitraryEvidence).empty());
+
+  RuntimeContract fakeProofEvidence = resolved;
+  fakeProofEvidence.bindings.front().evidence = "proof.fake=passed";
+  assert(!contractProductionEvidenceErrors(fakeProofEvidence).empty());
+
+  RuntimeContract wrongSemanticProofEvidence = resolved;
+  for (RuntimeBinding& binding : wrongSemanticProofEvidence.bindings)
+  {
+    if (binding.name == "BW::BWDATA::Players")
+      binding.evidence = "proof.read_game_state=passed";
+  }
+  assert(!contractProductionEvidenceErrors(wrongSemanticProofEvidence).empty());
+
+  RuntimeContract missingLayoutEvidence = resolved;
+  missingLayoutEvidence.structures.front().evidence.clear();
+  assert(!contractProductionEvidenceErrors(missingLayoutEvidence).empty());
 
   RuntimeProbeResult incompleteProbe;
   incompleteProbe.supported = true;
@@ -71,6 +161,11 @@ int main()
   fullProbe.implementedUnitCommands = commandSurface.unitCommands;
   fullProbe.implementedGameActions = commandSurface.gameActions;
   assert(canClaimProductionSupport(fullProbe, resolved));
+  assert(!canClaimProductionSupport(fullProbe, bareUnitTestEvidence));
+  assert(!canClaimProductionSupport(fullProbe, arbitraryEvidence));
+  assert(!canClaimProductionSupport(fullProbe, fakeProofEvidence));
+  assert(!canClaimProductionSupport(fullProbe, wrongSemanticProofEvidence));
+  assert(!canClaimProductionSupport(fullProbe, missingLayoutEvidence));
 
   RuntimeProbeResult missingApiSurfaceProbe = fullProbe;
   missingApiSurfaceProbe.implementedApiSurfaceMethods = resolved.requiredApiSurfaceMethods - 1;

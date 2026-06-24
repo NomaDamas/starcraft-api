@@ -119,6 +119,10 @@ namespace BWAPI::Runtime
       }
     }
 
+    const std::vector<std::string> productionEvidenceErrors = contractProductionEvidenceErrors(contract);
+    for (std::size_t i = 0; i < productionEvidenceErrors.size(); ++i)
+      addGap(gaps, "contract-evidence", "evidence." + std::to_string(i), productionEvidenceErrors[i]);
+
     if (!preflight.processIdentified)
       addGap(gaps, "executor-preflight", "runtime-process-identified", "target runtime process is not identified");
     if (requiresCapability(contract, Capability::SharedMemoryClient) && !preflight.memoryAccessible)

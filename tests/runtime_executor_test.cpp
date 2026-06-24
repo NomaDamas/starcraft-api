@@ -1,9 +1,11 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
+#include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -51,8 +53,8 @@ namespace
   {
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test:bytes-in-command-queue\n";
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test:turn-buffer\n";
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
   }
 
   void writeBootstrapReadyFile(
@@ -108,7 +110,8 @@ namespace
     int processId,
     const std::string& executable,
     std::uintptr_t bytesInQueueAddress,
-    std::uintptr_t turnBufferAddress)
+    std::uintptr_t turnBufferAddress,
+    const std::string& evidenceProof = "proof.issue_commands=passed")
   {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
@@ -116,9 +119,9 @@ namespace
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|unit-test-direct:"
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|" << evidenceProof << ':'
           << bytesInQueueAddress << '\n';
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|unit-test-direct:"
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|" << evidenceProof << ':'
           << turnBufferAddress << '\n';
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
@@ -147,9 +150,9 @@ int main(int argc, char** argv)
   const std::string selfExecutable = std::filesystem::absolute(argv[0]).lexically_normal().string();
 
   const std::vector<RuntimeExecutorBehaviorProof>& proofs = requiredRuntimeExecutorBehaviorProofs();
-  assert(proofs.size() == 11);
+  assert(proofs.size() == 12);
   assert(std::string(proofs.front().readyFileLine) == "proof.attach=passed");
-  assert(std::string(proofs[9].readyFileLine) == "proof.battle_net_policy=passed");
+  assert(std::string(proofs[10].readyFileLine) == "proof.battle_net_policy=passed");
   assert(std::string(proofs.back().readyFileLine) == "proof.load_ai_modules=passed");
 
   RuntimeManifestLoadResult complete = loadRuntimeManifestFile(fixturePath("remastered-complete.manifest"));
@@ -201,6 +204,81 @@ int main(int argc, char** argv)
   assert(bootstrapPreflight.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode);
   assert(!bootstrapPreflight.missingBehaviorProofs.empty());
   assert(!bootstrapPreflight.errors.empty());
+
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "proof.issue_commands=passed\n";
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.issue_commands=passed:wrong-surface\n";
+    ready << "contract.structure.BW::CUnit=336|fixture:cunit-layout\n";
+    ready << "contract.field.BW::CUnit.position=40|4|proof.issue_commands=passed:wrong-surface\n";
+  }
+  RuntimeContract rejectedSemanticProofs =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedGameBinding =
+    findRuntimeBinding(rejectedSemanticProofs, "BW::BWDATA::Game", BindingKind::DataAddress);
+  const StructureLayout* rejectedUnitLayout =
+    findStructureLayout(rejectedSemanticProofs, "BW::CUnit");
+  const StructureField* rejectedPositionField =
+    findStructureField(rejectedSemanticProofs, "BW::CUnit", "position");
+  assert(rejectedGameBinding != nullptr && !rejectedGameBinding->resolved);
+  assert(rejectedUnitLayout != nullptr && rejectedUnitLayout->size == 0);
+  assert(rejectedPositionField != nullptr && !rejectedPositionField->resolved);
+
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "proof.read_units=passed\n";
+    ready << "contract.structure.BW::CUnit=336|proof.read_units=passed:cunit-layout\n";
+    ready << "contract.field.BW::CUnit.position=40|4|proof.read_units=passed:cunit-position\n";
+  }
+  RuntimeContract acceptedSemanticProofs =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const StructureLayout* acceptedUnitLayout =
+    findStructureLayout(acceptedSemanticProofs, "BW::CUnit");
+  const StructureField* acceptedPositionField =
+    findStructureField(acceptedSemanticProofs, "BW::CUnit", "position");
+  assert(acceptedUnitLayout != nullptr && acceptedUnitLayout->size == 336);
+  assert(acceptedUnitLayout->evidence == "proof.read_units=passed:cunit-layout");
+  assert(acceptedPositionField != nullptr && acceptedPositionField->resolved);
+  assert(acceptedPositionField->evidence == "proof.read_units=passed:cunit-position");
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(bridgeEnvironment, 20))
+      ready << line << '\n';
+  }
+  RuntimeExecutorPreflightResult freshResidentPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(freshResidentPreflight.executorAvailable);
+  assert(freshResidentPreflight.errors.empty());
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(bridgeEnvironment, 20))
+      ready << line << '\n';
+  }
+  const std::filesystem::path readyPath = bridgePath / RuntimeExecutorBridgeReadyFile;
+  std::error_code timestampError;
+  const std::filesystem::file_time_type rewrittenTime =
+    std::filesystem::last_write_time(readyPath, timestampError);
+  assert(!timestampError);
+  std::filesystem::last_write_time(readyPath, rewrittenTime + std::chrono::seconds(2), timestampError);
+  assert(!timestampError);
+  RuntimeExecutorPreflightResult replayedResidentPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(!replayedResidentPreflight.executorAvailable);
+  assert(!replayedResidentPreflight.errors.empty());
 
   writePartialValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult partialProofPreflight =
@@ -308,6 +386,27 @@ int main(int argc, char** argv)
   assert(directTurnBuffer[0] == 0x10);
   assert(std::filesystem::exists(directBridgePath / "commands.applied.tsv"));
   assert(!std::filesystem::exists(directBridgePath / RuntimeExecutorBridgeCommandFile));
+
+  std::filesystem::path rejectedDirectBridgePath =
+    makeBridgePath("starcraft-api-runtime-executor-rejected-direct-test");
+  RuntimeEnvironment rejectedDirectBridgeEnvironment = bridgeEnvironment;
+  rejectedDirectBridgeEnvironment.executorBridgePath = rejectedDirectBridgePath.string();
+  writeDirectValidatedAdapterReadyFile(
+    rejectedDirectBridgePath,
+    rejectedDirectBridgeEnvironment.processId,
+    rejectedDirectBridgeEnvironment.executablePath,
+    reinterpret_cast<std::uintptr_t>(&directBytesInQueue),
+    reinterpret_cast<std::uintptr_t>(directTurnBuffer.data()),
+    "proof.attach=passed");
+  RuntimeExecutorPreflightResult rejectedDirectBridgePreflight =
+    preflightRuntimeExecutor(rejectedDirectBridgeEnvironment, complete.manifest.contract);
+  assert(!rejectedDirectBridgePreflight.missingBehaviorProofs.empty());
+  assert(rejectedDirectBridgePreflight.missingBehaviorProofs.front() == "proof.issue_commands=passed");
+  assert(!rejectedDirectBridgePreflight.errors.empty());
+  RuntimeExecutorSubmitResult rejectedDirectSubmitted =
+    submitRuntimeCommands(rejectedDirectBridgeEnvironment, { gameAction });
+  assert(!rejectedDirectSubmitted.submitted);
+  assert(!rejectedDirectSubmitted.errors.empty());
 
   writeMismatchedRuntimeIdentityReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorSubmitResult rejectedMismatchedIdentity =

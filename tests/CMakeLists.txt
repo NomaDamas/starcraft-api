@@ -145,6 +145,22 @@ target_link_libraries(runtime_process_test
 
 add_test(NAME runtime_process_test COMMAND runtime_process_test)
 
+add_executable(runtime_resident_bridge_test
+  runtime_resident_bridge_test.cpp
+)
+
+target_compile_definitions(runtime_resident_bridge_test
+  PRIVATE
+    STARCRAFT_API_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
+
+target_link_libraries(runtime_resident_bridge_test
+  PRIVATE
+    StarCraftAPI::runtime
+)
+
+add_test(NAME runtime_resident_bridge_test COMMAND runtime_resident_bridge_test)
+
 add_executable(runtime_installation_test
   runtime_installation_test.cpp
 )

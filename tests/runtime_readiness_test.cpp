@@ -8,24 +8,26 @@ using namespace BWAPI::Runtime;
 
 namespace
 {
-  RuntimeContract resolvedContract()
+  RuntimeContract resolvedContract(const std::string& evidence = "proof.read_game_state=passed")
   {
     RuntimeContract contract = makeRemasteredParityContract("test-build");
 
     for (RuntimeBinding& binding : contract.bindings)
     {
       binding.resolved = true;
-      binding.evidence = "unit-test";
+      binding.evidence = evidence;
     }
 
     for (StructureLayout& structure : contract.structures)
     {
       structure.size = 1;
+      structure.evidence = evidence;
       for (StructureField& field : structure.fields)
       {
         field.resolved = true;
         field.offset = 0;
         field.size = 1;
+        field.evidence = evidence;
       }
     }
 
@@ -77,6 +79,18 @@ int main()
   RuntimeReadinessReport ready = evaluateProductionReadiness(probe, contract, preflight);
   assert(ready.productionReady);
   assert(blockingReadinessGaps(ready).empty());
+
+  RuntimeContract nonProductionEvidence = contract;
+  nonProductionEvidence.bindings.front().evidence = "unit-test";
+  RuntimeReadinessReport evidenceGap = evaluateProductionReadiness(probe, nonProductionEvidence, preflight);
+  assert(!evidenceGap.productionReady);
+  assert(hasBlockingGap(evidenceGap, "contract-production-evidence"));
+
+  RuntimeContract missingEvidence = contract;
+  missingEvidence.structures.front().evidence.clear();
+  RuntimeReadinessReport missingEvidenceGap = evaluateProductionReadiness(probe, missingEvidence, preflight);
+  assert(!missingEvidenceGap.productionReady);
+  assert(hasBlockingGap(missingEvidenceGap, "contract-production-evidence"));
 
   RuntimeExecutorPreflightResult unavailableExecutor = preflight;
   unavailableExecutor.executorAvailable = false;

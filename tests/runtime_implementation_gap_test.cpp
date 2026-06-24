@@ -7,24 +7,26 @@ using namespace BWAPI::Runtime;
 
 namespace
 {
-  RuntimeContract resolvedContract()
+  RuntimeContract resolvedContract(const std::string& evidence = "proof.read_game_state=passed")
   {
     RuntimeContract contract = makeRemasteredParityContract("test-build");
 
     for (RuntimeBinding& binding : contract.bindings)
     {
       binding.resolved = true;
-      binding.evidence = "unit-test";
+      binding.evidence = evidence;
     }
 
     for (StructureLayout& structure : contract.structures)
     {
       structure.size = 1;
+      structure.evidence = evidence;
       for (StructureField& field : structure.fields)
       {
         field.resolved = true;
         field.offset = 0;
         field.size = 1;
+        field.evidence = evidence;
       }
     }
 

@@ -127,6 +127,16 @@ namespace BWAPI::Runtime
       RuntimeReadinessSeverity::Error,
       validation.valid ? "runtime contract has resolved required bindings and layouts" : join(validation.errors));
 
+    const std::vector<std::string> productionEvidenceErrors = contractProductionEvidenceErrors(contract);
+    addCheck(
+      report,
+      "contract-production-evidence",
+      productionEvidenceErrors.empty(),
+      RuntimeReadinessSeverity::Error,
+      productionEvidenceErrors.empty()
+        ? "all resolved runtime contract entries use production proof evidence"
+        : join(productionEvidenceErrors));
+
     addCheck(
       report,
       "api-surface-complete",

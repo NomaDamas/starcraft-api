@@ -90,6 +90,7 @@ namespace BWAPI::Runtime
     const std::string& fieldName);
   ContractValidationResult validateRuntimeContract(const RuntimeContract& contract);
   bool contractContainsFixtureEvidence(const RuntimeContract& contract);
+  std::vector<std::string> contractProductionEvidenceErrors(const RuntimeContract& contract);
   bool hasCapability(const RuntimeProbeResult& probe, Capability capability);
   bool canClaimProductionSupport(const RuntimeProbeResult& probe, const RuntimeContract& contract);
 }

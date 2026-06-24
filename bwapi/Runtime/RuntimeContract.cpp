@@ -59,9 +59,58 @@ namespace BWAPI::Runtime
       result.errors.push_back(std::move(message));
     }
 
+    void addWarning(ContractValidationResult& result, std::string message)
+    {
+      result.warnings.push_back(std::move(message));
+    }
+
     bool startsWith(const std::string& value, const std::string& prefix)
     {
       return value.rfind(prefix, 0) == 0;
+    }
+
+    bool isNonProductionEvidence(const std::string& evidence)
+    {
+      return evidence == "fixture"
+        || startsWith(evidence, "fixture:")
+        || evidence == "unit-test"
+        || startsWith(evidence, "unit-test:")
+        || evidence == "mock"
+        || startsWith(evidence, "mock:")
+        || evidence == "self-fixture"
+        || startsWith(evidence, "self-fixture:")
+        || evidence == "diagnostic"
+        || startsWith(evidence, "diagnostic.")
+        || evidence == "static-anchor"
+        || startsWith(evidence, "static-anchor:")
+        || evidence == "scr-platform-anchor"
+        || startsWith(evidence, "scr-platform-anchor:")
+        || evidence == "static-layout"
+        || startsWith(evidence, "static-layout:");
+    }
+
+    bool isProductionEvidence(const std::string& evidence)
+    {
+      return startsWith(evidence, "proof.");
+    }
+
+    void addProductionEvidenceError(
+      std::vector<std::string>& errors,
+      const std::string& subject,
+      const std::string& evidence)
+    {
+      if (evidence.empty())
+      {
+        errors.push_back(subject + " is missing production proof evidence");
+        return;
+      }
+      if (isNonProductionEvidence(evidence))
+      {
+        errors.push_back(subject + " uses non-production evidence: " + evidence);
+        return;
+      }
+      if (!isProductionEvidence(evidence))
+        errors.push_back(subject + " evidence is not a production proof: " + evidence);
     }
   }
 
@@ -263,13 +312,13 @@ namespace BWAPI::Runtime
       {
         std::ostringstream message;
         message << "resolved binding is missing validation evidence: " << binding.name;
-        result.warnings.push_back(message.str());
+        addWarning(result, message.str());
       }
-      if (binding.resolved && startsWith(binding.evidence, "fixture:"))
+      if (binding.resolved && isNonProductionEvidence(binding.evidence))
       {
         std::ostringstream message;
-        message << "resolved binding uses fixture validation evidence: " << binding.name;
-        result.warnings.push_back(message.str());
+        message << "resolved binding uses non-production validation evidence: " << binding.name;
+        addWarning(result, message.str());
       }
     }
 
@@ -282,6 +331,10 @@ namespace BWAPI::Runtime
       }
       if (structure.requirement == BindingRequirement::Required && structure.size == 0)
         addError(result, "required structure has no validated size: " + structure.name);
+      if (structure.size != 0 && structure.evidence.empty())
+        addWarning(result, "resolved structure layout is missing validation evidence: " + structure.name);
+      if (structure.size != 0 && isNonProductionEvidence(structure.evidence))
+        addWarning(result, "resolved structure layout uses non-production validation evidence: " + structure.name);
 
       for (const StructureField& structureField : structure.fields)
       {
@@ -298,6 +351,19 @@ namespace BWAPI::Runtime
         {
           addError(result, "resolved structure field has no size: " + structure.name + "." + structureField.name);
         }
+        if (structureField.resolved && structureField.evidence.empty())
+        {
+          addWarning(
+            result,
+            "resolved structure field is missing validation evidence: " + structure.name + "." + structureField.name);
+        }
+        if (structureField.resolved && isNonProductionEvidence(structureField.evidence))
+        {
+          addWarning(
+            result,
+            "resolved structure field uses non-production validation evidence: "
+              + structure.name + "." + structureField.name);
+        }
       }
     }
 
@@ -307,38 +373,65 @@ namespace BWAPI::Runtime
 
   bool contractContainsFixtureEvidence(const RuntimeContract& contract)
   {
-    const auto fixtureEvidence = [](const std::string& evidence)
-    {
-      return startsWith(evidence, "fixture:")
-        || startsWith(evidence, "unit-test:")
-        || startsWith(evidence, "mock:")
-        || startsWith(evidence, "self-fixture:")
-        || startsWith(evidence, "diagnostic.")
-        || startsWith(evidence, "static-anchor:")
-        || startsWith(evidence, "scr-platform-anchor:")
-        || startsWith(evidence, "static-layout:");
-    };
-
     if (std::any_of(
       contract.bindings.begin(),
       contract.bindings.end(),
       [&](const RuntimeBinding& binding)
       {
-        return binding.resolved && fixtureEvidence(binding.evidence);
+        return binding.resolved && isNonProductionEvidence(binding.evidence);
       }))
       return true;
 
     for (const StructureLayout& structure : contract.structures)
     {
-      if (structure.size != 0 && fixtureEvidence(structure.evidence))
+      if (structure.size != 0 && isNonProductionEvidence(structure.evidence))
         return true;
       for (const StructureField& field : structure.fields)
       {
-        if (field.resolved && fixtureEvidence(field.evidence))
+        if (field.resolved && isNonProductionEvidence(field.evidence))
           return true;
       }
     }
     return false;
+  }
+
+  std::vector<std::string> contractProductionEvidenceErrors(const RuntimeContract& contract)
+  {
+    std::vector<std::string> errors;
+
+    for (const RuntimeBinding& binding : contract.bindings)
+    {
+      if (binding.resolved)
+      {
+        addProductionEvidenceError(
+          errors,
+          "resolved binding " + binding.name,
+          binding.evidence);
+      }
+    }
+
+    for (const StructureLayout& structure : contract.structures)
+    {
+      if (structure.size != 0)
+      {
+        addProductionEvidenceError(
+          errors,
+          "resolved structure layout " + structure.name,
+          structure.evidence);
+      }
+      for (const StructureField& field : structure.fields)
+      {
+        if (field.resolved)
+        {
+          addProductionEvidenceError(
+            errors,
+            "resolved structure field " + structure.name + "." + field.name,
+            field.evidence);
+        }
+      }
+    }
+
+    return errors;
   }
 
   bool hasCapability(const RuntimeProbeResult& probe, Capability capability)
@@ -354,7 +447,7 @@ namespace BWAPI::Runtime
     const ContractValidationResult validation = validateRuntimeContract(contract);
     if (!validation.valid)
       return false;
-    if (contractContainsFixtureEvidence(contract))
+    if (!contractProductionEvidenceErrors(contract).empty())
       return false;
     if (probe.implementedApiSurfaceMethods < contract.requiredApiSurfaceMethods)
       return false;

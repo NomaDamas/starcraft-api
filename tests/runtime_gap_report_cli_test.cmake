@@ -189,6 +189,32 @@ foreach(needle
   endif()
 endforeach()
 
+execute_process(
+  COMMAND
+    "${STARCRAFT_RUNTIME_GAP_REPORT}"
+    --manifest "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
+    --product starcraft-remastered
+    --version test-build
+    --require-production
+  RESULT_VARIABLE fixture_production_result
+  OUTPUT_VARIABLE fixture_production_output
+  ERROR_VARIABLE fixture_production_error
+)
+
+if(fixture_production_result EQUAL 0)
+  message(FATAL_ERROR
+    "fixture manifest under tests/fixtures must not satisfy --require-production\n${fixture_production_output}\n${fixture_production_error}")
+endif()
+
+foreach(needle
+    "readiness.production_ready=false"
+    "implementation_gap.count=")
+  string(FIND "${fixture_production_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "fixture production rejection output missing '${needle}'\n${fixture_production_output}")
+  endif()
+endforeach()
+
 set(bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-gap-report-bridge")
 file(REMOVE_RECURSE "${bridge_dir}")
 file(MAKE_DIRECTORY "${bridge_dir}")

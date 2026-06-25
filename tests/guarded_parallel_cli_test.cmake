@@ -58,6 +58,30 @@ execute_process(
     "${Python3_EXECUTABLE}" "${GUARDED_PARALLEL}"
     --max-jobs 1
     --per-job-mb 1
+    --min-free-mb 999999999
+    --job "${Python3_EXECUTABLE} --version"
+  RESULT_VARIABLE zero_budget_job_result
+  OUTPUT_VARIABLE zero_budget_job_stdout
+  ERROR_VARIABLE zero_budget_job_stderr
+)
+if(zero_budget_job_result EQUAL 0)
+  message(FATAL_ERROR
+    "guarded_parallel.py must fail closed instead of waiting forever when jobs cannot start\n${zero_budget_job_stdout}\n${zero_budget_job_stderr}")
+endif()
+if(NOT zero_budget_job_stderr MATCHES "insufficient_memory")
+  message(FATAL_ERROR
+    "guarded_parallel.py zero-budget job failure must explain insufficient_memory\n${zero_budget_job_stdout}\n${zero_budget_job_stderr}")
+endif()
+if(zero_budget_job_stdout MATCHES "start job")
+  message(FATAL_ERROR
+    "guarded_parallel.py zero-budget job must not start any job\n${zero_budget_job_stdout}")
+endif()
+
+execute_process(
+  COMMAND
+    "${Python3_EXECUTABLE}" "${GUARDED_PARALLEL}"
+    --max-jobs 1
+    --per-job-mb 1
     --min-free-mb 0
     --stop-on-failure
     --job "${Python3_EXECUTABLE} --version"

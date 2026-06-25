@@ -18,7 +18,7 @@ The release gate is:
 
 ```sh
 build/starcraft-runtime-gap-report \
-  --manifest tests/fixtures/remastered-complete.manifest \
+  --manifest <live-generated-manifest-outside-tests-fixtures> \
   --product starcraft-remastered \
   --version <version> \
   --process-id <pid> \
@@ -46,8 +46,9 @@ build/starcraft-runtime-gap-report \
    behavior, and survives post-delivery frame advancement.
 6. Issue #7: full BWAPI command surface parity.
    Exit only after a generated BWAPI command/action surface manifest has every
-   public command listed as `live-proven`, `mock+live-scenario`, or
-   `fail-closed documented`.
+   public command listed. Production parity counts only per-command
+   `live-proven` evidence; mock, fixture, documented scenario, or fail-closed
+   entries must keep an implementation gap.
 7. Issue #8: Battle.net policy and AI module loading proof.
    Exit only after exactly one target process is selected and AI callback
    loading is proven from the resident path, not helper-process `dlopen`.
@@ -87,6 +88,8 @@ build/starcraft-runtime-gap-report \
   into production proof, hard-codes a local PID/path, or makes
   `starcraft-runtime-gap-report --require-production` pass with fixture-only
   evidence.
+- Final release commands must not use manifests under `tests/fixtures/**`;
+  fixture manifests are parser/contract test inputs only.
 - After merge, the next issue starts from updated `main`; do not stack hidden
   unreviewed changes across issues.
 

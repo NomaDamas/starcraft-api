@@ -69,7 +69,7 @@ Production readiness requires:
 
 ```sh
 build/starcraft-runtime-gap-report \
-  --manifest tests/fixtures/remastered-complete.manifest \
+  --manifest <live-generated-manifest-outside-tests-fixtures> \
   --product starcraft-remastered \
   --version <version> \
   --process-id <pid> \

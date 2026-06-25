@@ -237,6 +237,7 @@ def run_jobs(args: argparse.Namespace) -> int:
     pending: Deque[Tuple[int, str]] = collections.deque(enumerate(jobs, start=1))
     running: List[RunningJob] = []
     failures: List[Tuple[int, int, str]] = []
+    zero_budget_since: Optional[float] = None
 
     while pending or running:
         still_running: List[RunningJob] = []
@@ -255,6 +256,29 @@ def run_jobs(args: argparse.Namespace) -> int:
 
         snapshot = memory_snapshot()
         budget = recommended_jobs(snapshot, args.max_jobs, args.per_job_mb, args.min_free_mb)
+        now = time.monotonic()
+        if pending and not running and budget <= 0:
+            if not args.wait_for_memory:
+                print(
+                    "[guarded-parallel] insufficient_memory "
+                    f"available_mb={snapshot.available_mb} min_free_mb={args.min_free_mb} "
+                    f"per_job_mb={args.per_job_mb}",
+                    file=sys.stderr,
+                )
+                return 3
+            if zero_budget_since is None:
+                zero_budget_since = now
+            elif args.max_wait_seconds >= 0 and now - zero_budget_since >= args.max_wait_seconds:
+                print(
+                    "[guarded-parallel] memory_wait_timeout "
+                    f"available_mb={snapshot.available_mb} min_free_mb={args.min_free_mb} "
+                    f"per_job_mb={args.per_job_mb} max_wait_seconds={args.max_wait_seconds}",
+                    file=sys.stderr,
+                )
+                return 3
+        else:
+            zero_budget_since = None
+
         if (
             args.terminate_on_critical
             and running
@@ -307,6 +331,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-on-failure", action="store_true")
     parser.add_argument("--shell", action="store_true", help="run jobs through the platform shell")
     parser.add_argument("--terminate-on-critical", action="store_true")
+    parser.add_argument("--wait-for-memory", action="store_true", help="wait for memory instead of failing immediately")
+    parser.add_argument("--max-wait-seconds", type=float, default=60.0)
     parser.add_argument("--print-budget", action="store_true")
     parser.add_argument("--json", action="store_true", help="print budget as JSON")
     return parser

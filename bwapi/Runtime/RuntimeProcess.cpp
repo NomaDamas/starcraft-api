@@ -110,6 +110,26 @@ namespace BWAPI::Runtime
     CloseHandle(process);
     return true;
 #elif defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
+    proc_bsdinfo info;
+    std::memset(&info, 0, sizeof(info));
+    const int bytes = proc_pidinfo(
+      processId,
+      PROC_PIDTBSDINFO,
+      0,
+      &info,
+      static_cast<int>(sizeof(info)));
+    if (bytes == static_cast<int>(sizeof(info)) && info.pbi_status == SZOMB)
+      return false;
+#elif defined(__linux__)
+    {
+      std::ifstream stat("/proc/" + std::to_string(processId) + "/stat");
+      std::string ignored;
+      char state = '\0';
+      if (stat >> ignored >> ignored >> state && state == 'Z')
+        return false;
+    }
+#endif
     if (kill(processId, 0) == 0)
       return true;
     return errno == EPERM;

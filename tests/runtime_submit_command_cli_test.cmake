@@ -11,6 +11,9 @@ endif()
 set(bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-submit-command-bridge")
 file(REMOVE_RECURSE "${bridge_dir}")
 file(MAKE_DIRECTORY "${bridge_dir}")
+file(WRITE "${bridge_dir}/issue_commands.snapshot.tsv"
+  "command\tstorage_kind\tencoded_bytes\n"
+  "pauseGame\tunit-test-runtime-command-queue-v1\t10\n")
 file(WRITE "${bridge_dir}/ready"
   "protocol=starcraft-api-file-bridge-v1\n"
   "product=starcraft-remastered\n"
@@ -39,6 +42,14 @@ file(WRITE "${bridge_dir}/ready"
   "command.sink=runtime-command-queue-v1\n"
   "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n"
   "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n"
+  "proof.issue_commands.command=pauseGame\n"
+  "proof.issue_commands.vector_address=0x1000\n"
+  "proof.issue_commands.storage_kind=unit-test-runtime-command-queue-v1\n"
+  "proof.issue_commands.bytes_in_queue_address=0x1100\n"
+  "proof.issue_commands.frame_counter_address=0x1200\n"
+  "proof.issue_commands.encoded_bytes=10\n"
+  "proof.issue_commands.stale_proof_bytes_cleared=true\n"
+  "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n"
   "proof.attach=passed\n"
   "proof.read_game_state=passed\n"
   "proof.active_match_state=passed\n"

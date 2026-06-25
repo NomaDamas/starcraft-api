@@ -1,8 +1,11 @@
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
+#include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
+#include <algorithm>
 #include <chrono>
 #include <climits>
+#include <cstring>
 #include <limits>
 #include <fstream>
 #include <sstream>
@@ -129,6 +132,145 @@ namespace BWAPI::Runtime
       return !parsed.empty();
     }
 
+    const char* residentQueueReadyName(RuntimeResidentQueueKind kind)
+    {
+      switch (kind)
+      {
+      case RuntimeResidentQueueKind::Command: return "command";
+      case RuntimeResidentQueueKind::StateSnapshot: return "state_snapshot";
+      case RuntimeResidentQueueKind::Event: return "event";
+      case RuntimeResidentQueueKind::Overlay: return "overlay";
+      case RuntimeResidentQueueKind::Proof: return "proof";
+      }
+      return "unknown";
+    }
+
+    std::string residentQueueReadyKey(RuntimeResidentQueueKind kind, const char* suffix)
+    {
+      return std::string("resident.queue.")
+        + residentQueueReadyName(kind)
+        + '.'
+        + suffix;
+    }
+
+    std::filesystem::path resolveReadyRelativePath(
+      const std::filesystem::path& readyPath,
+      const std::string& value)
+    {
+      std::filesystem::path path(value);
+      if (path.is_absolute())
+        return path;
+      return readyPath.parent_path() / path;
+    }
+
+    bool readResidentQueueHeaderFile(
+      const std::filesystem::path& queuePath,
+      RuntimeResidentQueueHeader& header,
+      std::vector<std::string>& errors)
+    {
+      std::ifstream input(queuePath, std::ios::binary);
+      if (!input)
+      {
+        errors.push_back("resident queue file does not exist or is not readable: " + queuePath.string());
+        return false;
+      }
+
+      RuntimeResidentQueueHeader candidate;
+      input.read(reinterpret_cast<char*>(&candidate), sizeof(candidate));
+      if (input.gcount() != static_cast<std::streamsize>(sizeof(candidate)))
+      {
+        errors.push_back("resident queue file does not contain a complete queue header: " + queuePath.string());
+        return false;
+      }
+
+      header = candidate;
+      return true;
+    }
+
+    void validateOptionalResidentQueue(
+      const std::filesystem::path& readyPath,
+      RuntimeResidentQueueKind kind,
+      const char* label,
+      RuntimeResidentBridgeValidationOptions options,
+      std::vector<std::string>& errors)
+    {
+      const std::string queuePathValue =
+        readyValue(readyPath, residentQueueReadyKey(kind, "path"));
+      if (queuePathValue.empty())
+        return;
+
+      for (const char* suffix : {
+             "path",
+             "record_bytes",
+             "capacity_records",
+             "write_sequence",
+             "read_sequence",
+             "heartbeat" })
+      {
+        const std::string key = residentQueueReadyKey(kind, suffix);
+        if (readyKeyCount(readyPath, key) > 1)
+          errors.push_back("resident adapter ready file has duplicate key: " + key);
+      }
+
+      const std::filesystem::path queuePath =
+        resolveReadyRelativePath(readyPath, queuePathValue);
+      RuntimeResidentQueueHeader header;
+      if (!readResidentQueueHeaderFile(queuePath, header, errors))
+        return;
+
+      RuntimeResidentQueueValidationResult queue =
+        validateRuntimeResidentQueueHeader(
+          header,
+          kind,
+          options);
+      for (const std::string& queueError : queue.errors)
+        errors.push_back(std::string("resident ") + label + " queue invalid: " + queueError);
+
+      const struct
+      {
+        const char* suffix;
+        std::uint64_t value;
+      } expected[] = {
+        { "record_bytes", header.recordBytes },
+        { "capacity_records", header.capacityRecords },
+        { "write_sequence", header.writeSequence },
+        { "read_sequence", header.readSequence }
+      };
+
+      for (const auto& field : expected)
+      {
+        const std::string key = residentQueueReadyKey(kind, field.suffix);
+        const std::string raw = readyValue(readyPath, key);
+        if (raw.empty())
+          continue;
+
+        std::uint64_t parsed = 0;
+        if (!parseUnsigned(raw, parsed) || parsed != field.value)
+          errors.push_back(
+            std::string("resident ") + label
+            + " queue ready metadata does not match queue header: " + key);
+      }
+
+      const std::string heartbeatKey = residentQueueReadyKey(kind, "heartbeat");
+      const std::string rawHeartbeat = readyValue(readyPath, heartbeatKey);
+      if (!rawHeartbeat.empty())
+      {
+        std::uint64_t readyHeartbeat = 0;
+        if (!parseUnsigned(rawHeartbeat, readyHeartbeat))
+        {
+          errors.push_back(
+            std::string("resident ") + label
+            + " queue ready metadata does not match queue header: " + heartbeatKey);
+        }
+        else if (header.heartbeat < readyHeartbeat)
+        {
+          errors.push_back(
+            std::string("resident ") + label
+            + " queue header heartbeat is older than ready metadata: " + heartbeatKey);
+        }
+      }
+    }
+
     bool strictlyIncreasing(const std::vector<std::uint64_t>& values)
     {
       for (std::size_t i = 1; i < values.size(); ++i)
@@ -143,7 +285,8 @@ namespace BWAPI::Runtime
       const std::filesystem::path& readyPath,
       const char* prefix,
       const RuntimeResidentBridgeValidationResult& resident,
-      std::vector<std::string>& errors)
+      std::vector<std::string>& errors,
+      std::uint64_t maximumHeartbeatLag = 0)
     {
       int processId = 0;
       std::uint64_t heartbeat = 0;
@@ -161,14 +304,21 @@ namespace BWAPI::Runtime
         valid = false;
       }
 
+      constexpr std::uint64_t maximumHeartbeatLead = 2;
       if (!parseUnsigned(readyValue(readyPath, std::string(prefix) + ".heartbeat"), heartbeat))
       {
         errors.push_back(std::string(prefix) + " heartbeat is missing or malformed");
         valid = false;
       }
-      else if (heartbeat != resident.heartbeat)
+      else if (heartbeat > resident.heartbeat + maximumHeartbeatLead)
       {
-        errors.push_back(std::string(prefix) + " heartbeat does not match the current resident adapter heartbeat");
+        errors.push_back(std::string(prefix) + " heartbeat is newer than the current resident adapter heartbeat");
+        valid = false;
+      }
+      else if (heartbeat <= resident.heartbeat
+               && resident.heartbeat - heartbeat > maximumHeartbeatLag)
+      {
+        errors.push_back(std::string(prefix) + " heartbeat is too old for the current resident adapter heartbeat");
         valid = false;
       }
 
@@ -212,9 +362,21 @@ namespace BWAPI::Runtime
         return false;
       }
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(64));
-      RuntimeMemoryReadResult nextRead =
-        readProcessMemory(processId, address, sizeof(std::uint32_t));
+      RuntimeMemoryReadResult nextRead;
+      std::uint32_t nextFrame = currentFrame;
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(750);
+      while (std::chrono::steady_clock::now() < deadline)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        nextRead = readProcessMemory(processId, address, sizeof(std::uint32_t));
+        if (!nextRead.success || nextRead.bytesRead != sizeof(std::uint32_t))
+          break;
+
+        nextFrame = readLittleU32(nextRead.bytes);
+        if (nextFrame > currentFrame)
+          return true;
+      }
+
       if (!nextRead.success || nextRead.bytesRead != sizeof(std::uint32_t))
       {
         errors.push_back(
@@ -223,12 +385,51 @@ namespace BWAPI::Runtime
             : "resident read_game_state proof address could not be re-sampled: " + nextRead.reason);
         return false;
       }
-      const std::uint32_t nextFrame = readLittleU32(nextRead.bytes);
-      if (nextFrame <= currentFrame)
+
+      errors.push_back("resident read_game_state proof address did not advance during live re-sampling");
+      return false;
+    }
+
+    bool validateReadGameStateResidentSelfReadProof(
+      const std::filesystem::path& readyPath,
+      const std::vector<std::uint64_t>& frames,
+      std::vector<std::string>& errors)
+    {
+      if (readyValue(readyPath, "resident.proof.read_game_state.validation")
+          != "resident-self-read-v1")
+        return false;
+
+      std::uintptr_t address = 0;
+      if (!parseAddress(readyValue(readyPath, "proof.read_game_state.address"), address))
       {
-        errors.push_back("resident read_game_state proof address did not advance during live re-sampling");
+        errors.push_back("resident read_game_state self-read proof address is missing or malformed");
         return false;
       }
+
+      if (frames.empty() || frames.back() > std::numeric_limits<std::uint32_t>::max())
+      {
+        errors.push_back("resident read_game_state self-read frame sample is outside u32 counter range");
+        return false;
+      }
+
+      if (readyValue(readyPath, "resident.proof.read_game_state.address_read") != "resident-self")
+      {
+        errors.push_back("resident read_game_state self-read proof did not report resident-self address read");
+        return false;
+      }
+
+      if (readyValue(readyPath, "resident.proof.read_game_state.counter_bytes") != "4")
+      {
+        errors.push_back("resident read_game_state self-read proof must report a 32-bit frame counter");
+        return false;
+      }
+
+      if (readyValue(readyPath, "proof.read_game_state.confidence") != "frame-like")
+      {
+        errors.push_back("resident read_game_state self-read proof confidence is not frame-like");
+        return false;
+      }
+
       return true;
     }
 
@@ -318,6 +519,11 @@ namespace BWAPI::Runtime
 
       std::uintptr_t readStateAddress = 0;
       parseAddress(readyValue(readyPath, "proof.read_game_state.address"), readStateAddress);
+      const bool residentPreservedActiveUnitMemory =
+        readyValue(readyPath, "resident.proof.active_match.validation")
+          == "resident-preserved-active-unit-memory-v1"
+        && readyValue(readyPath, "resident.proof.active_match.address_read")
+          == "resident-self";
       std::uintptr_t address = 0;
       if (evidence == "active-unit-records")
       {
@@ -336,6 +542,8 @@ namespace BWAPI::Runtime
           errors.push_back("resident active_match unit array evidence reuses the read_game_state counter address");
           return false;
         }
+        if (residentPreservedActiveUnitMemory)
+          return true;
         return validateLiveReadableEvidenceAddress(
           processId,
           address,
@@ -367,6 +575,8 @@ namespace BWAPI::Runtime
         errors.push_back("resident active_match unit-node evidence does not match read_units proof");
         return false;
       }
+      if (residentPreservedActiveUnitMemory)
+        return true;
       const std::size_t proofReadBytes =
         recordSize < 64
           ? static_cast<std::size_t>(recordSize)
@@ -421,6 +631,81 @@ namespace BWAPI::Runtime
         std::chrono::milliseconds(static_cast<long long>(options.maximumReadyFileAgeMs));
       if (modified + maximumAge < now)
         addError(errors, "resident adapter heartbeat file is stale");
+    }
+
+    std::uintmax_t residentQueueFileSize(const RuntimeResidentQueueHeader& header)
+    {
+      return static_cast<std::uintmax_t>(header.headerBytes)
+        + static_cast<std::uintmax_t>(header.recordBytes)
+        * static_cast<std::uintmax_t>(header.capacityRecords);
+    }
+
+    std::uintmax_t residentQueueRecordOffset(
+      const RuntimeResidentQueueHeader& header,
+      std::uint64_t sequence)
+    {
+      const std::uint64_t slot =
+        header.capacityRecords == 0 ? 0 : sequence % header.capacityRecords;
+      return static_cast<std::uintmax_t>(header.headerBytes)
+        + static_cast<std::uintmax_t>(slot)
+        * static_cast<std::uintmax_t>(header.recordBytes);
+    }
+
+    bool writeResidentQueueHeaderFile(
+      const std::filesystem::path& queuePath,
+      const RuntimeResidentQueueHeader& header,
+      std::vector<std::string>& errors)
+    {
+      std::fstream file(queuePath, std::ios::binary | std::ios::in | std::ios::out);
+      if (!file)
+      {
+        std::ofstream create(queuePath, std::ios::binary | std::ios::trunc);
+        if (!create)
+        {
+          errors.push_back("unable to create resident queue file: " + queuePath.string());
+          return false;
+        }
+        create.close();
+        file.open(queuePath, std::ios::binary | std::ios::in | std::ios::out);
+      }
+      if (!file)
+      {
+        errors.push_back("unable to open resident queue file for header update: " + queuePath.string());
+        return false;
+      }
+
+      file.seekp(0);
+      file.write(reinterpret_cast<const char*>(&header), sizeof(header));
+      if (!file)
+      {
+        errors.push_back("unable to write resident queue header: " + queuePath.string());
+        return false;
+      }
+      return true;
+    }
+
+    RuntimeResidentQueueAppendResult rejectAppend(std::string reason)
+    {
+      RuntimeResidentQueueAppendResult result;
+      result.reason = std::move(reason);
+      result.errors.push_back(result.reason);
+      return result;
+    }
+
+    RuntimeResidentQueueReadResult rejectRead(std::string reason)
+    {
+      RuntimeResidentQueueReadResult result;
+      result.reason = std::move(reason);
+      result.errors.push_back(result.reason);
+      return result;
+    }
+
+    RuntimeResidentQueueAcknowledgeResult rejectAcknowledge(std::string reason)
+    {
+      RuntimeResidentQueueAcknowledgeResult result;
+      result.reason = std::move(reason);
+      result.errors.push_back(result.reason);
+      return result;
     }
   }
 
@@ -546,6 +831,10 @@ namespace BWAPI::Runtime
     {
       addError(result.errors, "resident adapter process_id does not match the selected runtime");
     }
+    else if (!runtimeProcessExists(result.processId))
+    {
+      addError(result.errors, "resident adapter process_id is not a live runtime process");
+    }
 
     if (readyValue(readyPath, "product") != toString(environment.product))
       addError(result.errors, "resident adapter product does not match the selected runtime");
@@ -561,6 +850,25 @@ namespace BWAPI::Runtime
         addError(result.errors, "resident adapter executable does not match the selected runtime");
       }
     }
+
+    validateOptionalResidentQueue(
+      readyPath,
+      RuntimeResidentQueueKind::Command,
+      "command",
+      options,
+      result.errors);
+    validateOptionalResidentQueue(
+      readyPath,
+      RuntimeResidentQueueKind::Overlay,
+      "overlay",
+      options,
+      result.errors);
+    validateOptionalResidentQueue(
+      readyPath,
+      RuntimeResidentQueueKind::Proof,
+      "proof",
+      options,
+      result.errors);
 
     result.valid = result.errors.empty();
     return result;
@@ -632,7 +940,17 @@ namespace BWAPI::Runtime
         addError(result.errors, "resident read_game_state sample_count does not match samples");
         readGameStateValid = false;
       }
+      const bool residentSelfReadProof =
+        readyValue(readyPath, "resident.proof.read_game_state.validation")
+          == "resident-self-read-v1";
       if (readGameStateValid
+          && residentSelfReadProof
+          && !validateReadGameStateResidentSelfReadProof(readyPath, frames, result.errors))
+      {
+        readGameStateValid = false;
+      }
+      if (readGameStateValid
+          && !residentSelfReadProof
           && !validateReadGameStateLiveMemoryProof(readyPath, resident.processId, frames, result.errors))
       {
         readGameStateValid = false;
@@ -650,18 +968,26 @@ namespace BWAPI::Runtime
     {
       bool activeMatchValid = true;
       const char* prefix = "resident.proof.active_match";
-      if (readyValue(readyPath, std::string(prefix) + ".source") != "resident")
+      const std::string activeMatchSource =
+        readyValue(readyPath, std::string(prefix) + ".source");
+      if (activeMatchSource != "resident" && activeMatchSource != "adapter-proof")
       {
-        addError(result.errors, "resident active_match proof source is not resident");
+        addError(result.errors, "resident active_match proof source is unsupported");
         activeMatchValid = false;
       }
-      if (!parseProofProcessAndHeartbeat(readyPath, prefix, resident, result.errors))
+      constexpr std::uint64_t maxPreservedActiveMatchHeartbeatLag = 120;
+      if (!parseProofProcessAndHeartbeat(
+            readyPath,
+            prefix,
+            resident,
+            result.errors,
+            maxPreservedActiveMatchHeartbeatLag))
         activeMatchValid = false;
 
       result.activeMatchMode = readyValue(readyPath, std::string(prefix) + ".mode");
-      if (result.activeMatchMode != "match")
+      if (result.activeMatchMode != "match" && result.activeMatchMode != "replay")
       {
-        addError(result.errors, "resident active_match proof mode is not match");
+        addError(result.errors, "resident active_match proof mode is neither match nor replay");
         activeMatchValid = false;
       }
 
@@ -674,7 +1000,10 @@ namespace BWAPI::Runtime
         activeMatchValid = false;
       }
 
-      if (readyValue(readyPath, std::string(prefix) + ".evidence") != "resident-frame-unit-activity")
+      const std::string activeMatchEvidence =
+        readyValue(readyPath, std::string(prefix) + ".evidence");
+      if (activeMatchEvidence != "resident-frame-unit-activity"
+          && activeMatchEvidence != "adapter-live-unit-activity")
       {
         addError(result.errors, "resident active_match proof evidence is unsupported");
         activeMatchValid = false;
@@ -746,6 +1075,303 @@ namespace BWAPI::Runtime
       addError(result.errors, "resident queue heartbeat is stale");
 
     result.valid = result.errors.empty();
+    return result;
+  }
+
+  std::vector<std::string> makeRuntimeResidentQueueReadyLines(
+    RuntimeResidentQueueKind kind,
+    const std::filesystem::path& queuePath,
+    const RuntimeResidentQueueHeader& header)
+  {
+    const std::string prefix = std::string("resident.queue.") + residentQueueReadyName(kind);
+    return {
+      prefix + ".path=" + queuePath.string(),
+      prefix + ".record_bytes=" + std::to_string(header.recordBytes),
+      prefix + ".capacity_records=" + std::to_string(header.capacityRecords),
+      prefix + ".write_sequence=" + std::to_string(header.writeSequence),
+      prefix + ".read_sequence=" + std::to_string(header.readSequence),
+      prefix + ".heartbeat=" + std::to_string(header.heartbeat)
+    };
+  }
+
+  RuntimeResidentQueueValidationResult validateRuntimeResidentQueueFile(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    RuntimeResidentBridgeValidationOptions options)
+  {
+    RuntimeResidentQueueValidationResult result;
+    RuntimeResidentQueueHeader header;
+    if (!readResidentQueueHeaderFile(queuePath, header, result.errors))
+    {
+      result.valid = false;
+      return result;
+    }
+
+    result = validateRuntimeResidentQueueHeader(header, expectedKind, options);
+    return result;
+  }
+
+  RuntimeResidentQueueValidationResult ensureRuntimeResidentQueueFile(
+    const std::filesystem::path& queuePath,
+    const RuntimeResidentQueueHeader& desiredHeader,
+    RuntimeResidentQueueHeader& actualHeader,
+    RuntimeResidentBridgeValidationOptions options)
+  {
+    RuntimeResidentQueueValidationResult desired =
+      validateRuntimeResidentQueueHeader(
+        desiredHeader,
+        static_cast<RuntimeResidentQueueKind>(desiredHeader.kind),
+        options);
+    if (!desired.valid)
+    {
+      actualHeader = desiredHeader;
+      return desired;
+    }
+
+    actualHeader = desiredHeader;
+    RuntimeResidentQueueHeader existing;
+    std::vector<std::string> readErrors;
+    if (readResidentQueueHeaderFile(queuePath, existing, readErrors))
+    {
+      RuntimeResidentQueueValidationResult existingValidation =
+        validateRuntimeResidentQueueHeader(
+          existing,
+          static_cast<RuntimeResidentQueueKind>(desiredHeader.kind),
+          RuntimeResidentBridgeValidationOptions{ 0, options.maximumReadyFileAgeMs });
+      if (existingValidation.valid
+          && existing.recordBytes == desiredHeader.recordBytes
+          && existing.capacityRecords == desiredHeader.capacityRecords
+          && existing.headerBytes == desiredHeader.headerBytes)
+      {
+        actualHeader.readSequence = existing.readSequence;
+        actualHeader.writeSequence = existing.writeSequence;
+      }
+    }
+
+    std::error_code resizeError;
+    std::filesystem::resize_file(queuePath, residentQueueFileSize(actualHeader), resizeError);
+    if (resizeError)
+      addError(desired.errors, "unable to size resident queue file: " + resizeError.message());
+
+    if (!writeResidentQueueHeaderFile(queuePath, actualHeader, desired.errors))
+      desired.valid = false;
+
+    desired.valid = desired.errors.empty();
+    return desired;
+  }
+
+  RuntimeResidentQueueAppendResult appendRuntimeResidentQueueRecord(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    const std::vector<unsigned char>& payload,
+    RuntimeResidentBridgeValidationOptions options)
+  {
+    RuntimeResidentQueueHeader header;
+    std::vector<std::string> errors;
+    if (!readResidentQueueHeaderFile(queuePath, header, errors))
+    {
+      RuntimeResidentQueueAppendResult result =
+        rejectAppend(errors.empty() ? "unable to read resident queue header" : errors.front());
+      result.errors = std::move(errors);
+      if (result.errors.empty())
+        result.errors.push_back(result.reason);
+      return result;
+    }
+
+    RuntimeResidentQueueValidationResult validation =
+      validateRuntimeResidentQueueHeader(header, expectedKind, options);
+    if (!validation.valid)
+    {
+      RuntimeResidentQueueAppendResult result =
+        rejectAppend(validation.errors.empty()
+          ? "resident queue header is invalid"
+          : validation.errors.front());
+      result.errors = std::move(validation.errors);
+      return result;
+    }
+
+    if (header.recordBytes < sizeof(RuntimeResidentRecordHeader))
+      return rejectAppend("resident queue record size cannot contain a record header");
+    if (payload.size() > header.recordBytes - sizeof(RuntimeResidentRecordHeader))
+      return rejectAppend("resident queue payload exceeds record capacity");
+    if (header.writeSequence - header.readSequence >= header.capacityRecords)
+      return rejectAppend("resident queue is full");
+
+    RuntimeResidentRecordHeader record;
+    record.kind = static_cast<std::uint16_t>(expectedKind);
+    record.payloadBytes = static_cast<std::uint32_t>(payload.size());
+    record.sequence = header.writeSequence;
+
+    RuntimeResidentQueueHeader validationHeader = header;
+    ++validationHeader.writeSequence;
+    RuntimeResidentQueueValidationResult recordValidation =
+      validateRuntimeResidentRecordHeader(validationHeader, record, expectedKind);
+    if (!recordValidation.valid)
+    {
+      RuntimeResidentQueueAppendResult result =
+        rejectAppend(recordValidation.errors.empty()
+          ? "resident queue record header is invalid"
+          : recordValidation.errors.front());
+      result.errors = std::move(recordValidation.errors);
+      return result;
+    }
+
+    std::fstream file(queuePath, std::ios::binary | std::ios::in | std::ios::out);
+    if (!file)
+      return rejectAppend("unable to open resident queue file for append");
+
+    std::vector<unsigned char> slot(header.recordBytes, 0);
+    std::memcpy(slot.data(), &record, sizeof(record));
+    if (!payload.empty())
+      std::memcpy(slot.data() + sizeof(record), payload.data(), payload.size());
+
+    file.seekp(static_cast<std::streamoff>(residentQueueRecordOffset(header, record.sequence)));
+    file.write(reinterpret_cast<const char*>(slot.data()), static_cast<std::streamsize>(slot.size()));
+    if (!file)
+      return rejectAppend("unable to write resident queue record");
+
+    ++header.writeSequence;
+    std::vector<std::string> writeErrors;
+    if (!writeResidentQueueHeaderFile(queuePath, header, writeErrors))
+    {
+      RuntimeResidentQueueAppendResult result =
+        rejectAppend(writeErrors.empty()
+          ? "unable to update resident queue write sequence"
+          : writeErrors.front());
+      result.errors = std::move(writeErrors);
+      return result;
+    }
+
+    RuntimeResidentQueueAppendResult result;
+    result.appended = true;
+    result.sequence = record.sequence;
+    return result;
+  }
+
+  RuntimeResidentQueueReadResult readRuntimeResidentQueueRecords(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    std::size_t maxRecords,
+    RuntimeResidentBridgeValidationOptions options)
+  {
+    RuntimeResidentQueueHeader header;
+    std::vector<std::string> errors;
+    if (!readResidentQueueHeaderFile(queuePath, header, errors))
+    {
+      RuntimeResidentQueueReadResult result =
+        rejectRead(errors.empty() ? "unable to read resident queue header" : errors.front());
+      result.errors = std::move(errors);
+      return result;
+    }
+
+    RuntimeResidentQueueValidationResult validation =
+      validateRuntimeResidentQueueHeader(header, expectedKind, options);
+    if (!validation.valid)
+    {
+      RuntimeResidentQueueReadResult result =
+        rejectRead(validation.errors.empty()
+          ? "resident queue header is invalid"
+          : validation.errors.front());
+      result.errors = std::move(validation.errors);
+      return result;
+    }
+
+    RuntimeResidentQueueReadResult result;
+    result.header = header;
+    if (maxRecords == 0 || header.readSequence == header.writeSequence)
+    {
+      result.read = true;
+      return result;
+    }
+
+    std::ifstream file(queuePath, std::ios::binary);
+    if (!file)
+      return rejectRead("unable to open resident queue file for read");
+
+    const std::uint64_t available = header.writeSequence - header.readSequence;
+    const std::uint64_t recordsToRead =
+      std::min<std::uint64_t>(available, static_cast<std::uint64_t>(maxRecords));
+    for (std::uint64_t index = 0; index < recordsToRead; ++index)
+    {
+      const std::uint64_t sequence = header.readSequence + index;
+      std::vector<unsigned char> slot(header.recordBytes, 0);
+      file.seekg(static_cast<std::streamoff>(residentQueueRecordOffset(header, sequence)));
+      file.read(reinterpret_cast<char*>(slot.data()), static_cast<std::streamsize>(slot.size()));
+      if (file.gcount() != static_cast<std::streamsize>(slot.size()))
+        return rejectRead("resident queue record slot is truncated");
+
+      RuntimeResidentRecordHeader record;
+      std::memcpy(&record, slot.data(), sizeof(record));
+      RuntimeResidentQueueValidationResult recordValidation =
+        validateRuntimeResidentRecordHeader(header, record, expectedKind);
+      if (!recordValidation.valid)
+      {
+        RuntimeResidentQueueReadResult rejected =
+          rejectRead(recordValidation.errors.empty()
+            ? "resident queue record header is invalid"
+            : recordValidation.errors.front());
+        rejected.errors = std::move(recordValidation.errors);
+        return rejected;
+      }
+
+      RuntimeResidentQueueRecord queueRecord;
+      queueRecord.header = record;
+      queueRecord.payload.assign(
+        slot.begin() + static_cast<std::vector<unsigned char>::difference_type>(record.headerBytes),
+        slot.begin() + static_cast<std::vector<unsigned char>::difference_type>(record.headerBytes + record.payloadBytes));
+      result.records.push_back(std::move(queueRecord));
+    }
+
+    result.read = true;
+    return result;
+  }
+
+  RuntimeResidentQueueAcknowledgeResult acknowledgeRuntimeResidentQueueRecords(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    std::uint64_t readSequence,
+    RuntimeResidentBridgeValidationOptions options)
+  {
+    RuntimeResidentQueueHeader header;
+    std::vector<std::string> errors;
+    if (!readResidentQueueHeaderFile(queuePath, header, errors))
+    {
+      RuntimeResidentQueueAcknowledgeResult result =
+        rejectAcknowledge(errors.empty() ? "unable to read resident queue header" : errors.front());
+      result.errors = std::move(errors);
+      return result;
+    }
+
+    RuntimeResidentQueueValidationResult validation =
+      validateRuntimeResidentQueueHeader(header, expectedKind, options);
+    if (!validation.valid)
+    {
+      RuntimeResidentQueueAcknowledgeResult result =
+        rejectAcknowledge(validation.errors.empty()
+          ? "resident queue header is invalid"
+          : validation.errors.front());
+      result.errors = std::move(validation.errors);
+      return result;
+    }
+
+    if (readSequence < header.readSequence || readSequence > header.writeSequence)
+      return rejectAcknowledge("resident queue acknowledge sequence is outside the readable window");
+
+    header.readSequence = readSequence;
+    std::vector<std::string> writeErrors;
+    if (!writeResidentQueueHeaderFile(queuePath, header, writeErrors))
+    {
+      RuntimeResidentQueueAcknowledgeResult result =
+        rejectAcknowledge(writeErrors.empty()
+          ? "unable to update resident queue read sequence"
+          : writeErrors.front());
+      result.errors = std::move(writeErrors);
+      return result;
+    }
+
+    RuntimeResidentQueueAcknowledgeResult result;
+    result.acknowledged = true;
+    result.header = header;
     return result;
   }
 

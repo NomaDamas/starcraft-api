@@ -1,6 +1,7 @@
 #include <BWAPI/Runtime/RuntimeInstallation.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -35,6 +36,8 @@ namespace
       << "  env STARCRAFT_API_WINDOWED=0 disables the default partial-screen executable launch\n"
       << "  env STARCRAFT_API_WINDOW_WIDTH/HEIGHT/X/Y changes the default 1024x768+100+100 window\n"
       << "  env STARCRAFT_API_EXTRA_ARGS appends quoted extra args after the Remastered launch args\n"
+      << "  --resident-adapter <path>\n"
+      << "                           inject the in-process resident adapter into a direct StarCraft launch\n"
       << "  --manifest-out <path>    write a local bootstrap manifest\n"
       << "  --evidence-out <path>    write a launch/attach diagnostic evidence report\n"
       << "  --bridge <path>          write a filesystem bridge ready file\n"
@@ -62,6 +65,7 @@ int main(int argc, char** argv)
   std::string evidenceOut;
   std::string bridgePath;
   std::string replayPath;
+  std::string residentAdapterPath;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -130,6 +134,20 @@ int main(int argc, char** argv)
       }
       evidenceOut = argv[++i];
     }
+    else if (arg == "--resident-adapter")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--resident-adapter requires a path\n";
+        return 64;
+      }
+      residentAdapterPath = argv[++i];
+      if (residentAdapterPath.empty())
+      {
+        std::cerr << "--resident-adapter requires a non-empty path\n";
+        return 64;
+      }
+    }
     else if (arg == "--bridge")
     {
       if (i + 1 >= argc)
@@ -190,6 +208,31 @@ int main(int argc, char** argv)
     return 2;
   }
 
+  if (!residentAdapterPath.empty())
+  {
+    std::error_code error;
+    std::filesystem::path normalizedResidentAdapterPath =
+      std::filesystem::absolute(residentAdapterPath, error);
+    if (!error)
+      normalizedResidentAdapterPath = normalizedResidentAdapterPath.lexically_normal();
+    if (error || !std::filesystem::is_regular_file(normalizedResidentAdapterPath, error) || error)
+    {
+      std::cerr << "resident adapter dylib does not exist: " << residentAdapterPath << '\n';
+      return 64;
+    }
+    residentAdapterPath = normalizedResidentAdapterPath.string();
+
+    if (bridgePath.empty())
+      bridgePath = (std::filesystem::temp_directory_path() / "starcraft-api-live-bridge").string();
+    setenv("STARCRAFT_API_RESIDENT_ENABLE", "1", 1);
+    setenv("STARCRAFT_API_EXECUTOR_BRIDGE_DIR", bridgePath.c_str(), 1);
+#if defined(__APPLE__)
+    setenv("DYLD_INSERT_LIBRARIES", residentAdapterPath.c_str(), 1);
+#elif defined(__linux__)
+    setenv("LD_PRELOAD", residentAdapterPath.c_str(), 1);
+#endif
+  }
+
   RuntimeLaunchResult launchResult =
     launchOrAttachRuntime(
       installation,
@@ -242,14 +285,19 @@ int main(int argc, char** argv)
 
   if (!bridgePath.empty())
   {
-    std::string error;
-    if (!writeRuntimeExecutorReadyFile(runtimeEnvironment, bridgePath, error))
+    if (residentAdapterPath.empty())
     {
-      std::cerr << error << '\n';
-      return 1;
+      std::string error;
+      if (!writeRuntimeExecutorReadyFile(runtimeEnvironment, bridgePath, error))
+      {
+        std::cerr << error << '\n';
+        return 1;
+      }
     }
     runtimeEnvironment.executorBridgePath = bridgePath;
     std::cout << "executor.bridge_path=" << bridgePath << '\n';
+    if (!residentAdapterPath.empty())
+      std::cout << "executor.resident_adapter=" << residentAdapterPath << '\n';
   }
 
   if (printEnv)

@@ -134,6 +134,11 @@ namespace BWAPI::Runtime
       return evidence.substr(0, separator);
     }
 
+    bool readyFileHasValidatedProductionProof(
+      const std::filesystem::path& readyPath,
+      const std::string& proofLine,
+      const RuntimeResidentStateProofValidationResult* residentStateProof);
+
     bool readyFileContainsEvidenceProof(
       const std::filesystem::path& readyPath,
       const std::string& evidence,
@@ -142,19 +147,245 @@ namespace BWAPI::Runtime
       const std::string proofLine = evidenceProofLine(evidence);
       if (proofLine.empty() || !fileContainsLine(readyPath, proofLine))
         return false;
-      if (residentStateProof != nullptr)
-      {
-        if (proofLine == "proof.read_game_state=passed")
-          return residentStateProof->readGameStateValid;
-        if (proofLine == "proof.active_match_state=passed")
-          return residentStateProof->activeMatchValid;
-      }
-      return true;
+      return readyFileHasValidatedProductionProof(
+        readyPath,
+        proofLine,
+        residentStateProof);
     }
 
     bool proofLineMatches(const std::string& evidence, const char* expectedProofLine)
     {
       return evidenceProofLine(evidence) == expectedProofLine;
+    }
+
+    bool parseUnsignedReadyValue(
+      const std::filesystem::path& readyPath,
+      const std::string& key,
+      std::uint64_t& value)
+    {
+      const std::string text = readReadyValue(readyPath, key);
+      if (text.empty())
+        return false;
+      try
+      {
+        std::size_t consumed = 0;
+        const unsigned long long parsed = std::stoull(text, &consumed, 0);
+        if (consumed != text.size())
+          return false;
+        value = static_cast<std::uint64_t>(parsed);
+        return static_cast<unsigned long long>(value) == parsed;
+      }
+      catch (...)
+      {
+        return false;
+      }
+    }
+
+    bool readyValueIsNonZeroUnsigned(
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      std::uint64_t value = 0;
+      return parseUnsignedReadyValue(readyPath, key, value) && value != 0;
+    }
+
+    bool readyValueIsTrue(
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      return readReadyValue(readyPath, key) == "true";
+    }
+
+    bool readySnapshotExists(
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      const std::string value = readReadyValue(readyPath, key);
+      if (value.empty())
+        return false;
+      std::filesystem::path snapshot(value);
+      if (!snapshot.is_absolute())
+        snapshot = readyPath.parent_path() / snapshot;
+      std::error_code error;
+      if (!std::filesystem::is_regular_file(snapshot, error) || error)
+        return false;
+      const std::uintmax_t size = std::filesystem::file_size(snapshot, error);
+      return !error && size > 0;
+    }
+
+    bool validatedReadUnitsProof(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
+    {
+      if (residentStateProof == nullptr || !residentStateProof->activeMatchValid)
+        return false;
+      return readyValueIsNonZeroUnsigned(readyPath, "proof.read_units.address")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_units.record_size")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_units.active_records");
+    }
+
+    bool validatedReadPlayerDataProof(const std::filesystem::path& readyPath)
+    {
+      const bool nativePlayerTable =
+        readReadyValue(readyPath, "proof.read_player_data.source") == "live-sc-r-player-table"
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_player_data.players_address")
+        && readyValueIsTrue(readyPath, "proof.read_player_data.resources_resolved")
+        && readyValueIsTrue(readyPath, "proof.read_player_data.supply_resolved");
+
+      const bool residentProjection =
+        readReadyValue(readyPath, "proof.read_player_data.projection_source")
+          == "compat-player-projection-v1:unit-snapshot-derived"
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_player_data.player_count")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_player_data.observed_units")
+        && readyValueIsTrue(readyPath, "proof.read_player_data.player_info_projection")
+        && readyValueIsTrue(readyPath, "proof.read_player_data.alliance_projection");
+
+      return (nativePlayerTable || residentProjection)
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_player_data.player_info_record_size")
+        && readySnapshotExists(readyPath, "proof.read_player_data.snapshot");
+    }
+
+    bool validatedReadMapDataProof(const std::filesystem::path& readyPath)
+    {
+      const std::string source = readReadyValue(readyPath, "proof.read_map_data.source");
+      return (source == "live-sc-r-map-tile-array"
+          || source == "live-sc-r-map-open-file+resident-tile-projection-v1")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_map_data.map_name_address")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_map_data.map_tile_array_address")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_map_data.tile_count")
+        && readySnapshotExists(readyPath, "proof.read_map_data.snapshot");
+    }
+
+    bool validatedReadBulletDataProof(const std::filesystem::path& readyPath)
+    {
+      return readReadyValue(readyPath, "proof.read_bullet_data.source") == "live-sc-r-bullet-table"
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.address")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.record_size")
+        && readySnapshotExists(readyPath, "proof.read_bullet_data.snapshot");
+    }
+
+    bool validatedReadRegionDataProof(const std::filesystem::path& readyPath)
+    {
+      return readReadyValue(readyPath, "proof.read_region_data.source") == "live-bwapi-region-graph"
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_region_data.region_count")
+        && readySnapshotExists(readyPath, "proof.read_region_data.snapshot");
+    }
+
+    bool validatedDispatchEventsProof(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
+    {
+      if (residentStateProof == nullptr || !residentStateProof->activeMatchValid)
+        return false;
+      return readyValueIsNonZeroUnsigned(readyPath, "proof.dispatch_events.frame_events")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.dispatch_events.unit_discover_events")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.dispatch_events.unit_update_events")
+        && readySnapshotExists(readyPath, "proof.dispatch_events.snapshot");
+    }
+
+    bool validatedReplayAnalysisProof(const std::filesystem::path& readyPath)
+    {
+      const std::string source = readReadyValue(readyPath, "proof.replay_analysis.source");
+      const bool parsedReplay =
+        source == "parsed-replay-header"
+        && readyValueIsTrue(readyPath, "proof.replay_analysis.current_process_replay");
+      const bool activeMatchMetadata =
+        source == "active-match-live-metadata"
+        && readyValueIsTrue(readyPath, "proof.replay_analysis.active_match_metadata");
+      return (parsedReplay || activeMatchMetadata)
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.replay_analysis.last_frame")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.replay_analysis.player_count")
+        && readySnapshotExists(readyPath, "proof.replay_analysis.snapshot");
+    }
+
+    bool validatedIssueCommandsProof(const std::filesystem::path& readyPath)
+    {
+      return !readReadyValue(readyPath, "proof.issue_commands.command").empty()
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.vector_address")
+        && !readReadyValue(readyPath, "proof.issue_commands.storage_kind").empty()
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.bytes_in_queue_address")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.frame_counter_address")
+        && !readReadyValue(readyPath, "proof.issue_commands.encoded_bytes").empty()
+        && readyValueIsTrue(readyPath, "proof.issue_commands.stale_proof_bytes_cleared")
+        && readySnapshotExists(readyPath, "proof.issue_commands.snapshot");
+    }
+
+    bool validatedDrawOverlaysProof(const std::filesystem::path& readyPath)
+    {
+      return readReadyValue(readyPath, "proof.draw_overlays.source") == "live-render-hook"
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.draw_overlays.hook_address")
+        && readySnapshotExists(readyPath, "proof.draw_overlays.snapshot");
+    }
+
+    bool validatedMultiplayerSyncProof(const std::filesystem::path& readyPath)
+    {
+      return readReadyValue(readyPath, "proof.multiplayer_sync.source") == "live-snet-turn-hooks"
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.multiplayer_sync.send_turn_address")
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.multiplayer_sync.receive_message_address")
+        && readySnapshotExists(readyPath, "proof.multiplayer_sync.snapshot");
+    }
+
+    bool validatedBattleNetPolicyProof(const std::filesystem::path& readyPath)
+    {
+      std::uint64_t gameProcessCount = 0;
+      std::uint64_t blockerCount = 1;
+      return readReadyValue(readyPath, "proof.battle_net_policy.status") == "runtime-process-visible"
+        && parseUnsignedReadyValue(
+          readyPath,
+          "proof.battle_net_policy.game_process_count",
+          gameProcessCount)
+        && gameProcessCount == 1
+        && parseUnsignedReadyValue(
+          readyPath,
+          "proof.battle_net_policy.blocker_count",
+          blockerCount)
+        && blockerCount == 0;
+    }
+
+    bool validatedLoadAIModulesProof(const std::filesystem::path& readyPath)
+    {
+      return readReadyValue(readyPath, "proof.load_ai_modules.loader") == "dlopen"
+        && readReadyValue(readyPath, "proof.load_ai_modules.self_process_smoke") == "false"
+        && !readReadyValue(readyPath, "proof.load_ai_modules.module_path").empty()
+        && readySnapshotExists(readyPath, "proof.load_ai_modules.snapshot");
+    }
+
+    bool readyFileHasValidatedProductionProof(
+      const std::filesystem::path& readyPath,
+      const std::string& proofLine,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
+    {
+      if (proofLine == "proof.attach=passed")
+        return readReadyValue(readyPath, "proof.attach.source") == "resident-adapter";
+      if (proofLine == "proof.read_game_state=passed")
+        return residentStateProof == nullptr || residentStateProof->readGameStateValid;
+      if (proofLine == "proof.active_match_state=passed")
+        return residentStateProof == nullptr || residentStateProof->activeMatchValid;
+      if (proofLine == "proof.read_units=passed")
+        return validatedReadUnitsProof(readyPath, residentStateProof);
+      if (proofLine == "proof.read_player_data=passed")
+        return validatedReadPlayerDataProof(readyPath);
+      if (proofLine == "proof.read_map_data=passed")
+        return validatedReadMapDataProof(readyPath);
+      if (proofLine == "proof.read_bullet_data=passed")
+        return validatedReadBulletDataProof(readyPath);
+      if (proofLine == "proof.read_region_data=passed")
+        return validatedReadRegionDataProof(readyPath);
+      if (proofLine == "proof.issue_commands=passed")
+        return validatedIssueCommandsProof(readyPath);
+      if (proofLine == "proof.draw_overlays=passed")
+        return validatedDrawOverlaysProof(readyPath);
+      if (proofLine == "proof.dispatch_events=passed")
+        return validatedDispatchEventsProof(readyPath, residentStateProof);
+      if (proofLine == "proof.replay_analysis=passed")
+        return validatedReplayAnalysisProof(readyPath);
+      if (proofLine == "proof.multiplayer_sync=passed")
+        return validatedMultiplayerSyncProof(readyPath);
+      if (proofLine == "proof.battle_net_policy=passed")
+        return validatedBattleNetPolicyProof(readyPath);
+      if (proofLine == "proof.load_ai_modules=passed")
+        return validatedLoadAIModulesProof(readyPath);
+      return false;
     }
 
     bool productionEvidenceAllowedForBinding(
@@ -358,9 +589,50 @@ namespace BWAPI::Runtime
     {
       return fileContainsLine(readyPath, "proof.attach=passed")
         && readyFileHasProofBackedBinding(
-          readyPath,
+        readyPath,
           "shared-memory-client-transport",
           BindingKind::Transport);
+    }
+
+    std::filesystem::path resolveBridgeRelativePath(
+      const std::filesystem::path& readyPath,
+      const std::string& value)
+    {
+      std::filesystem::path path(value);
+      if (path.is_absolute())
+        return path;
+      return readyPath.parent_path() / path;
+    }
+
+    bool readResidentCommandQueueSink(
+      const std::filesystem::path& readyPath,
+      std::filesystem::path& queuePath,
+      std::vector<std::string>* errors = nullptr)
+    {
+      if (!fileContainsLine(readyPath, "proof.attach=passed"))
+        return false;
+
+      const std::string queuePathValue =
+        readReadyValue(readyPath, "resident.queue.command.path");
+      if (queuePathValue.empty())
+        return false;
+
+      queuePath = resolveBridgeRelativePath(readyPath, queuePathValue);
+      RuntimeResidentQueueValidationResult queue =
+        validateRuntimeResidentQueueFile(queuePath, RuntimeResidentQueueKind::Command);
+      if (!queue.valid)
+      {
+        if (errors != nullptr)
+          errors->insert(errors->end(), queue.errors.begin(), queue.errors.end());
+        return false;
+      }
+      return true;
+    }
+
+    bool readyFileHasResidentCommandQueueSink(const std::filesystem::path& readyPath)
+    {
+      std::filesystem::path queuePath;
+      return readResidentCommandQueueSink(readyPath, queuePath);
     }
 
     std::vector<std::string> splitPipe(const std::string& value)
@@ -728,17 +1000,44 @@ namespace BWAPI::Runtime
           continue;
         }
 
+        if (!readyFileHasValidatedProductionProof(
+              readyPath,
+              proof.readyFileLine,
+              &residentStateProof))
+        {
+          result.missingBehaviorProofs.push_back(proof.readyFileLine);
+          result.errors.push_back(
+            std::string("runtime executor bridge proof is missing validated production metadata: ")
+            + proof.readyFileLine);
+          continue;
+        }
+
         addCapabilityIfMissing(result.provenCapabilities, proof.capability);
       }
-      if (fileContainsLine(readyPath, "proof.read_map_data=passed"))
+      if (readyFileHasValidatedProductionProof(
+            readyPath,
+            "proof.read_map_data=passed",
+            &residentStateProof))
         addCapabilityIfMissing(result.provenCapabilities, Capability::ReadMapData);
-      if (fileContainsLine(readyPath, "proof.read_player_data=passed"))
+      if (readyFileHasValidatedProductionProof(
+            readyPath,
+            "proof.read_player_data=passed",
+            &residentStateProof))
         addCapabilityIfMissing(result.provenCapabilities, Capability::ReadPlayerData);
-      if (fileContainsLine(readyPath, "proof.read_bullet_data=passed"))
+      if (readyFileHasValidatedProductionProof(
+            readyPath,
+            "proof.read_bullet_data=passed",
+            &residentStateProof))
         addCapabilityIfMissing(result.provenCapabilities, Capability::ReadBulletData);
-      if (fileContainsLine(readyPath, "proof.read_region_data=passed"))
+      if (readyFileHasValidatedProductionProof(
+            readyPath,
+            "proof.read_region_data=passed",
+            &residentStateProof))
         addCapabilityIfMissing(result.provenCapabilities, Capability::ReadRegionData);
-      if (fileContainsLine(readyPath, "proof.load_ai_modules=passed"))
+      if (readyFileHasValidatedProductionProof(
+            readyPath,
+            "proof.load_ai_modules=passed",
+            &residentStateProof))
         addCapabilityIfMissing(result.provenCapabilities, Capability::LoadAIModules);
 
       if (result.executorBridgeMode == RuntimeExecutorBridgeBootstrapMode)
@@ -1025,11 +1324,23 @@ namespace BWAPI::Runtime
         missing.push_back("proof.attach=passed");
       if (!fileContainsLine(readyPath, "proof.issue_commands=passed"))
         missing.push_back("proof.issue_commands=passed");
-      if (!readyFileHasRuntimeCommandQueueSink(readyPath))
+      if (!readyFileHasRuntimeCommandQueueSink(readyPath)
+          && !readyFileHasResidentCommandQueueSink(readyPath))
         missing.push_back("active or direct runtime command queue sink");
 
-      if (missing.empty())
+      if (missing.empty()
+          || (missing.size() == 1
+              && missing.front() == "proof.issue_commands=passed"
+              && readyFileHasResidentCommandQueueSink(readyPath)))
+      {
+        if (!missing.empty())
+        {
+          result.warnings.push_back(
+            "runtime commands can be enqueued to the resident command ingress, "
+            "but live SC:R command execution proof.issue_commands=passed is still missing");
+        }
         return true;
+      }
 
       result.reason = "runtime executor bridge is missing command submission proof: " + missing.front();
       for (const std::string& proof : missing)
@@ -1158,6 +1469,47 @@ namespace BWAPI::Runtime
       result.submitted = true;
       result.submittedCommands = commands.size();
       result.warnings.push_back("runtime commands were submitted directly to the proven runtime command queue");
+      return true;
+    }
+
+    bool submitResidentRuntimeCommands(
+      const RuntimeEnvironment& environment,
+      const std::filesystem::path& queuePath,
+      const std::vector<RuntimeCommandRequest>& commands,
+      RuntimeExecutorSubmitResult& result)
+    {
+      std::size_t submitted = 0;
+      for (const RuntimeCommandRequest& command : commands)
+      {
+        const std::string serialized = serializeCommand(command);
+        const std::vector<unsigned char> payload(serialized.begin(), serialized.end());
+        RuntimeResidentQueueAppendResult appended =
+          appendRuntimeResidentQueueRecord(
+            queuePath,
+            RuntimeResidentQueueKind::Command,
+            payload);
+        if (!appended.appended)
+        {
+          const std::string reason = appended.reason.empty()
+            ? "unable to append command to resident command queue"
+            : appended.reason;
+          return rejectSubmit(result, reason);
+        }
+        appendDirectCommandAudit(
+          environment,
+          appended.sequence,
+          "resident-enqueued",
+          command,
+          "",
+          "queued-to-resident-command-ingress:" + queuePath.string());
+        ++submitted;
+      }
+
+      result.submitted = true;
+      result.submittedCommands = submitted;
+      result.warnings.push_back(
+        "runtime commands were enqueued to the resident command ingress; "
+        "production issue-command proof still requires observed SC:R behavior");
       return true;
     }
   }
@@ -1461,6 +1813,13 @@ namespace BWAPI::Runtime
         && readDirectRuntimeCommandQueueSink(readyPath, directSink))
     {
       submitDirectRuntimeCommands(environment, directSink, drained, result);
+      return result;
+    }
+
+    std::filesystem::path residentCommandQueuePath;
+    if (readResidentCommandQueueSink(readyPath, residentCommandQueuePath, &result.errors))
+    {
+      submitResidentRuntimeCommands(environment, residentCommandQueuePath, drained, result);
       return result;
     }
 

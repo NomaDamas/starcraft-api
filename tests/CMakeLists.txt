@@ -161,6 +161,32 @@ target_link_libraries(runtime_resident_bridge_test
 
 add_test(NAME runtime_resident_bridge_test COMMAND runtime_resident_bridge_test)
 
+if(APPLE AND TARGET starcraft-api-resident)
+  add_executable(runtime_resident_adapter_load_test
+    runtime_resident_adapter_load_test.cpp
+  )
+
+  target_compile_definitions(runtime_resident_adapter_load_test
+    PRIVATE
+      STARCRAFT_API_TEST_RESIDENT_DYLIB="$<TARGET_FILE:starcraft-api-resident>"
+  )
+
+  target_link_libraries(runtime_resident_adapter_load_test
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+
+  set_target_properties(runtime_resident_adapter_load_test PROPERTIES
+    OSX_ARCHITECTURES "${STARCRAFT_API_MACOS_RESIDENT_ARCHITECTURES}"
+  )
+
+  add_test(NAME runtime_resident_adapter_load_test COMMAND runtime_resident_adapter_load_test)
+  add_test(
+    NAME runtime_resident_adapter_load_x86_64_test
+    COMMAND /usr/bin/arch -x86_64 $<TARGET_FILE:runtime_resident_adapter_load_test>
+  )
+endif()
+
 add_executable(runtime_installation_test
   runtime_installation_test.cpp
 )
@@ -232,6 +258,11 @@ if(TARGET starcraft-runtime-adapter-proof)
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
   )
+  if(APPLE)
+    set_target_properties(starcraft_api_ai_module_smoke PROPERTIES
+      OSX_ARCHITECTURES "${STARCRAFT_API_MACOS_RESIDENT_ARCHITECTURES}"
+    )
+  endif()
 
   add_test(NAME runtime_adapter_proof_help COMMAND starcraft-runtime-adapter-proof --help)
   add_test(

@@ -104,6 +104,14 @@ namespace
       extraLines);
   }
 
+  void writeQueueFile(
+    const std::filesystem::path& path,
+    const RuntimeResidentQueueHeader& header)
+  {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+  }
+
   std::vector<std::string> residentStateProofLines(
     const RuntimeEnvironment& environment,
     std::uint64_t heartbeat,
@@ -212,6 +220,52 @@ int main(int argc, char** argv)
   assert(!hasMissingProof(preflight, "proof.read_game_state=passed"));
   assert(!hasMissingProof(preflight, "proof.active_match_state=passed"));
 
+  std::vector<std::string> adapterProofReplayLines =
+    residentStateProofLines(environment, 10, 4, "replay");
+  for (std::string& line : adapterProofReplayLines)
+  {
+    if (line == "resident.proof.active_match.source=resident")
+      line = "resident.proof.active_match.source=adapter-proof";
+    else if (line == "resident.proof.active_match.evidence=resident-frame-unit-activity")
+      line = "resident.proof.active_match.evidence=adapter-live-unit-activity";
+  }
+  writeReadyFile(environment, 10, adapterProofReplayLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(stateProof.activeMatchValid);
+  assert(stateProof.activeMatchMode == "replay");
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  assert(preflight.executorAvailable);
+  assert(!hasMissingProof(preflight, "proof.active_match_state=passed"));
+
+  std::vector<std::string> adapterProofRaceLines =
+    residentStateProofLines(environment, 10, 4, "replay");
+  for (std::string& line : adapterProofRaceLines)
+  {
+    if (line == "resident.proof.active_match.source=resident")
+      line = "resident.proof.active_match.source=adapter-proof";
+    else if (line == "resident.proof.active_match.evidence=resident-frame-unit-activity")
+      line = "resident.proof.active_match.evidence=adapter-live-unit-activity";
+    else if (line == "resident.proof.active_match.heartbeat=10")
+      line = "resident.proof.active_match.heartbeat=11";
+  }
+  writeReadyFile(environment, 10, adapterProofRaceLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(stateProof.activeMatchValid);
+
   writeReadyFile(environment, 10, { "proof.active_match_state=passed" });
   resident = validateRuntimeResidentBridgeReadyFile(
     environment,
@@ -310,6 +364,30 @@ int main(int argc, char** argv)
   assert(stateProof.readGameStateValid);
   assert(!stateProof.activeMatchValid);
 
+  std::vector<std::string> residentPreservedActiveLines =
+    residentStateProofLines(
+      environment,
+      17,
+      4,
+      "match",
+      true,
+      true,
+      1);
+  residentPreservedActiveLines.push_back(
+    "resident.proof.active_match.validation=resident-preserved-active-unit-memory-v1");
+  residentPreservedActiveLines.push_back(
+    "resident.proof.active_match.address_read=resident-self");
+  writeReadyFile(environment, 17, residentPreservedActiveLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(stateProof.activeMatchValid);
+
   writeReadyFile(environment, 7, { "proof.issue_commands=passed" });
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
   assert(preflight.executorAvailable);
@@ -330,6 +408,28 @@ int main(int argc, char** argv)
   assert(preflight.executorAvailable);
   assert(!preflight.errors.empty());
   assert(!preflight.missingBehaviorProofs.empty());
+
+  writeReadyFile(
+    environment,
+    7,
+    {
+      RuntimeExecutorBridgeActiveCommandReceiverLine,
+      RuntimeExecutorBridgeRuntimeCommandQueueSinkLine,
+      "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue",
+      "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer",
+      "resident.proof.issue_commands_ingress=passed",
+      "resident.proof.issue_commands_ingress.consumed_records=2",
+      "resident.proof.issue_commands_ingress.parsed_commands=2",
+      "resident.proof.draw_overlays_ingress=passed",
+      "resident.proof.draw_overlays_ingress.accepted_primitives=1",
+      "resident.proof.draw_overlays_ingress.renderer_bound=false",
+      "proof.issue_commands=passed",
+      "proof.draw_overlays=passed"
+    });
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  assert(preflight.executorAvailable);
+  assert(hasMissingProof(preflight, "proof.issue_commands=passed"));
+  assert(hasMissingProof(preflight, "proof.draw_overlays=passed"));
 
   writeReadyFile(environment, 1);
   resident = validateRuntimeResidentBridgeReadyFile(
@@ -390,6 +490,21 @@ int main(int argc, char** argv)
     });
   resident = validateRuntimeResidentBridgeReadyFile(
     environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  assert(!resident.valid);
+
+  RuntimeEnvironment discoverOnlyEnvironment = environment;
+  discoverOnlyEnvironment.processId = 0;
+  writeReadyFileWithResidentLines(
+    discoverOnlyEnvironment,
+    {
+      "resident.adapter=active",
+      std::string("resident.adapter.abi=") + RuntimeResidentAdapterAbi,
+      "resident.adapter.process_id=123456789",
+      "resident.adapter.heartbeat=5"
+    });
+  resident = validateRuntimeResidentBridgeReadyFile(
+    discoverOnlyEnvironment,
     bridgePath / RuntimeExecutorBridgeReadyFile);
   assert(!resident.valid);
 
@@ -485,6 +600,130 @@ int main(int argc, char** argv)
     commandQueue,
     record,
     RuntimeResidentQueueKind::Command).valid);
+
+  const std::filesystem::path proofQueuePath = bridgePath / RuntimeResidentProofQueueFile;
+  RuntimeResidentQueueHeader proofQueue =
+    makeRuntimeResidentQueueHeader(
+      RuntimeResidentQueueKind::Proof,
+      sizeof(RuntimeResidentRecordHeader),
+      4,
+      21);
+  proofQueue.writeSequence = 21;
+  proofQueue.readSequence = 17;
+  writeQueueFile(proofQueuePath, proofQueue);
+  assert(validateRuntimeResidentQueueFile(
+    proofQueuePath,
+    RuntimeResidentQueueKind::Proof).valid);
+
+  const std::filesystem::path commandQueuePath = bridgePath / RuntimeResidentCommandQueueFile;
+  RuntimeResidentQueueHeader desiredCommandQueue =
+    makeRuntimeResidentQueueHeader(
+      RuntimeResidentQueueKind::Command,
+      sizeof(RuntimeResidentRecordHeader) + 64,
+      2,
+      30);
+  RuntimeResidentQueueHeader actualCommandQueue;
+  RuntimeResidentQueueValidationResult ensuredCommandQueue =
+    ensureRuntimeResidentQueueFile(
+      commandQueuePath,
+      desiredCommandQueue,
+      actualCommandQueue);
+  assert(ensuredCommandQueue.valid);
+  assert(actualCommandQueue.writeSequence == 0);
+  assert(actualCommandQueue.readSequence == 0);
+  const std::vector<unsigned char> firstPayload = { 'f', 'i', 'r', 's', 't' };
+  RuntimeResidentQueueAppendResult firstAppend =
+    appendRuntimeResidentQueueRecord(
+      commandQueuePath,
+      RuntimeResidentQueueKind::Command,
+      firstPayload);
+  assert(firstAppend.appended);
+  assert(firstAppend.sequence == 0);
+  RuntimeResidentQueueAppendResult secondAppend =
+    appendRuntimeResidentQueueRecord(
+      commandQueuePath,
+      RuntimeResidentQueueKind::Command,
+      { 's', 'e', 'c', 'o', 'n', 'd' });
+  assert(secondAppend.appended);
+  assert(secondAppend.sequence == 1);
+  RuntimeResidentQueueAppendResult fullAppend =
+    appendRuntimeResidentQueueRecord(
+      commandQueuePath,
+      RuntimeResidentQueueKind::Command,
+      { 'f', 'u', 'l', 'l' });
+  assert(!fullAppend.appended);
+  RuntimeResidentQueueReadResult commandRecords =
+    readRuntimeResidentQueueRecords(
+      commandQueuePath,
+      RuntimeResidentQueueKind::Command,
+      8);
+  assert(commandRecords.read);
+  assert(commandRecords.records.size() == 2);
+  assert(commandRecords.records.front().header.sequence == 0);
+  assert(commandRecords.records.front().payload == firstPayload);
+  RuntimeResidentQueueAcknowledgeResult acknowledgedCommandQueue =
+    acknowledgeRuntimeResidentQueueRecords(
+      commandQueuePath,
+      RuntimeResidentQueueKind::Command,
+      2);
+  assert(acknowledgedCommandQueue.acknowledged);
+  assert(acknowledgedCommandQueue.header.readSequence == 2);
+  RuntimeResidentQueueHeader preservedCommandQueue;
+  desiredCommandQueue.heartbeat = 31;
+  ensuredCommandQueue =
+    ensureRuntimeResidentQueueFile(
+      commandQueuePath,
+      desiredCommandQueue,
+      preservedCommandQueue);
+  assert(ensuredCommandQueue.valid);
+  assert(preservedCommandQueue.readSequence == 2);
+  assert(preservedCommandQueue.writeSequence == 2);
+
+  proofQueue.readSequence = 16;
+  assert(!validateRuntimeResidentQueueHeader(
+    proofQueue,
+    RuntimeResidentQueueKind::Proof).valid);
+  proofQueue.readSequence = 17;
+  writeReadyFile(
+    environment,
+    21,
+    makeRuntimeResidentQueueReadyLines(
+      RuntimeResidentQueueKind::Proof,
+      proofQueuePath,
+      proofQueue));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  assert(resident.valid);
+
+  proofQueue.heartbeat = 25;
+  writeQueueFile(proofQueuePath, proofQueue);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  assert(resident.valid);
+
+  proofQueue.heartbeat = 20;
+  writeQueueFile(proofQueuePath, proofQueue);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  assert(!resident.valid);
+
+  proofQueue.heartbeat = 22;
+  proofQueue.magic = 0;
+  writeQueueFile(proofQueuePath, proofQueue);
+  writeReadyFile(
+    environment,
+    22,
+    makeRuntimeResidentQueueReadyLines(
+      RuntimeResidentQueueKind::Proof,
+      proofQueuePath,
+      proofQueue));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  assert(!resident.valid);
 
   RuntimeResidentLoadRequest loadRequest;
   loadRequest.environment = environment;

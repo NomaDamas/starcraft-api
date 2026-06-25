@@ -196,16 +196,6 @@ namespace
       && proof.thirdTick > proof.secondTick;
   }
 
-  std::vector<RuntimeResidentGameStateSample> makeResidentGameStateSamples(
-    const LiveCounterProof& proof)
-  {
-    return {
-      { proof.first, proof.firstTick },
-      { proof.second, proof.secondTick },
-      { proof.third, proof.thirdTick }
-    };
-  }
-
   struct FrameCounterCandidate
   {
     std::uintptr_t address = 0;
@@ -994,6 +984,117 @@ namespace
     std::uint64_t value = 0;
     std::memcpy(&value, bytes.data() + offset, sizeof(value));
     return value;
+  }
+
+  bool parseUnsignedStrict(const std::string& value, std::uint64_t& output)
+  {
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(value.c_str(), &end, 0);
+    if (end == value.c_str() || *end != '\0')
+      return false;
+    output = static_cast<std::uint64_t>(parsed);
+    return static_cast<unsigned long long>(output) == parsed;
+  }
+
+  std::string readyValue(const std::vector<std::string>& lines, const std::string& key);
+
+  struct BwGameProjectionProof
+  {
+    bool passed = false;
+    std::uintptr_t address = 0;
+    std::size_t size = 0;
+    std::size_t elapsedFramesOffset = 0;
+    std::uint32_t firstFrame = 0;
+    std::uint32_t secondFrame = 0;
+    std::string reason;
+  };
+
+  BwGameProjectionProof validateResidentBwGameProjection(
+    int processId,
+    const std::vector<std::string>& readyLines)
+  {
+    BwGameProjectionProof proof;
+    if (readyValue(readyLines, "resident.projection.bwgame.validation")
+        != "resident-bwgame-projection-v1")
+    {
+      proof.reason = "resident BWGame projection metadata is absent";
+      return proof;
+    }
+
+    if (!parseAddress(readyValue(readyLines, "resident.projection.bwgame.address"), proof.address))
+    {
+      proof.reason = "resident BWGame projection address is missing or malformed";
+      return proof;
+    }
+
+    std::uint64_t parsed = 0;
+    if (!parseUnsignedStrict(readyValue(readyLines, "resident.projection.bwgame.size"), parsed)
+        || parsed < 12
+        || parsed > 65536)
+    {
+      proof.reason = "resident BWGame projection size is missing or implausible";
+      return proof;
+    }
+    proof.size = static_cast<std::size_t>(parsed);
+
+    if (!parseUnsignedStrict(
+          readyValue(readyLines, "resident.projection.bwgame.elapsedFrames_offset"),
+          parsed)
+        || parsed + sizeof(std::uint32_t) > proof.size)
+    {
+      proof.reason = "resident BWGame projection elapsedFrames offset is missing or out of range";
+      return proof;
+    }
+    proof.elapsedFramesOffset = static_cast<std::size_t>(parsed);
+
+    if (readyValue(readyLines, "resident.projection.bwgame.elapsedFrames_bytes") != "4")
+    {
+      proof.reason = "resident BWGame projection elapsedFrames field is not a 32-bit counter";
+      return proof;
+    }
+
+    RuntimeMemoryReadResult firstRead =
+      readProcessMemory(
+        processId,
+        proof.address + proof.elapsedFramesOffset,
+        sizeof(std::uint32_t));
+    if (!firstRead.success || firstRead.bytesRead != sizeof(std::uint32_t))
+    {
+      proof.reason = firstRead.reason.empty()
+        ? "unable to read resident BWGame projection first elapsedFrames sample"
+        : firstRead.reason;
+      return proof;
+    }
+    proof.firstFrame = readU32(firstRead.bytes, 0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+    RuntimeMemoryReadResult secondRead =
+      readProcessMemory(
+        processId,
+        proof.address + proof.elapsedFramesOffset,
+        sizeof(std::uint32_t));
+    if (!secondRead.success || secondRead.bytesRead != sizeof(std::uint32_t))
+    {
+      proof.reason = secondRead.reason.empty()
+        ? "unable to read resident BWGame projection second elapsedFrames sample"
+        : secondRead.reason;
+      return proof;
+    }
+    proof.secondFrame = readU32(secondRead.bytes, 0);
+    if (proof.firstFrame == 0 || proof.secondFrame <= proof.firstFrame)
+    {
+      proof.reason = "resident BWGame projection elapsedFrames did not advance during live re-sampling";
+      return proof;
+    }
+    if (proof.secondFrame - proof.firstFrame > 10000)
+    {
+      proof.reason = "resident BWGame projection elapsedFrames advanced implausibly";
+      return proof;
+    }
+
+    proof.passed = true;
+    return proof;
   }
 
   std::size_t firstAlignedOffset(std::uintptr_t baseAddress, std::size_t alignment)
@@ -1945,10 +2046,41 @@ namespace
       return false;
     if (startsWith(line, "contract.binding.shared-memory-client-transport="))
       return false;
+    for (const char* volatileProof : {
+           "proof.active_match_state",
+           "proof.read_bullet_data",
+           "proof.issue_commands",
+           "proof.draw_overlays",
+           "proof.multiplayer_sync" })
+    {
+      if (line.find(volatileProof) != std::string::npos)
+        return false;
+    }
+    if ((startsWith(line, "contract.binding.")
+         || startsWith(line, "contract.structure.")
+         || startsWith(line, "contract.field."))
+        && line.find("|proof.") == std::string::npos)
+    {
+      return false;
+    }
     return startsWith(line, "proof.")
       || startsWith(line, "contract.binding.")
       || startsWith(line, "contract.structure.")
       || startsWith(line, "contract.field.");
+  }
+
+  bool readyWasWrittenByResidentAdapter(const std::vector<std::string>& lines)
+  {
+    return readyValue(lines, "executor") == "starcraft-api-resident-adapter"
+      && readyValue(lines, "resident.adapter") == "active";
+  }
+
+  bool preservableResidentEvidenceLine(const std::string& line)
+  {
+    return startsWith(line, "resident.adapter")
+      || startsWith(line, "resident.queue.")
+      || startsWith(line, "resident.proof.")
+      || startsWith(line, "resident.projection.");
   }
 
   bool shouldSkipImageMappedRegion(
@@ -15579,35 +15711,98 @@ int main(int argc, char** argv)
     proofFailureCode = proofFailureCode == 0 ? 3 : proofFailureCode;
   }
 
+  const bool willWriteReadGameStateProof =
+    proveReadGameState
+    && readGameStateProof.passed
+    && hasResidentGameStateProofTicks(readGameStateProof);
+  const bool willWriteReadUnitsProof =
+    proveReadUnits
+    && readUnitsProof.passed
+    && (!readUnitsProof.derivedSnapshot || unitSnapshotWritten)
+    && (!self || !proveActiveMatchState);
+  const bool willWriteActiveMatchProof =
+    proveActiveMatchState
+    && !self
+    && willWriteReadGameStateProof
+    && willWriteReadUnitsProof;
+  const bool willWriteIssueCommandsProof =
+    proveIssueCommands
+    && issueCommandsProof.passed
+    && issueCommandsSnapshotWritten;
+  const bool willWriteDrawOverlaysProof =
+    proveDrawOverlays
+    && drawOverlaysProof.passed
+    && drawOverlaysSnapshotWritten;
+  const bool willWriteMultiplayerSyncProof =
+    proveMultiplayerSync
+    && multiplayerSyncProof.passed
+    && multiplayerSyncSnapshotWritten;
+  const bool willWriteDispatchEventsProof =
+    proveDispatchEvents
+    && dispatchEventsProof.passed
+    && dispatchEventsSnapshotWritten
+    && willWriteActiveMatchProof;
+  const bool willWriteReplayAnalysisProof =
+    proveReplayAnalysis
+    && replayAnalysisProof.passed
+    && replayAnalysisSnapshotWritten;
+  const bool willWriteBattleNetPolicyProof =
+    proveBattleNetPolicyFlag
+    && battleNetPolicyProof.passed;
+  const bool willWriteLoadAIModulesProof =
+    proveLoadAIModules
+    && aiModuleLoadProof.passed
+    && aiModuleLoadSnapshotWritten;
+  const bool willWriteReadMapDataProof =
+    proveReadMapData
+    && mapDataProof.passed
+    && mapDataSnapshotWritten;
+  const bool willWriteReadPlayerDataProof =
+    proveReadPlayerData
+    && playerDataProof.passed
+    && playerDataSnapshotWritten
+    && (!self || !proveActiveMatchState || willWriteActiveMatchProof);
+  const bool willWriteReadBulletDataProof =
+    proveReadBulletData
+    && bulletDataProof.passed
+    && bulletDataSnapshotWritten;
+  const bool willWriteReadRegionDataProof =
+    proveReadRegionData
+    && regionDataProof.passed
+    && regionDataSnapshotWritten;
+
   std::vector<std::string> invalidatedProofTokens;
-  auto invalidateProofToken = [&](bool requested, const char* token)
+  auto invalidateProofToken = [&](bool replacementReady, const char* token)
   {
-    if (requested)
+    if (replacementReady)
       invalidatedProofTokens.push_back(token);
   };
-  // Resident state proofs carry a heartbeat tied to this ready-file update.
-  // Never preserve stale read/active-match proof lines across proof runs.
-  invalidatedProofTokens.push_back("proof.read_game_state");
-  invalidatedProofTokens.push_back("proof.active_match_state");
-  invalidateProofToken(proveReadUnits, "proof.read_units");
-  invalidateProofToken(proveIssueCommands, "proof.issue_commands");
-  invalidateProofToken(proveDrawOverlays, "proof.draw_overlays");
-  invalidateProofToken(proveDispatchEvents, "proof.dispatch_events");
-  invalidateProofToken(proveReplayAnalysis, "proof.replay_analysis");
-  invalidateProofToken(proveMultiplayerSync, "proof.multiplayer_sync");
-  invalidateProofToken(proveBattleNetPolicyFlag, "proof.battle_net_policy");
-  invalidateProofToken(proveLoadAIModules, "proof.load_ai_modules");
-  invalidateProofToken(proveReadMapData, "proof.read_map_data");
-  invalidateProofToken(proveReadPlayerData, "proof.read_player_data");
-  invalidateProofToken(proveReadBulletData, "proof.read_bullet_data");
-  invalidateProofToken(proveReadRegionData, "proof.read_region_data");
-  invalidateProofToken(discoverCommandQueue, "proof.command_queue_discovery");
+  invalidateProofToken(willWriteReadGameStateProof, "proof.read_game_state");
+  invalidateProofToken(willWriteActiveMatchProof, "proof.active_match_state");
+  invalidateProofToken(willWriteReadUnitsProof, "proof.read_units");
+  invalidateProofToken(willWriteIssueCommandsProof, "proof.issue_commands");
+  invalidateProofToken(willWriteDrawOverlaysProof, "proof.draw_overlays");
+  invalidateProofToken(willWriteDispatchEventsProof, "proof.dispatch_events");
+  invalidateProofToken(willWriteReplayAnalysisProof, "proof.replay_analysis");
+  invalidateProofToken(willWriteMultiplayerSyncProof, "proof.multiplayer_sync");
+  invalidateProofToken(willWriteBattleNetPolicyProof, "proof.battle_net_policy");
+  invalidateProofToken(willWriteLoadAIModulesProof, "proof.load_ai_modules");
+  invalidateProofToken(willWriteReadMapDataProof, "proof.read_map_data");
+  invalidateProofToken(willWriteReadPlayerDataProof, "proof.read_player_data");
+  invalidateProofToken(willWriteReadBulletDataProof, "proof.read_bullet_data");
+  invalidateProofToken(willWriteReadRegionDataProof, "proof.read_region_data");
+  invalidateProofToken(commandQueueDiscoveryProof.ready, "proof.command_queue_discovery");
 
+  std::vector<std::string> existingReadyLines;
   std::vector<std::string> preservedReadyEvidenceLines;
+  std::vector<std::string> preservedResidentEvidenceLines;
+  bool existingReadyMatchesRuntime = false;
+  bool existingReadyFromResidentAdapter = false;
   if (runtimeVisibleAtReady)
   {
-    const std::vector<std::string> existingReadyLines = readReadyFileLines(readyPath);
-    if (existingReadyIdentityMatches(existingReadyLines, environment))
+    existingReadyLines = readReadyFileLines(readyPath);
+    existingReadyMatchesRuntime = existingReadyIdentityMatches(existingReadyLines, environment);
+    if (existingReadyMatchesRuntime)
     {
       std::unordered_set<std::string> preserved;
       for (const std::string& line : existingReadyLines)
@@ -15619,7 +15814,29 @@ int main(int argc, char** argv)
         if (preserved.insert(line).second)
           preservedReadyEvidenceLines.push_back(line);
       }
+      existingReadyFromResidentAdapter = readyWasWrittenByResidentAdapter(existingReadyLines);
+      if (existingReadyFromResidentAdapter)
+      {
+        std::unordered_set<std::string> preservedResident;
+        for (const std::string& line : existingReadyLines)
+        {
+          if (!preservableResidentEvidenceLine(line))
+            continue;
+          if (preservedResident.insert(line).second)
+            preservedResidentEvidenceLines.push_back(line);
+        }
+      }
     }
+  }
+
+  BwGameProjectionProof bwGameProjectionProof;
+  if (runtimeVisibleAtReady
+      && existingReadyMatchesRuntime
+      && existingReadyFromResidentAdapter
+      && proveReadGameState
+      && readGameStateProof.passed)
+  {
+    bwGameProjectionProof = validateResidentBwGameProjection(environment.processId, existingReadyLines);
   }
 
   std::ofstream ready(readyPath);
@@ -15653,21 +15870,15 @@ int main(int argc, char** argv)
   ready << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
   for (const std::string& line : preservedReadyEvidenceLines)
     ready << line << '\n';
+  for (const std::string& line : preservedResidentEvidenceLines)
+    ready << line << '\n';
   const bool residentReadGameStateReady =
     proveReadGameState
     && readGameStateProof.passed
     && hasResidentGameStateProofTicks(readGameStateProof);
-  const std::uint64_t residentProofHeartbeat =
-    residentReadGameStateReady ? readGameStateProof.thirdTick : 0;
   if (residentReadGameStateReady)
   {
-    for (const std::string& line : makeRuntimeResidentAdapterReadyLines(environment, residentProofHeartbeat))
-      ready << line << '\n';
-    for (const std::string& line : makeRuntimeResidentReadGameStateProofReadyLines(
-           environment,
-           residentProofHeartbeat,
-           makeResidentGameStateSamples(readGameStateProof)))
-      ready << line << '\n';
+    ready << readGameStateBehaviorProof->readyFileLine << '\n';
     ready << "proof.read_game_state.address=0x" << std::hex << readGameStateProof.address << std::dec << '\n';
     ready << "proof.read_game_state.samples="
           << readGameStateProof.first << ','
@@ -15677,11 +15888,27 @@ int main(int argc, char** argv)
           << (readGameStateProof.second - readGameStateProof.first) << ','
           << (readGameStateProof.third - readGameStateProof.second) << '\n';
     ready << "proof.read_game_state.confidence=frame-like\n";
-    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:compat-bwgame-projection:"
-          << hexAddress(readGameStateProof.address) << '\n';
-    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:compat-bwgame-projection-v1\n";
-    ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
-    ready << readGameStateBehaviorProof->readyFileLine << '\n';
+    if (bwGameProjectionProof.passed)
+    {
+      ready << "proof.read_game_state.bwgame_projection=resident-bwgame-projection-v1\n";
+      ready << "proof.read_game_state.bwgame_projection_address="
+            << hexAddress(bwGameProjectionProof.address) << '\n';
+      ready << "proof.read_game_state.bwgame_projection_samples="
+            << bwGameProjectionProof.firstFrame << ','
+            << bwGameProjectionProof.secondFrame << '\n';
+      ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:"
+            << "resident-bwgame-projection-v1:" << hexAddress(bwGameProjectionProof.address) << '\n';
+      ready << "contract.structure.BW::BWGame=" << bwGameProjectionProof.size
+            << "|proof.read_game_state=passed:resident-bwgame-projection-v1\n";
+      ready << "contract.field.BW::BWGame.elapsedFrames="
+            << bwGameProjectionProof.elapsedFramesOffset
+            << "|4|proof.read_game_state=passed:resident-bwgame-projection-v1\n";
+    }
+    else if (!bwGameProjectionProof.reason.empty())
+    {
+      ready << "diagnostic.read_game_state.bwgame_projection.reason="
+            << bwGameProjectionProof.reason << '\n';
+    }
   }
   const bool readUnitsReady =
     proveReadUnits
@@ -15697,6 +15924,23 @@ int main(int argc, char** argv)
   {
     const char* activeMatchEvidence =
       readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records";
+    const std::string residentHeartbeat =
+      existingReadyFromResidentAdapter
+        ? readyValue(existingReadyLines, "resident.adapter.heartbeat")
+        : std::string();
+    if (!residentHeartbeat.empty())
+    {
+      ready << "resident.proof.active_match.source=adapter-proof\n";
+      ready << "resident.proof.active_match.process_id="
+            << environment.processId << '\n';
+      ready << "resident.proof.active_match.heartbeat="
+            << residentHeartbeat << '\n';
+      ready << "resident.proof.active_match.mode="
+            << (replayLaunchDetected ? "replay" : "match") << '\n';
+      ready << "resident.proof.active_match.unit_activity_count="
+            << readUnitsProof.activeRecords << '\n';
+      ready << "resident.proof.active_match.evidence=adapter-live-unit-activity\n";
+    }
     ready << "proof.active_match_state.evidence="
           << activeMatchEvidence << '\n';
     ready << "proof.active_match_state.active_records="
@@ -15707,19 +15951,12 @@ int main(int argc, char** argv)
             << std::hex << readUnitsProof.address << std::dec << '\n';
       ready << "proof.active_match_state.unit_node_record_size="
             << readUnitsProof.recordSize << '\n';
-      ready << "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.active_match_state=passed\n";
     }
     else
     {
       ready << "proof.active_match_state.unit_array_address=0x"
             << std::hex << readUnitsProof.address << std::dec << '\n';
     }
-    for (const std::string& line : makeRuntimeResidentActiveMatchProofReadyLines(
-           environment,
-           residentProofHeartbeat,
-           readUnitsProof.activeRecords,
-           "match"))
-      ready << line << '\n';
     ready << activeMatchStateBehaviorProof->readyFileLine << '\n';
   }
   if (readUnitsReady)

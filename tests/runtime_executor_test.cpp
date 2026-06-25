@@ -332,6 +332,51 @@ int main(int argc, char** argv)
   assert(acceptedPositionField->evidence == "proof.read_units=passed:cunit-position");
 
   {
+    std::ofstream playersSnapshot(bridgePath / "players.snapshot.tsv");
+    playersSnapshot << "player\tunit_count\n0\t2\n1\t2\n";
+
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "proof.read_player_data=passed\n";
+    ready << "proof.read_player_data.player_count=2\n";
+    ready << "proof.read_player_data.observed_units=4\n";
+    ready << "proof.read_player_data.player_info_projection=true\n";
+    ready << "proof.read_player_data.player_info_record_size=128\n";
+    ready << "proof.read_player_data.alliance_projection=true\n";
+    ready << "proof.read_player_data.projection_source=compat-player-projection-v1:unit-snapshot-derived\n";
+    ready << "proof.read_player_data.snapshot=players.snapshot.tsv\n";
+    ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:compat-player-projection-v1:unit-snapshot-derived\n";
+    ready << "contract.field.BW::BWGame.players=0|4|proof.read_player_data=passed\n";
+    ready << "contract.field.BW::BWGame.alliance=4|4|proof.read_player_data=passed:compat-alliance-mask\n";
+    ready << "contract.structure.BW::PlayerInfo=128|proof.read_player_data=passed:compat-player-projection-v1:unit-snapshot-derived\n";
+    ready << "contract.field.BW::PlayerInfo.stormId=0|4|proof.read_player_data=passed\n";
+    ready << "contract.field.BW::PlayerInfo.race=4|4|proof.read_player_data=passed\n";
+    ready << "contract.field.BW::PlayerInfo.resources=8|8|proof.read_player_data=passed:projection-unresolved-values\n";
+    ready << "contract.field.BW::PlayerInfo.supply=16|8|proof.read_player_data=passed:projection-unresolved-values\n";
+  }
+  RuntimeContract acceptedPlayerProjectionProof =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* acceptedPlayersBinding =
+    findRuntimeBinding(acceptedPlayerProjectionProof, "BW::BWDATA::Players", BindingKind::DataAddress);
+  const StructureField* acceptedPlayersField =
+    findStructureField(acceptedPlayerProjectionProof, "BW::BWGame", "players");
+  const StructureField* acceptedAllianceField =
+    findStructureField(acceptedPlayerProjectionProof, "BW::BWGame", "alliance");
+  const StructureLayout* acceptedPlayerInfoLayout =
+    findStructureLayout(acceptedPlayerProjectionProof, "BW::PlayerInfo");
+  const StructureField* acceptedSupplyField =
+    findStructureField(acceptedPlayerProjectionProof, "BW::PlayerInfo", "supply");
+  assert(acceptedPlayersBinding != nullptr && acceptedPlayersBinding->resolved);
+  assert(acceptedPlayersField != nullptr && acceptedPlayersField->resolved);
+  assert(acceptedAllianceField != nullptr && acceptedAllianceField->resolved);
+  assert(acceptedPlayerInfoLayout != nullptr && acceptedPlayerInfoLayout->size == 128);
+  assert(acceptedSupplyField != nullptr && acceptedSupplyField->resolved);
+
+  {
     std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";

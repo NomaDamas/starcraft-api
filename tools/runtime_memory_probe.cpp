@@ -101,6 +101,11 @@ namespace
       << "  --region-list            print readable/writable/executable memory regions\n"
       << "  --region-list-limit <n>  maximum regions printed by --region-list (default: 64)\n"
       << "  --region-around <addr>   print only the region containing addr\n"
+      << "  --region-path-contains <text>\n"
+      << "                           print only regions whose mapped path contains text\n"
+      << "  --region-readable-only   print only readable regions in --region-list\n"
+      << "  --region-writable-only   print only writable regions in --region-list\n"
+      << "  --region-executable-only print only executable regions in --region-list\n"
       << "  --find-ascii <text>      scan readable target memory for an ASCII string\n"
       << "  --find-u32 <value>       scan readable target memory for a 32-bit little-endian value\n"
       << "  --find-u64 <value>       scan readable target memory for a 64-bit little-endian value\n"
@@ -515,6 +520,9 @@ int main(int argc, char** argv)
   bool diffMemoryRequested = false;
   bool diffCompact = false;
   bool counterScanRequested = false;
+  bool regionReadableOnly = false;
+  bool regionWritableOnly = false;
+  bool regionExecutableOnly = false;
   bool requireFind = false;
   bool self = false;
   int processIdOverride = 0;
@@ -538,6 +546,7 @@ int main(int argc, char** argv)
   std::string versionOverride;
   std::string executableOverride;
   std::string dumpOut;
+  std::string regionPathContains;
   std::vector<FindNeedle> findNeedles;
   std::vector<RipXrefNeedle> ripXrefNeedles;
   std::vector<CodeAnalysisRequest> codeAnalysisRequests;
@@ -648,6 +657,36 @@ int main(int argc, char** argv)
         std::cerr << "--region-around requires a positive integer address\n";
         return 64;
       }
+      regionListRequested = true;
+    }
+    else if (arg == "--region-path-contains")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--region-path-contains requires a value\n";
+        return 64;
+      }
+      regionPathContains = argv[++i];
+      if (regionPathContains.empty())
+      {
+        std::cerr << "--region-path-contains requires a non-empty value\n";
+        return 64;
+      }
+      regionListRequested = true;
+    }
+    else if (arg == "--region-readable-only")
+    {
+      regionReadableOnly = true;
+      regionListRequested = true;
+    }
+    else if (arg == "--region-writable-only")
+    {
+      regionWritableOnly = true;
+      regionListRequested = true;
+    }
+    else if (arg == "--region-executable-only")
+    {
+      regionExecutableOnly = true;
       regionListRequested = true;
     }
     else if (arg == "--find-ascii")
@@ -1020,6 +1059,15 @@ int main(int argc, char** argv)
       std::cout << "memory.region_list.reason=" << regions.reason << '\n';
     std::cout << "memory.region_list.filter.address=0x"
               << std::hex << regionAroundAddress << std::dec << '\n';
+    if (!regionPathContains.empty())
+      std::cout << "memory.region_list.filter.path_contains="
+                << regionPathContains << '\n';
+    std::cout << "memory.region_list.filter.readable_only="
+              << (regionReadableOnly ? "true" : "false") << '\n';
+    std::cout << "memory.region_list.filter.writable_only="
+              << (regionWritableOnly ? "true" : "false") << '\n';
+    std::cout << "memory.region_list.filter.executable_only="
+              << (regionExecutableOnly ? "true" : "false") << '\n';
     if (regions.success)
     {
       std::size_t printed = 0;
@@ -1031,6 +1079,15 @@ int main(int argc, char** argv)
           && region.address <= regionAroundAddress
           && regionAroundAddress - region.address < region.size;
         if (regionAroundAddress != 0 && !containsAddress)
+          continue;
+        if (!regionPathContains.empty()
+            && region.mappedPath.find(regionPathContains) == std::string::npos)
+          continue;
+        if (regionReadableOnly && !region.readable)
+          continue;
+        if (regionWritableOnly && !region.writable)
+          continue;
+        if (regionExecutableOnly && !region.executable)
           continue;
         ++matched;
         if (printed >= regionListLimit)

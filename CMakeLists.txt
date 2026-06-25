@@ -90,6 +90,15 @@ target_include_directories(starcraft_runtime
     "${BWAPI_INCLUDE_DIR}"
 )
 
+if(APPLE)
+  set(STARCRAFT_API_MACOS_RESIDENT_ARCHITECTURES "arm64;x86_64"
+    CACHE STRING
+    "macOS architectures for the in-process StarCraft resident adapter and its runtime support library"
+  )
+  set_property(TARGET starcraft_runtime PROPERTY
+    OSX_ARCHITECTURES "${STARCRAFT_API_MACOS_RESIDENT_ARCHITECTURES}")
+endif()
+
 add_library(starcraft_api INTERFACE)
 target_link_libraries(starcraft_api
   INTERFACE
@@ -102,7 +111,7 @@ add_library(StarCraftAPI::runtime ALIAS starcraft_runtime)
 add_library(StarCraftAPI::api ALIAS starcraft_api)
 
 if(APPLE)
-  add_library(starcraft-api-resident MODULE
+  add_library(starcraft-api-resident SHARED
     "${BWAPI_ROOT}/Runtime/RuntimeResidentAdapterEntry.cpp"
   )
   target_link_libraries(starcraft-api-resident
@@ -113,6 +122,7 @@ if(APPLE)
     PREFIX ""
     OUTPUT_NAME "starcraft-api-resident"
     SUFFIX ".dylib"
+    OSX_ARCHITECTURES "${STARCRAFT_API_MACOS_RESIDENT_ARCHITECTURES}"
   )
 endif()
 
@@ -157,6 +167,19 @@ if(STARCRAFT_API_BUILD_TOOLS)
       StarCraftAPI::runtime
   )
 
+  if(APPLE)
+    add_executable(starcraft-runtime-inject-resident
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_inject_resident.cpp"
+    )
+    target_link_libraries(starcraft-runtime-inject-resident
+      PRIVATE
+        StarCraftAPI::runtime
+    )
+    set_target_properties(starcraft-runtime-inject-resident PROPERTIES
+      OSX_ARCHITECTURES "x86_64"
+    )
+  endif()
+
   add_executable(starcraft-runtime-adapter-proof
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_adapter_proof.cpp"
   )
@@ -191,6 +214,10 @@ if(STARCRAFT_API_BUILD_TOOLS)
         /usr/bin/codesign --force --sign - --entitlements
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
         $<TARGET_FILE:starcraft-runtime-memory-probe>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-runtime-inject-resident>
       COMMAND
         /usr/bin/codesign --force --sign - --entitlements
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
@@ -232,6 +259,7 @@ if(STARCRAFT_API_BUILD_TOOLS)
         starcraft-runtime-launch
         starcraft-runtime-binary-anchors
         starcraft-runtime-input
+        starcraft-runtime-inject-resident
         starcraft-api-resident
       COMMENT "Ad-hoc signing runtime debug tools with macOS debugger entitlements"
       VERBATIM

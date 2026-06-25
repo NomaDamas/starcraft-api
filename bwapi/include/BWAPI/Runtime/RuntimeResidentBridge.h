@@ -12,6 +12,9 @@ namespace BWAPI::Runtime
   inline constexpr const char* RuntimeResidentAdapterAbi = "starcraft-api-resident-adapter-v1";
   inline constexpr std::uint16_t RuntimeResidentAdapterAbiMajor = 1;
   inline constexpr std::uint32_t RuntimeResidentQueueMagic = 0x53434151; // SCAQ
+  inline constexpr const char* RuntimeResidentCommandQueueFile = "resident-command.queue";
+  inline constexpr const char* RuntimeResidentOverlayQueueFile = "resident-overlay.queue";
+  inline constexpr const char* RuntimeResidentProofQueueFile = "resident-proof.queue";
 
   enum class RuntimeResidentQueueKind : std::uint16_t
   {
@@ -64,6 +67,37 @@ namespace BWAPI::Runtime
   struct RuntimeResidentQueueValidationResult
   {
     bool valid = false;
+    std::vector<std::string> errors;
+  };
+
+  struct RuntimeResidentQueueAppendResult
+  {
+    bool appended = false;
+    std::uint64_t sequence = 0;
+    std::string reason;
+    std::vector<std::string> errors;
+  };
+
+  struct RuntimeResidentQueueRecord
+  {
+    RuntimeResidentRecordHeader header;
+    std::vector<unsigned char> payload;
+  };
+
+  struct RuntimeResidentQueueReadResult
+  {
+    bool read = false;
+    RuntimeResidentQueueHeader header;
+    std::vector<RuntimeResidentQueueRecord> records;
+    std::string reason;
+    std::vector<std::string> errors;
+  };
+
+  struct RuntimeResidentQueueAcknowledgeResult
+  {
+    bool acknowledged = false;
+    RuntimeResidentQueueHeader header;
+    std::string reason;
     std::vector<std::string> errors;
   };
 
@@ -121,6 +155,40 @@ namespace BWAPI::Runtime
   RuntimeResidentQueueValidationResult validateRuntimeResidentQueueHeader(
     const RuntimeResidentQueueHeader& header,
     RuntimeResidentQueueKind expectedKind,
+    RuntimeResidentBridgeValidationOptions options = {});
+
+  std::vector<std::string> makeRuntimeResidentQueueReadyLines(
+    RuntimeResidentQueueKind kind,
+    const std::filesystem::path& queuePath,
+    const RuntimeResidentQueueHeader& header);
+
+  RuntimeResidentQueueValidationResult validateRuntimeResidentQueueFile(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    RuntimeResidentBridgeValidationOptions options = {});
+
+  RuntimeResidentQueueValidationResult ensureRuntimeResidentQueueFile(
+    const std::filesystem::path& queuePath,
+    const RuntimeResidentQueueHeader& desiredHeader,
+    RuntimeResidentQueueHeader& actualHeader,
+    RuntimeResidentBridgeValidationOptions options = {});
+
+  RuntimeResidentQueueAppendResult appendRuntimeResidentQueueRecord(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    const std::vector<unsigned char>& payload,
+    RuntimeResidentBridgeValidationOptions options = {});
+
+  RuntimeResidentQueueReadResult readRuntimeResidentQueueRecords(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    std::size_t maxRecords,
+    RuntimeResidentBridgeValidationOptions options = {});
+
+  RuntimeResidentQueueAcknowledgeResult acknowledgeRuntimeResidentQueueRecords(
+    const std::filesystem::path& queuePath,
+    RuntimeResidentQueueKind expectedKind,
+    std::uint64_t readSequence,
     RuntimeResidentBridgeValidationOptions options = {});
 
   RuntimeResidentQueueValidationResult validateRuntimeResidentRecordHeader(

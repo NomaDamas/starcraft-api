@@ -3,6 +3,7 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
+#include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -151,6 +152,16 @@ namespace BWAPI::Runtime
         getenvString("STARCRAFT_API_EXECUTOR_BRIDGE_DISCOVERY_DIR");
       if (!explicitDiscoveryDir.empty())
         candidates.emplace_back(explicitDiscoveryDir);
+
+      const std::string explicitExecutorBridge =
+        getenvString("STARCRAFT_API_EXECUTOR_BRIDGE_DIR");
+      if (!explicitExecutorBridge.empty())
+        candidates.emplace_back(explicitExecutorBridge);
+
+      const std::string explicitResidentBridge =
+        getenvString("STARCRAFT_API_RESIDENT_BRIDGE_DIR");
+      if (!explicitResidentBridge.empty())
+        candidates.emplace_back(explicitResidentBridge);
 
       candidates.emplace_back("/tmp/starcraft-api-live-bridge");
 
@@ -1084,12 +1095,59 @@ namespace BWAPI::Runtime
       return false;
     }
 
-    bool runtimeProcessAppearsInitialized(int processId, std::string& reason)
+    bool runtimeProcessHasActiveResidentBridge(
+      const RuntimeInstallation& installation,
+      int processId,
+      std::string& reason)
     {
+      RuntimeEnvironment environment;
+      environment.platform = installation.platform;
+      environment.product = installation.product;
+      environment.version = installation.version;
+      environment.processId = processId;
+      environment.executablePath = installation.executablePath;
+
+      const std::string bridgePath = findMatchingLiveBridgePath(environment);
+      if (bridgePath.empty())
+        return false;
+
+      environment.executorBridgePath = bridgePath;
+      const std::filesystem::path readyPath =
+        std::filesystem::path(bridgePath) / RuntimeExecutorBridgeReadyFile;
+      RuntimeResidentBridgeValidationResult resident =
+        validateRuntimeResidentBridgeReadyFile(environment, readyPath);
+      if (resident.valid && resident.active)
+        return true;
+
+      if (!resident.errors.empty())
+      {
+        std::ostringstream message;
+        message << "matching resident bridge is present but invalid";
+        for (const std::string& error : resident.errors)
+          message << "; " << error;
+        reason = message.str();
+      }
+      return false;
+    }
+
+    bool runtimeProcessAppearsInitialized(
+      const RuntimeInstallation& installation,
+      int processId,
+      std::string& reason)
+    {
+      std::string residentReason;
+      if (runtimeProcessHasActiveResidentBridge(installation, processId, residentReason))
+        return true;
+      if (!residentReason.empty())
+        reason = residentReason;
+
       RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
       if (!regions.success)
       {
-        reason = "runtime memory map inspection is unavailable: " + regions.reason;
+        if (reason.empty())
+          reason = "runtime memory map inspection is unavailable: " + regions.reason;
+        else
+          reason += "; runtime memory map inspection is unavailable: " + regions.reason;
         return !getenvString("STARCRAFT_API_PROCESS_SNAPSHOT").empty();
       }
 
@@ -1138,7 +1196,7 @@ namespace BWAPI::Runtime
       if (containsProcessId(secondPass, processId))
       {
         std::string initializedReason;
-        if (runtimeProcessAppearsInitialized(processId, initializedReason))
+        if (runtimeProcessAppearsInitialized(installation, processId, initializedReason))
           return processId;
         if (rejectionReason != nullptr)
           *rejectionReason = initializedReason;
@@ -2307,6 +2365,13 @@ namespace BWAPI::Runtime
       return true;
 #else
       const pid_t pid = static_cast<pid_t>(processId);
+      auto reapExitedChild = [&]() -> bool
+      {
+        int status = 0;
+        const pid_t exited = waitpid(pid, &status, WNOHANG);
+        return exited == pid;
+      };
+
       if (kill(pid, SIGTERM) != 0)
       {
         reason = "kill(SIGTERM) failed for process "
@@ -2318,6 +2383,8 @@ namespace BWAPI::Runtime
 
       for (int i = 0; i < 20; ++i)
       {
+        if (reapExitedChild())
+          return true;
         if (!runtimeProcessExists(processId))
           return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2334,6 +2401,8 @@ namespace BWAPI::Runtime
 
       for (int i = 0; i < 20; ++i)
       {
+        if (reapExitedChild())
+          return true;
         if (!runtimeProcessExists(processId))
           return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));

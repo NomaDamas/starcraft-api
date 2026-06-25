@@ -10,6 +10,49 @@ if(NOT DEFINED STARCRAFT_API_CLI_TEST_DIR)
   message(FATAL_ERROR "STARCRAFT_API_CLI_TEST_DIR is required")
 endif()
 
+if(NOT DEFINED STARCRAFT_API_CMAKE_COMMAND)
+  set(STARCRAFT_API_CMAKE_COMMAND "${CMAKE_COMMAND}")
+endif()
+
+function(start_runtime_identity_process output_process_id)
+  if(WIN32)
+    string(REPLACE "'" "''" cmake_command_ps "${STARCRAFT_API_CMAKE_COMMAND}")
+    execute_process(
+      COMMAND powershell -NoProfile -ExecutionPolicy Bypass -Command
+        "$p = Start-Process -FilePath '${cmake_command_ps}' -ArgumentList '-E','sleep','120' -WindowStyle Hidden -PassThru; Write-Output $p.Id"
+      RESULT_VARIABLE start_result
+      OUTPUT_VARIABLE start_output
+      ERROR_VARIABLE start_error
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+  else()
+    execute_process(
+      COMMAND /bin/sh -c "\"${STARCRAFT_API_CMAKE_COMMAND}\" -E sleep 120 >/dev/null 2>&1 & echo $!"
+      RESULT_VARIABLE start_result
+      OUTPUT_VARIABLE start_output
+      ERROR_VARIABLE start_error
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+  endif()
+
+  string(STRIP "${start_output}" start_output)
+  if(NOT start_result EQUAL 0 OR NOT start_output MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "unable to start live runtime identity fixture: ${start_error}\n${start_output}")
+  endif()
+  set(${output_process_id} "${start_output}" PARENT_SCOPE)
+endfunction()
+
+function(stop_runtime_identity_process process_id)
+  if(NOT process_id MATCHES "^[0-9]+$")
+    return()
+  endif()
+  if(WIN32)
+    execute_process(
+      COMMAND powershell -NoProfile -ExecutionPolicy Bypass -Command
+        "Stop-Process -Id ${process_id} -Force -ErrorAction SilentlyContinue")
+  else()
+    execute_process(COMMAND kill "${process_id}")
+  endif()
+endfunction()
+
 set(evidence_path "${STARCRAFT_API_CLI_TEST_DIR}/runtime-gap-report.evidence")
 set(log_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-gap-report-logs")
 set(process_snapshot "${STARCRAFT_API_CLI_TEST_DIR}/runtime-gap-report-processes.snapshot")
@@ -225,14 +268,7 @@ file(MAKE_DIRECTORY "${bridge_dir}")
 file(WRITE "${bridge_dir}/issue_commands.snapshot.tsv"
   "command\tstorage_kind\tencoded_bytes\n"
   "pauseGame\tunit-test-runtime-command-queue-v1\t10\n")
-if(WIN32)
-  set(bridge_process_id "123")
-else()
-  execute_process(
-    COMMAND /bin/sh -c "sleep 120 >/dev/null 2>&1 & echo $!"
-    OUTPUT_VARIABLE bridge_process_id
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
-endif()
+start_runtime_identity_process(bridge_process_id)
 file(WRITE "${bridge_dir}/ready"
   "protocol=starcraft-api-file-bridge-v1\n"
   "product=starcraft-remastered\n"
@@ -300,6 +336,7 @@ execute_process(
 )
 
 if(NOT bridge_result EQUAL 0)
+  stop_runtime_identity_process("${bridge_process_id}")
   message(FATAL_ERROR "gap report bridge proof command failed: ${bridge_error}\n${bridge_output}")
 endif()
 
@@ -316,9 +353,12 @@ foreach(needle
     "implementation_gap.category.executor-behavior-proof.count=11")
   string(FIND "${bridge_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
+    stop_runtime_identity_process("${bridge_process_id}")
     message(FATAL_ERROR "gap report bridge proof output missing '${needle}'\n${bridge_output}")
   endif()
 endforeach()
+
+stop_runtime_identity_process("${bridge_process_id}")
 
 string(FIND "${summary_output}" "readiness.check.id=" check_index)
 if(NOT check_index EQUAL -1)

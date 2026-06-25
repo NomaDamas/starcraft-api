@@ -12877,8 +12877,8 @@ namespace
 
   struct SelfUnitFixture
   {
-    std::vector<std::array<unsigned char, 336>> records;
-    std::vector<std::array<unsigned char, 64>> sprites;
+    alignas(8) std::array<std::array<unsigned char, 336>, 16> records;
+    alignas(8) std::array<std::array<unsigned char, 64>, 16> sprites;
   };
 
   struct SelfUnitNodeFixture
@@ -12936,8 +12936,6 @@ namespace
   SelfUnitFixture makeSelfUnitFixture()
   {
     SelfUnitFixture fixture;
-    fixture.records.resize(16);
-    fixture.sprites.resize(fixture.records.size());
     for (std::size_t i = 0; i < fixture.records.size(); ++i)
     {
       auto& record = fixture.records[i];
@@ -13892,9 +13890,12 @@ int main(int argc, char** argv)
   if (self && selfUnitFixture)
   {
     unitFixture = makeSelfUnitFixture();
-    if (unitCandidateAddresses.empty())
-      unitCandidateAddresses.push_back(
-        reinterpret_cast<std::uintptr_t>(unitFixture.records.front().data()));
+    const std::uintptr_t fixtureAddress =
+      reinterpret_cast<std::uintptr_t>(unitFixture.records.front().data());
+    unitCandidateAddresses.erase(
+      std::remove(unitCandidateAddresses.begin(), unitCandidateAddresses.end(), fixtureAddress),
+      unitCandidateAddresses.end());
+    unitCandidateAddresses.insert(unitCandidateAddresses.begin(), fixtureAddress);
   }
   if (self && selfUnitNodeFixture)
   {

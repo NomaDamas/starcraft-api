@@ -300,6 +300,18 @@ if(TARGET bwapi-api-surface-audit)
   add_test(NAME bwapi_api_surface_audit COMMAND bwapi-api-surface-audit)
 endif()
 
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME guarded_parallel_cli_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DGUARDED_PARALLEL=${CMAKE_SOURCE_DIR}/tools/guarded_parallel.py
+      -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/guarded_parallel_cli_test.cmake
+  )
+endif()
+
 add_executable(public_api_smoke_test
   public_api_smoke_test.cpp
 )

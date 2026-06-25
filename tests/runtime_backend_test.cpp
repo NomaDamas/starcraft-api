@@ -86,6 +86,14 @@ namespace
           << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
     ready << "proof.active_match_state.unit_node_record_size=64\n";
   }
+
+  void writeProofSnapshot(const std::filesystem::path& path, const std::string& proof)
+  {
+    std::ofstream snapshot(path);
+    snapshot << "field\tvalue\n"
+             << "proof\t" << proof << '\n'
+             << "passed\ttrue\n";
+  }
 }
 
 int main()
@@ -142,6 +150,15 @@ int main()
                   << "source\tlive-sc-r-command-path\n"
                   << "behavior_checked\ttrue\n";
   }
+  writeProofSnapshot(bridgeDir / "draw_overlays.snapshot.tsv", "draw_overlays");
+  writeProofSnapshot(bridgeDir / "events.snapshot.tsv", "dispatch_events");
+  writeProofSnapshot(bridgeDir / "replay.snapshot.tsv", "replay_analysis");
+  writeProofSnapshot(bridgeDir / "multiplayer_sync.snapshot.tsv", "multiplayer_sync");
+  writeProofSnapshot(bridgeDir / "ai_module_load.snapshot.tsv", "load_ai_modules");
+  writeProofSnapshot(bridgeDir / "map.snapshot.tsv", "read_map_data");
+  writeProofSnapshot(bridgeDir / "players.snapshot.tsv", "read_player_data");
+  writeProofSnapshot(bridgeDir / "bullets.snapshot.tsv", "read_bullet_data");
+  writeProofSnapshot(bridgeDir / "regions.snapshot.tsv", "read_region_data");
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
@@ -246,6 +263,53 @@ int main()
     ready << "proof.issue_commands.encoded_bytes=10\n";
     ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
     ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
+    ready << "proof.draw_overlays.source=live-render-hook\n";
+    ready << "proof.draw_overlays.hook_address=0x1300\n";
+    ready << "proof.draw_overlays.snapshot=draw_overlays.snapshot.tsv\n";
+    ready << "proof.dispatch_events.frame_events=3\n";
+    ready << "proof.dispatch_events.unit_discover_events=2\n";
+    ready << "proof.dispatch_events.unit_update_events=4\n";
+    ready << "proof.dispatch_events.unique_players=2\n";
+    ready << "proof.dispatch_events.snapshot=events.snapshot.tsv\n";
+    ready << "proof.replay_analysis.source=active-match-live-metadata\n";
+    ready << "proof.replay_analysis.current_process_replay=false\n";
+    ready << "proof.replay_analysis.active_match_metadata=true\n";
+    ready << "proof.replay_analysis.map_name=UnitTest\n";
+    ready << "proof.replay_analysis.first_frame=100\n";
+    ready << "proof.replay_analysis.last_frame=140\n";
+    ready << "proof.replay_analysis.player_count=2\n";
+    ready << "proof.replay_analysis.snapshot=replay.snapshot.tsv\n";
+    ready << "proof.multiplayer_sync.source=live-snet-turn-hooks\n";
+    ready << "proof.multiplayer_sync.send_turn_address=0x1400\n";
+    ready << "proof.multiplayer_sync.receive_message_address=0x1500\n";
+    ready << "proof.multiplayer_sync.snapshot=multiplayer_sync.snapshot.tsv\n";
+    ready << "proof.battle_net_policy.status=runtime-process-visible\n";
+    ready << "proof.battle_net_policy.game_process_count=1\n";
+    ready << "proof.battle_net_policy.blocker_count=0\n";
+    ready << "proof.load_ai_modules.loader=dlopen\n";
+    ready << "proof.load_ai_modules.module_extension=.dylib\n";
+    ready << "proof.load_ai_modules.self_process_smoke=false\n";
+    ready << "proof.load_ai_modules.module_path=/tmp/starcraft-api-test-ai-module.dylib\n";
+    ready << "proof.load_ai_modules.snapshot=ai_module_load.snapshot.tsv\n";
+    ready << "proof.read_map_data.source=live-sc-r-map-tile-array\n";
+    ready << "proof.read_map_data.map_name_address=0x1600\n";
+    ready << "proof.read_map_data.map_tile_array_address=0x1700\n";
+    ready << "proof.read_map_data.tile_count=256\n";
+    ready << "proof.read_map_data.snapshot=map.snapshot.tsv\n";
+    ready << "proof.read_player_data.player_count=2\n";
+    ready << "proof.read_player_data.observed_units=4\n";
+    ready << "proof.read_player_data.player_info_projection=true\n";
+    ready << "proof.read_player_data.player_info_record_size=128\n";
+    ready << "proof.read_player_data.alliance_projection=true\n";
+    ready << "proof.read_player_data.projection_source=compat-player-projection-v1:unit-snapshot-derived\n";
+    ready << "proof.read_player_data.snapshot=players.snapshot.tsv\n";
+    ready << "proof.read_bullet_data.source=live-sc-r-bullet-table\n";
+    ready << "proof.read_bullet_data.address=0x1800\n";
+    ready << "proof.read_bullet_data.record_size=128\n";
+    ready << "proof.read_bullet_data.snapshot=bullets.snapshot.tsv\n";
+    ready << "proof.read_region_data.source=live-bwapi-region-graph\n";
+    ready << "proof.read_region_data.region_count=3\n";
+    ready << "proof.read_region_data.snapshot=regions.snapshot.tsv\n";
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
     ready << "proof.read_map_data=passed\n";

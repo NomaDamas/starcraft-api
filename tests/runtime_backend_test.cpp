@@ -136,6 +136,13 @@ int main()
   std::filesystem::remove_all(bridgeDir);
   std::filesystem::create_directories(bridgeDir);
   {
+    std::ofstream issueCommands(bridgeDir / "issue_commands.snapshot.tsv");
+    issueCommands << "field\tvalue\n"
+                  << "passed\ttrue\n"
+                  << "source\tlive-sc-r-command-path\n"
+                  << "behavior_checked\ttrue\n";
+  }
+  {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
@@ -190,6 +197,19 @@ int main()
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
+    ready << "proof.issue_commands.command=pauseGame\n";
+    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
+    ready << "proof.issue_commands.delivery_checked=true\n";
+    ready << "proof.issue_commands.behavior_checked=true\n";
+    ready << "proof.issue_commands.self_fixture=false\n";
+    ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
+    ready << "proof.issue_commands.vector_address=0x1000\n";
+    ready << "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n";
+    ready << "proof.issue_commands.bytes_in_queue_address=0x1100\n";
+    ready << "proof.issue_commands.frame_counter_address=0x1200\n";
+    ready << "proof.issue_commands.encoded_bytes=10\n";
+    ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
+    ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
     ready << "proof.attach=passed\n";
     ready << "proof.issue_commands=passed\n";
   }
@@ -213,6 +233,19 @@ int main()
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
+    ready << "proof.issue_commands.command=pauseGame\n";
+    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
+    ready << "proof.issue_commands.delivery_checked=true\n";
+    ready << "proof.issue_commands.behavior_checked=true\n";
+    ready << "proof.issue_commands.self_fixture=false\n";
+    ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
+    ready << "proof.issue_commands.vector_address=0x1000\n";
+    ready << "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n";
+    ready << "proof.issue_commands.bytes_in_queue_address=0x1100\n";
+    ready << "proof.issue_commands.frame_counter_address=0x1200\n";
+    ready << "proof.issue_commands.encoded_bytes=10\n";
+    ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
+    ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
     ready << "proof.read_map_data=passed\n";

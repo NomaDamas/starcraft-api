@@ -195,6 +195,9 @@ execute_process(
     --manifest "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
     --product starcraft-remastered
     --version test-build
+    --process-id 1
+    --executable "${STARCRAFT_API_TEST_FIXTURE_DIR}/remastered-complete.manifest"
+    --bridge "${STARCRAFT_API_CLI_TEST_DIR}/fixture-production-forbidden-bridge"
     --require-production
   RESULT_VARIABLE fixture_production_result
   OUTPUT_VARIABLE fixture_production_output
@@ -208,7 +211,8 @@ endif()
 
 foreach(needle
     "readiness.production_ready=false"
-    "implementation_gap.count=")
+    "implementation_gap.count=1"
+    "implementation_gap.0.id=fixture-manifest-production-forbidden")
   string(FIND "${fixture_production_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "fixture production rejection output missing '${needle}'\n${fixture_production_output}")
@@ -258,8 +262,13 @@ file(WRITE "${bridge_dir}/ready"
   "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n"
   "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n"
   "proof.issue_commands.command=pauseGame\n"
+  "proof.issue_commands.source=live-sc-r-command-path\n"
+  "proof.issue_commands.delivery_checked=true\n"
+  "proof.issue_commands.behavior_checked=true\n"
+  "proof.issue_commands.self_fixture=false\n"
+  "proof.issue_commands.pause_frame_counter_matched=true\n"
   "proof.issue_commands.vector_address=0x1000\n"
-  "proof.issue_commands.storage_kind=unit-test-runtime-command-queue-v1\n"
+  "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n"
   "proof.issue_commands.bytes_in_queue_address=0x1100\n"
   "proof.issue_commands.frame_counter_address=0x1200\n"
   "proof.issue_commands.encoded_bytes=10\n"

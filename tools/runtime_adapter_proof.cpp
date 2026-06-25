@@ -16023,6 +16023,15 @@ int main(int argc, char** argv)
       ready << "command.sink=adapter-local-state-v1\n";
     }
     ready << "proof.issue_commands.command=" << issueCommandsProof.commandName << '\n';
+    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
+    ready << "proof.issue_commands.delivery_checked="
+          << (issueCommandsProof.deliveryChecked ? "true" : "false") << '\n';
+    ready << "proof.issue_commands.behavior_checked="
+          << (issueCommandsProof.behaviorChecked ? "true" : "false") << '\n';
+    ready << "proof.issue_commands.self_fixture="
+          << (issueCommandsProof.selfFixture ? "true" : "false") << '\n';
+    ready << "proof.issue_commands.pause_frame_counter_matched="
+          << (issueCommandsProof.pauseFrameCounterMatched ? "true" : "false") << '\n';
     ready << "proof.issue_commands.vector_address="
           << hexAddress(issueCommandsProof.vectorAddress) << '\n';
     ready << "proof.issue_commands.storage_kind="

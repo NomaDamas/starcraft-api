@@ -507,6 +507,60 @@ int main(int argc, char** argv)
     !fileContainsLine(readyPath, "proof.issue_commands.command.restartGame=passed"),
     "resident adapter promoted command-specific proof with invalid pause/resume behavior deltas");
 
+  const std::uint64_t shortBaselineDeltaHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  const std::uint64_t shortBaselineDeltaFrame =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "units.snapshot.tsv", "frame_id"),
+      "units.snapshot.tsv#frame_id");
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.restartGame.snapshot.tsv",
+    "restartGame",
+    static_cast<std::uint64_t>(environment.processId),
+    shortBaselineDeltaHeartbeat,
+    shortBaselineDeltaFrame,
+    true,
+    1,
+    0,
+    12);
+  writeSingleCommandSpecificPendingFile(
+    bridgePath,
+    "restartGame",
+    "issue_commands.restartGame.snapshot.tsv");
+  require(
+    waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", shortBaselineDeltaHeartbeat),
+    "resident adapter heartbeat did not advance after short-baseline-delta command proof handoff");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands.command.restartGame=passed"),
+    "resident adapter promoted command-specific proof with baseline_delta below threshold");
+
+  const std::uint64_t shortResumedDeltaHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  const std::uint64_t shortResumedDeltaFrame =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "units.snapshot.tsv", "frame_id"),
+      "units.snapshot.tsv#frame_id");
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.restartGame.snapshot.tsv",
+    "restartGame",
+    static_cast<std::uint64_t>(environment.processId),
+    shortResumedDeltaHeartbeat,
+    shortResumedDeltaFrame,
+    true,
+    12,
+    0,
+    1);
+  writeSingleCommandSpecificPendingFile(
+    bridgePath,
+    "restartGame",
+    "issue_commands.restartGame.snapshot.tsv");
+  require(
+    waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", shortResumedDeltaHeartbeat),
+    "resident adapter heartbeat did not advance after short-resumed-delta command proof handoff");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands.command.restartGame=passed"),
+    "resident adapter promoted command-specific proof with resumed_delta below threshold");
+
   const std::uint64_t commandProofHeartbeat =
     requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
   const std::uint64_t commandProofFrame =

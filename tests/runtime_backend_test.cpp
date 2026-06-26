@@ -733,6 +733,84 @@ int main()
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "proof.attach=passed\n";
     ready << "proof.attach.source=resident-adapter\n";
+    RuntimeEnvironment shortBaselineDeltaEnvironment = attachableRemastered;
+    shortBaselineDeltaEnvironment.executorBridgePath = bridgeDir.string();
+    const std::uint64_t heartbeat =
+      writeResidentStateProofs(ready, shortBaselineDeltaEnvironment);
+    writeResidentProofQueueReadyLines(ready, bridgeDir, heartbeat);
+    ready << "proof.issue_commands.command.pauseGame=passed\n";
+    ready << "proof.issue_commands.command.pauseGame.snapshot=issue_commands.pauseGame.snapshot.tsv\n";
+    ready << "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed\n";
+    writeCommandSpecificProofSnapshot(
+      bridgeDir / "issue_commands.pauseGame.snapshot.tsv",
+      "pauseGame",
+      "game-action",
+      currentProcessId(),
+      heartbeat,
+      102,
+      {},
+      true,
+      1,
+      0,
+      12);
+  }
+
+  RuntimeProbeResult shortBaselineDeltaProofProbe = proofBackedRemasteredBackend->probe();
+  assert(commandEvidenceStatusFor(
+    shortBaselineDeltaProofProbe.implementedGameActionEvidence,
+    "pauseGame") == RuntimeCommandEvidenceStatus::MockTested);
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=starcraft-api-resident-adapter\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.attach.source=resident-adapter\n";
+    RuntimeEnvironment shortResumedDeltaEnvironment = attachableRemastered;
+    shortResumedDeltaEnvironment.executorBridgePath = bridgeDir.string();
+    const std::uint64_t heartbeat =
+      writeResidentStateProofs(ready, shortResumedDeltaEnvironment);
+    writeResidentProofQueueReadyLines(ready, bridgeDir, heartbeat);
+    ready << "proof.issue_commands.command.pauseGame=passed\n";
+    ready << "proof.issue_commands.command.pauseGame.snapshot=issue_commands.pauseGame.snapshot.tsv\n";
+    ready << "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed\n";
+    writeCommandSpecificProofSnapshot(
+      bridgeDir / "issue_commands.pauseGame.snapshot.tsv",
+      "pauseGame",
+      "game-action",
+      currentProcessId(),
+      heartbeat,
+      102,
+      {},
+      true,
+      12,
+      0,
+      1);
+  }
+
+  RuntimeProbeResult shortResumedDeltaProofProbe = proofBackedRemasteredBackend->probe();
+  assert(commandEvidenceStatusFor(
+    shortResumedDeltaProofProbe.implementedGameActionEvidence,
+    "pauseGame") == RuntimeCommandEvidenceStatus::MockTested);
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=starcraft-api-resident-adapter\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.attach.source=resident-adapter\n";
     RuntimeEnvironment invalidActiveMatchEnvironment = attachableRemastered;
     invalidActiveMatchEnvironment.executorBridgePath = bridgeDir.string();
     const std::uint64_t heartbeat = nextResidentProofHeartbeat();

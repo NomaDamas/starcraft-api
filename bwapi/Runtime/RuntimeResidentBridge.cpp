@@ -970,9 +970,9 @@ namespace BWAPI::Runtime
       const char* prefix = "resident.proof.active_match";
       const std::string activeMatchSource =
         readyValue(readyPath, std::string(prefix) + ".source");
-      if (activeMatchSource != "resident" && activeMatchSource != "adapter-proof")
+      if (activeMatchSource != "resident")
       {
-        addError(result.errors, "resident active_match proof source is unsupported");
+        addError(result.errors, "resident active_match proof source must be resident");
         activeMatchValid = false;
       }
       constexpr std::uint64_t maxPreservedActiveMatchHeartbeatLag = 120;
@@ -985,9 +985,9 @@ namespace BWAPI::Runtime
         activeMatchValid = false;
 
       result.activeMatchMode = readyValue(readyPath, std::string(prefix) + ".mode");
-      if (result.activeMatchMode != "match" && result.activeMatchMode != "replay")
+      if (result.activeMatchMode != "match")
       {
-        addError(result.errors, "resident active_match proof mode is neither match nor replay");
+        addError(result.errors, "resident active_match proof mode must be match");
         activeMatchValid = false;
       }
 
@@ -1002,10 +1002,9 @@ namespace BWAPI::Runtime
 
       const std::string activeMatchEvidence =
         readyValue(readyPath, std::string(prefix) + ".evidence");
-      if (activeMatchEvidence != "resident-frame-unit-activity"
-          && activeMatchEvidence != "adapter-live-unit-activity")
+      if (activeMatchEvidence != "resident-frame-unit-activity")
       {
-        addError(result.errors, "resident active_match proof evidence is unsupported");
+        addError(result.errors, "resident active_match proof evidence must be resident-frame-unit-activity");
         activeMatchValid = false;
       }
       if (activeMatchValid

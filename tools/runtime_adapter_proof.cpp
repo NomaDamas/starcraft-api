@@ -2079,7 +2079,6 @@ namespace
   {
     return startsWith(line, "resident.adapter")
       || startsWith(line, "resident.queue.")
-      || startsWith(line, "resident.proof.")
       || startsWith(line, "resident.projection.");
   }
 
@@ -15710,8 +15709,10 @@ int main(int argc, char** argv)
     proofFailureCode = proofFailureCode == 0 ? 3 : proofFailureCode;
   }
 
+  constexpr bool externalAdapterProofCanPromoteResidentState = false;
   const bool willWriteReadGameStateProof =
-    proveReadGameState
+    externalAdapterProofCanPromoteResidentState
+    && proveReadGameState
     && readGameStateProof.passed
     && hasResidentGameStateProofTicks(readGameStateProof);
   const bool willWriteReadUnitsProof =
@@ -15720,7 +15721,8 @@ int main(int argc, char** argv)
     && (!readUnitsProof.derivedSnapshot || unitSnapshotWritten)
     && (!self || !proveActiveMatchState);
   const bool willWriteActiveMatchProof =
-    proveActiveMatchState
+    externalAdapterProofCanPromoteResidentState
+    && proveActiveMatchState
     && !self
     && willWriteReadGameStateProof
     && willWriteReadUnitsProof;
@@ -15776,8 +15778,8 @@ int main(int argc, char** argv)
     if (replacementReady)
       invalidatedProofTokens.push_back(token);
   };
-  invalidateProofToken(willWriteReadGameStateProof, "proof.read_game_state");
-  invalidateProofToken(willWriteActiveMatchProof, "proof.active_match_state");
+  invalidateProofToken(proveReadGameState, "proof.read_game_state");
+  invalidateProofToken(proveActiveMatchState, "proof.active_match_state");
   invalidateProofToken(willWriteReadUnitsProof, "proof.read_units");
   invalidateProofToken(willWriteIssueCommandsProof, "proof.issue_commands");
   invalidateProofToken(willWriteDrawOverlaysProof, "proof.draw_overlays");
@@ -15828,16 +15830,6 @@ int main(int argc, char** argv)
     }
   }
 
-  BwGameProjectionProof bwGameProjectionProof;
-  if (runtimeVisibleAtReady
-      && existingReadyMatchesRuntime
-      && existingReadyFromResidentAdapter
-      && proveReadGameState
-      && readGameStateProof.passed)
-  {
-    bwGameProjectionProof = validateResidentBwGameProjection(environment.processId, existingReadyLines);
-  }
-
   std::ofstream ready(readyPath);
   if (!ready)
   {
@@ -15871,92 +15863,58 @@ int main(int argc, char** argv)
     ready << line << '\n';
   for (const std::string& line : preservedResidentEvidenceLines)
     ready << line << '\n';
-  const bool residentReadGameStateReady =
-    proveReadGameState
-    && readGameStateProof.passed
-    && hasResidentGameStateProofTicks(readGameStateProof);
-  if (residentReadGameStateReady)
+  const bool residentReadGameStateReady = willWriteReadGameStateProof;
+  if (proveReadGameState)
   {
-    ready << readGameStateBehaviorProof->readyFileLine << '\n';
-    ready << "proof.read_game_state.address=0x" << std::hex << readGameStateProof.address << std::dec << '\n';
-    ready << "proof.read_game_state.samples="
-          << readGameStateProof.first << ','
-          << readGameStateProof.second << ','
-          << readGameStateProof.third << '\n';
-    ready << "proof.read_game_state.delta="
-          << (readGameStateProof.second - readGameStateProof.first) << ','
-          << (readGameStateProof.third - readGameStateProof.second) << '\n';
-    ready << "proof.read_game_state.confidence=frame-like\n";
-    if (bwGameProjectionProof.passed)
+    ready << "diagnostic.read_game_state.source=external-adapter-proof\n";
+    ready << "diagnostic.read_game_state.production_proof=false\n";
+    ready << "diagnostic.read_game_state.required_source=resident\n";
+    ready << "diagnostic.read_game_state.required_adapter_abi="
+          << residentAdapterAbi() << '\n';
+    if (readGameStateProof.passed && hasResidentGameStateProofTicks(readGameStateProof))
     {
-      ready << "proof.read_game_state.bwgame_projection=resident-bwgame-projection-v1\n";
-      ready << "proof.read_game_state.bwgame_projection_address="
-            << hexAddress(bwGameProjectionProof.address) << '\n';
-      ready << "proof.read_game_state.bwgame_projection_samples="
-            << bwGameProjectionProof.firstFrame << ','
-            << bwGameProjectionProof.secondFrame << '\n';
-      ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:"
-            << "resident-bwgame-projection-v1:" << hexAddress(bwGameProjectionProof.address) << '\n';
-      ready << "contract.structure.BW::BWGame=" << bwGameProjectionProof.size
-            << "|proof.read_game_state=passed:resident-bwgame-projection-v1\n";
-      ready << "contract.field.BW::BWGame.elapsedFrames="
-            << bwGameProjectionProof.elapsedFramesOffset
-            << "|4|proof.read_game_state=passed:resident-bwgame-projection-v1\n";
+      ready << "diagnostic.read_game_state.address=0x"
+            << std::hex << readGameStateProof.address << std::dec << '\n';
+      ready << "diagnostic.read_game_state.samples="
+            << readGameStateProof.first << ','
+            << readGameStateProof.second << ','
+            << readGameStateProof.third << '\n';
+      ready << "diagnostic.read_game_state.delta="
+            << (readGameStateProof.second - readGameStateProof.first) << ','
+            << (readGameStateProof.third - readGameStateProof.second) << '\n';
+      ready << "diagnostic.read_game_state.confidence=frame-like\n";
     }
-    else if (!bwGameProjectionProof.reason.empty())
-    {
-      ready << "diagnostic.read_game_state.bwgame_projection.reason="
-            << bwGameProjectionProof.reason << '\n';
-    }
+    if (!readGameStateProof.reason.empty())
+      ready << "diagnostic.read_game_state.reason="
+            << readGameStateProof.reason << '\n';
   }
   const bool readUnitsReady =
     proveReadUnits
     && readUnitsProof.passed
     && (!readUnitsProof.derivedSnapshot || unitSnapshotWritten)
     && (!self || !proveActiveMatchState);
-  const bool activeMatchReady =
-    proveActiveMatchState
-    && !self
-    && residentReadGameStateReady
-    && readUnitsReady;
-  if (activeMatchReady)
+  const bool activeMatchReady = willWriteActiveMatchProof;
+  if (proveActiveMatchState)
   {
-    const char* activeMatchEvidence =
-      readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records";
-    const std::string residentHeartbeat =
-      existingReadyFromResidentAdapter
-        ? readyValue(existingReadyLines, "resident.adapter.heartbeat")
-        : std::string();
-    if (!residentHeartbeat.empty())
+    ready << "diagnostic.active_match_state.source=external-adapter-proof\n";
+    ready << "diagnostic.active_match_state.production_proof=false\n";
+    ready << "diagnostic.active_match_state.required_source=resident\n";
+    ready << "diagnostic.active_match_state.required_mode=match\n";
+    ready << "diagnostic.active_match_state.replay_launch_detected="
+          << (replayLaunchDetected ? "true" : "false") << '\n';
+    if (readUnitsProof.passed)
     {
-      ready << "resident.proof.active_match.source=adapter-proof\n";
-      ready << "resident.proof.active_match.process_id="
-            << environment.processId << '\n';
-      ready << "resident.proof.active_match.heartbeat="
-            << residentHeartbeat << '\n';
-      ready << "resident.proof.active_match.mode="
-            << (replayLaunchDetected ? "replay" : "match") << '\n';
-      ready << "resident.proof.active_match.unit_activity_count="
+      ready << "diagnostic.active_match_state.active_records="
             << readUnitsProof.activeRecords << '\n';
-      ready << "resident.proof.active_match.evidence=adapter-live-unit-activity\n";
+      ready << "diagnostic.active_match_state.evidence="
+            << (readUnitsProof.derivedSnapshot
+              ? "active-unit-node-snapshot"
+              : "active-unit-records")
+            << '\n';
     }
-    ready << "proof.active_match_state.evidence="
-          << activeMatchEvidence << '\n';
-    ready << "proof.active_match_state.active_records="
-          << readUnitsProof.activeRecords << '\n';
-    if (readUnitsProof.derivedSnapshot)
-    {
-      ready << "proof.active_match_state.unit_node_address=0x"
-            << std::hex << readUnitsProof.address << std::dec << '\n';
-      ready << "proof.active_match_state.unit_node_record_size="
-            << readUnitsProof.recordSize << '\n';
-    }
-    else
-    {
-      ready << "proof.active_match_state.unit_array_address=0x"
-            << std::hex << readUnitsProof.address << std::dec << '\n';
-    }
-    ready << activeMatchStateBehaviorProof->readyFileLine << '\n';
+    if (!readUnitsProof.reason.empty())
+      ready << "diagnostic.active_match_state.reason="
+            << readUnitsProof.reason << '\n';
   }
   if (readUnitsReady)
   {

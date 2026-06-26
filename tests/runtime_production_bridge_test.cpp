@@ -57,12 +57,88 @@ namespace
     return std::string(STARCRAFT_API_TEST_FIXTURE_DIR) + "/" + name;
   }
 
-  std::filesystem::path makeBridgePath()
+  void writeResidentSnapshotPayload(std::ofstream& snapshot, const std::string& proof)
   {
-    std::filesystem::path path = std::filesystem::temp_directory_path() / "starcraft-api-production-bridge-test";
-    std::filesystem::remove_all(path);
-    std::filesystem::create_directories(path);
+    if (proof == "read_units")
+    {
+      snapshot << "index\tnode\tsecondary\tsprite\tid\tx\ty\ttarget_x\ttarget_y\torder\tstate\tplayer\ttype_hint\thit_points\n";
+      for (int i = 0; i < 6; ++i)
+      {
+        snapshot << i << "\t0x" << (1000 + i) << "\t0x" << (2000 + i)
+                 << "\t0x" << (3000 + i) << '\t' << (400 + i)
+                 << '\t' << (64 + i) << '\t' << (80 + i)
+                 << '\t' << (96 + i) << '\t' << (112 + i)
+                 << "\t0\t0\t" << (i % 2) << "\t0\t40\n";
+      }
+      return;
+    }
+    if (proof == "read_player_data")
+    {
+      snapshot << "player\tstorm_id\trace\trace_inferred\tobserved_unit_count\tminerals\tgas\tsupply_used\tsupply_total\talliance_mask\n"
+               << "0\t100\tTerran\ttrue\t2\t50\t0\t4\t18\t0x1\n"
+               << "1\t101\tZerg\ttrue\t2\t50\t0\t4\t18\t0x2\n";
+      return;
+    }
+    if (proof == "read_map_data")
+    {
+      snapshot << "map_name\tmap_name_address\tmap_tile_array_address\ttile_count\tmap_path\tmap_file_size\tsource\treplay_path\treplay_file_size\n"
+               << "UnitTest\t0x1600\t0x1700\t256\t/tmp/UnitTest.scx\t4096\tlive-sc-r-map-tile-array\t/tmp/UnitTest.rep\t8192\n";
+      return;
+    }
+    if (proof == "read_bullet_data")
+    {
+      snapshot << "index\taddress\tsprite\tsource_unit\ttarget_unit\ttype\tx\ty\tvelocity_x\tvelocity_y\tplayer\tremove_timer\n"
+               << "0\t0x1800\t0x3000\t0x1000\t0x2000\t1\t64\t80\t2\t0\t0\t12\n"
+               << "1\t0x1880\t0x3010\t0x1010\t0x2010\t2\t96\t112\t0\t-2\t1\t16\n";
+      return;
+    }
+    if (proof == "read_region_data")
+    {
+      snapshot << "id\tcenter_x\tcenter_y\tleft\ttop\tright\tbottom\tobserved_units\taccessible\n"
+               << "0\t32\t32\t0\t0\t64\t64\t1\ttrue\n"
+               << "1\t96\t32\t64\t0\t128\t64\t2\ttrue\n"
+               << "2\t32\t96\t0\t64\t64\t128\t1\ttrue\n";
+      return;
+    }
+    if (proof == "replay_analysis")
+    {
+      snapshot << "source\tcurrent_process_replay\tactive_match_metadata\tmap_name\tfirst_frame\tlast_frame\tobserved_player_count\n"
+               << "active-match-live-metadata\tfalse\ttrue\tUnitTest\t800\t802\t2\n";
+      return;
+    }
+    snapshot << "field\tvalue\n"
+             << "passed\ttrue\n";
+  }
+
+  void writeResidentProofSnapshot(
+    const std::filesystem::path& path,
+    const std::string& proof,
+    int processId,
+    std::uint64_t heartbeat,
+    std::uint64_t frameId,
+    bool activeMatchCorrelated)
+  {
+    std::ofstream snapshot(path);
+    snapshot << "# schema=starcraft-api.resident-snapshot.v1\n"
+             << "# proof=" << proof << '\n'
+             << "# source_identity=resident-adapter\n"
+             << "# process_id=" << processId << '\n'
+             << "# heartbeat=" << heartbeat << '\n'
+             << "# frame_id=" << frameId << '\n'
+             << "# active_match_correlated="
+             << (activeMatchCorrelated ? "true" : "false") << '\n';
+    writeResidentSnapshotPayload(snapshot, proof);
+  }
+
+  void writeResidentProofSnapshots(
+    const std::filesystem::path& path,
+    int processId,
+    std::uint64_t heartbeat,
+    std::uint64_t frameId,
+    bool activeMatchCorrelated)
+  {
     const std::vector<std::pair<std::string, std::string>> snapshots = {
+      { "units.snapshot.tsv", "read_units" },
       { "issue_commands.snapshot.tsv", "issue_commands" },
       { "draw_overlays.snapshot.tsv", "draw_overlays" },
       { "events.snapshot.tsv", "dispatch_events" },
@@ -76,11 +152,22 @@ namespace
     };
     for (const auto& snapshotSpec : snapshots)
     {
-      std::ofstream snapshot(path / snapshotSpec.first);
-      snapshot << "field\tvalue\n"
-               << "proof\t" << snapshotSpec.second << '\n'
-               << "passed\ttrue\n";
+      writeResidentProofSnapshot(
+        path / snapshotSpec.first,
+        snapshotSpec.second,
+        processId,
+        heartbeat,
+        frameId,
+        activeMatchCorrelated);
     }
+  }
+
+  std::filesystem::path makeBridgePath()
+  {
+    std::filesystem::path path = std::filesystem::temp_directory_path() / "starcraft-api-production-bridge-test";
+    std::filesystem::remove_all(path);
+    std::filesystem::create_directories(path);
+    writeResidentProofSnapshots(path, currentProcessId(), 30, 802, true);
     return path;
   }
 
@@ -157,6 +244,7 @@ namespace
     ready << "proof.read_bullet_data.source=live-sc-r-bullet-table\n";
     ready << "proof.read_bullet_data.address=0x1800\n";
     ready << "proof.read_bullet_data.record_size=128\n";
+    ready << "proof.read_bullet_data.active_records=2\n";
     ready << "proof.read_bullet_data.snapshot=bullets.snapshot.tsv\n";
     ready << "proof.read_region_data.source=live-bwapi-region-graph\n";
     ready << "proof.read_region_data.region_count=3\n";
@@ -169,7 +257,11 @@ namespace
     return heartbeat++;
   }
 
-  void writeResidentStateProofs(std::ofstream& ready, int processId, const std::string& executable)
+  std::uint64_t writeResidentStateProofs(
+    std::ofstream& ready,
+    int processId,
+    const std::string& executable,
+    const std::filesystem::path& bridgePath = {})
   {
     RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
     environment.product = Product::StarCraftRemastered;
@@ -202,11 +294,15 @@ namespace
           << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
     ready << "proof.read_units.record_size=64\n";
     ready << "proof.read_units.active_records=6\n";
+    ready << "proof.read_units.snapshot=units.snapshot.tsv\n";
     ready << "proof.active_match_state.evidence=active-unit-node-snapshot\n";
     ready << "proof.active_match_state.active_records=6\n";
     ready << "proof.active_match_state.unit_node_address="
           << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
     ready << "proof.active_match_state.unit_node_record_size=64\n";
+    if (!bridgePath.empty())
+      writeResidentProofSnapshots(bridgePath, processId, heartbeat, 802, true);
+    return heartbeat;
   }
 
   void writeLiveContractProofs(std::ofstream& ready)
@@ -298,7 +394,7 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
-    writeResidentStateProofs(ready, processId, executable);
+    writeResidentStateProofs(ready, processId, executable, bridgePath);
     writeValidatedProductionProofMetadata(ready);
     if (includeLiveContractProofs)
       writeLiveContractProofs(ready);
@@ -317,7 +413,7 @@ namespace
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
-    writeResidentStateProofs(ready, processId, executable);
+    writeResidentStateProofs(ready, processId, executable, bridgePath);
     writeValidatedProductionProofMetadata(ready);
     writeBehaviorProofLines(ready, "multiplayer-sync");
   }

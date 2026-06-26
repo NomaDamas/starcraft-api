@@ -997,6 +997,14 @@ namespace
     std::string reason;
   };
 
+  struct ResidentSnapshotContext
+  {
+    int processId = 0;
+    std::uint64_t heartbeat = 0;
+    std::uint64_t frameId = 0;
+    bool activeMatchCorrelated = false;
+  };
+
   struct ResidentAIModuleLoadProof
   {
     bool passed = false;
@@ -1706,12 +1714,42 @@ namespace
     return proof;
   }
 
+  std::uint64_t latestResidentFrameId(const ResidentFrameCounterProof& frameCounterProof)
+  {
+    if (!frameCounterProof.passed || frameCounterProof.samples.empty())
+      return 0;
+    return frameCounterProof.samples.back().frame;
+  }
+
+  bool writeResidentSnapshotMetadata(
+    std::ofstream& output,
+    const char* proof,
+    const ResidentSnapshotContext& context)
+  {
+    if (context.processId <= 0 || context.heartbeat == 0 || context.frameId == 0)
+      return false;
+
+    output << "# schema=starcraft-api.resident-snapshot.v1\n";
+    output << "# proof=" << proof << '\n';
+    output << "# source_identity=resident-adapter\n";
+    output << "# process_id=" << context.processId << '\n';
+    output << "# heartbeat=" << context.heartbeat << '\n';
+    output << "# frame_id=" << context.frameId << '\n';
+    output << "# active_match_correlated="
+           << (context.activeMatchCorrelated ? "true" : "false") << '\n';
+    return static_cast<bool>(output);
+  }
+
   bool writeResidentPlayerDataSnapshot(
     const std::filesystem::path& path,
-    const ResidentPlayerDataProof& proof)
+    const ResidentPlayerDataProof& proof,
+    const ResidentSnapshotContext& context)
   {
     std::ofstream output(path, std::ios::trunc);
     if (!output)
+      return false;
+
+    if (!writeResidentSnapshotMetadata(output, "read_player_data", context))
       return false;
 
     output << "player\tstorm_id\trace\trace_inferred\tobserved_unit_count\tminerals\tgas\tsupply_used\tsupply_total\talliance_mask\n";
@@ -1733,10 +1771,13 @@ namespace
 
   bool writeResidentMapDataSnapshot(
     const std::filesystem::path& path,
-    const ResidentMapDataProof& proof)
+    const ResidentMapDataProof& proof,
+    const ResidentSnapshotContext& context)
   {
     std::ofstream output(path, std::ios::trunc);
     if (!output)
+      return false;
+    if (!writeResidentSnapshotMetadata(output, "read_map_data", context))
       return false;
     output << "map_name\tmap_name_address\tmap_tile_array_address\ttile_count\tmap_path\tmap_file_size\tsource\treplay_path\treplay_file_size\n";
     output << proof.mapName << '\t'
@@ -1753,10 +1794,13 @@ namespace
 
   bool writeResidentReplayAnalysisSnapshot(
     const std::filesystem::path& path,
-    const ResidentReplayAnalysisProof& proof)
+    const ResidentReplayAnalysisProof& proof,
+    const ResidentSnapshotContext& context)
   {
     std::ofstream output(path, std::ios::trunc);
     if (!output)
+      return false;
+    if (!writeResidentSnapshotMetadata(output, "replay_analysis", context))
       return false;
     output << "source\tcurrent_process_replay\tactive_match_metadata\tmap_name\tfirst_frame\tlast_frame\tobserved_player_count\n";
     output << proof.source << '\t'
@@ -1771,10 +1815,14 @@ namespace
 
   bool writeResidentRegionDataSnapshot(
     const std::filesystem::path& path,
-    const ResidentRegionDataProof& proof)
+    const ResidentRegionDataProof& proof,
+    const ResidentSnapshotContext& context)
   {
     std::ofstream output(path, std::ios::trunc);
     if (!output)
+      return false;
+
+    if (!writeResidentSnapshotMetadata(output, "read_region_data", context))
       return false;
 
     output << "id\tcenter_x\tcenter_y\tleft\ttop\tright\tbottom\tobserved_units\taccessible\n";
@@ -2293,10 +2341,14 @@ namespace
 
   bool writeResidentUnitSnapshot(
     const std::filesystem::path& path,
-    const ResidentUnitNodeProof& proof)
+    const ResidentUnitNodeProof& proof,
+    const ResidentSnapshotContext& context)
   {
     std::ofstream output(path, std::ios::trunc);
     if (!output)
+      return false;
+
+    if (!writeResidentSnapshotMetadata(output, "read_units", context))
       return false;
 
     output << "index\tnode\tsecondary\tsprite\tid\tx\ty\ttarget_x\ttarget_y\torder\tstate\tplayer\ttype_hint\thit_points\n";
@@ -2937,9 +2989,20 @@ namespace
         "resident-bwgame-projection-v1");
     }
 
+    const bool hasResidentFrame = frameCounterProof.passed && frameCounterProof.samples.size() >= 3;
+    const ResidentSnapshotContext activeSnapshotContext{
+      environment.processId,
+      proofQueueHeader.heartbeat,
+      latestResidentFrameId(frameCounterProof),
+      true
+    };
     const bool unitSnapshotWritten =
-      unitNodeProof.passed
-      && writeResidentUnitSnapshot(bridgePath / "units.snapshot.tsv", unitNodeProof);
+      hasResidentFrame
+      && unitNodeProof.passed
+      && writeResidentUnitSnapshot(
+        bridgePath / "units.snapshot.tsv",
+        unitNodeProof,
+        activeSnapshotContext);
     if (unitSnapshotWritten)
     {
       appendReadyLine(
@@ -3039,7 +3102,10 @@ namespace
     const bool playerSnapshotWritten =
       unitSnapshotWritten
       && playerDataProof.passed
-      && writeResidentPlayerDataSnapshot(bridgePath / "players.snapshot.tsv", playerDataProof);
+      && writeResidentPlayerDataSnapshot(
+        bridgePath / "players.snapshot.tsv",
+        playerDataProof,
+        activeSnapshotContext);
     if (playerSnapshotWritten)
     {
       appendReadyLine(
@@ -3075,8 +3141,12 @@ namespace
     }
 
     const bool mapSnapshotWritten =
-      mapDataProof.passed
-      && writeResidentMapDataSnapshot(bridgePath / "map.snapshot.tsv", mapDataProof);
+      unitSnapshotWritten
+      && mapDataProof.passed
+      && writeResidentMapDataSnapshot(
+        bridgePath / "map.snapshot.tsv",
+        mapDataProof,
+        activeSnapshotContext);
     if (mapSnapshotWritten)
     {
       appendReadyLine("proof.read_map_data.map_name=" + mapDataProof.mapName);
@@ -3111,7 +3181,8 @@ namespace
       && unitSnapshotWritten
       && writeResidentRegionDataSnapshot(
         bridgePath / "regions.snapshot.tsv",
-        regionDataProof);
+        regionDataProof,
+        activeSnapshotContext);
     if (regionSnapshotWritten)
     {
       appendReadyLine("proof.read_region_data.source=" + regionDataProof.source);
@@ -3135,7 +3206,15 @@ namespace
       replayAnalysisProof.passed
       && mapSnapshotWritten
       && playerSnapshotWritten
-      && writeResidentReplayAnalysisSnapshot(bridgePath / "replay.snapshot.tsv", replayAnalysisProof);
+      && writeResidentReplayAnalysisSnapshot(
+        bridgePath / "replay.snapshot.tsv",
+        replayAnalysisProof,
+        ResidentSnapshotContext{
+          environment.processId,
+          proofQueueHeader.heartbeat,
+          latestResidentFrameId(frameCounterProof),
+          replayAnalysisProof.activeMatchMetadata
+        });
     if (replaySnapshotWritten)
     {
       appendReadyLine("proof.replay_analysis.source=" + replayAnalysisProof.source);

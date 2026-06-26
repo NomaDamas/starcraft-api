@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace BWAPI::Runtime;
@@ -51,9 +52,22 @@ namespace
     }
   };
 
-  void writeResidentStateProofs(std::ofstream& ready, RuntimeEnvironment environment)
+  void writeProofSnapshots(
+    const std::filesystem::path& bridgeDir,
+    int processId,
+    std::uint64_t heartbeat,
+    std::uint64_t frameId,
+    bool activeMatchCorrelated);
+
+  std::uint64_t nextResidentProofHeartbeat()
   {
-    constexpr std::uint64_t heartbeat = 20;
+    static std::uint64_t heartbeat = 20;
+    return heartbeat++;
+  }
+
+  std::uint64_t writeResidentStateProofs(std::ofstream& ready, RuntimeEnvironment environment)
+  {
+    const std::uint64_t heartbeat = nextResidentProofHeartbeat();
     const std::vector<RuntimeResidentGameStateSample> samples = {
       { 100, 1000 },
       { 101, 1016 },
@@ -80,19 +94,130 @@ namespace
           << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
     ready << "proof.read_units.record_size=64\n";
     ready << "proof.read_units.active_records=4\n";
+    ready << "proof.read_units.snapshot=units.snapshot.tsv\n";
     ready << "proof.active_match_state.evidence=active-unit-node-snapshot\n";
     ready << "proof.active_match_state.active_records=4\n";
     ready << "proof.active_match_state.unit_node_address="
           << reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()) << '\n';
     ready << "proof.active_match_state.unit_node_record_size=64\n";
+    if (!environment.executorBridgePath.empty())
+    {
+      writeProofSnapshots(
+        environment.executorBridgePath,
+        environment.processId,
+        heartbeat,
+        102,
+        true);
+    }
+    return heartbeat;
   }
 
-  void writeProofSnapshot(const std::filesystem::path& path, const std::string& proof)
+  void writeProofSnapshotPayload(
+    std::ofstream& snapshot,
+    const std::string& proof,
+    std::uint64_t replayLastFrame = 140)
+  {
+    if (proof == "read_units")
+    {
+      snapshot << "index\tnode\tsecondary\tsprite\tid\tx\ty\ttarget_x\ttarget_y\torder\tstate\tplayer\ttype_hint\thit_points\n";
+      for (int i = 0; i < 4; ++i)
+      {
+        snapshot << i << "\t0x" << (1000 + i) << "\t0x" << (2000 + i)
+                 << "\t0x" << (3000 + i) << '\t' << (400 + i)
+                 << '\t' << (64 + i) << '\t' << (80 + i)
+                 << '\t' << (96 + i) << '\t' << (112 + i)
+                 << "\t0\t0\t" << (i % 2) << "\t0\t40\n";
+      }
+      return;
+    }
+    if (proof == "read_player_data")
+    {
+      snapshot << "player\tstorm_id\trace\trace_inferred\tobserved_unit_count\tminerals\tgas\tsupply_used\tsupply_total\talliance_mask\n"
+               << "0\t100\tTerran\ttrue\t2\t50\t0\t4\t18\t0x1\n"
+               << "1\t101\tZerg\ttrue\t2\t50\t0\t4\t18\t0x2\n";
+      return;
+    }
+    if (proof == "read_map_data")
+    {
+      snapshot << "map_name\tmap_name_address\tmap_tile_array_address\ttile_count\tmap_path\tmap_file_size\tsource\treplay_path\treplay_file_size\n"
+               << "UnitTest\t0x1600\t0x1700\t256\t/tmp/UnitTest.scx\t4096\tlive-sc-r-map-tile-array\t/tmp/UnitTest.rep\t8192\n";
+      return;
+    }
+    if (proof == "read_bullet_data")
+    {
+      snapshot << "index\taddress\tsprite\tsource_unit\ttarget_unit\ttype\tx\ty\tvelocity_x\tvelocity_y\tplayer\tremove_timer\n"
+               << "0\t0x1800\t0x3000\t0x1000\t0x2000\t1\t64\t80\t2\t0\t0\t12\n"
+               << "1\t0x1880\t0x3010\t0x1010\t0x2010\t2\t96\t112\t0\t-2\t1\t16\n";
+      return;
+    }
+    if (proof == "read_region_data")
+    {
+      snapshot << "id\tcenter_x\tcenter_y\tleft\ttop\tright\tbottom\tobserved_units\taccessible\n"
+               << "0\t32\t32\t0\t0\t64\t64\t1\ttrue\n"
+               << "1\t96\t32\t64\t0\t128\t64\t2\ttrue\n"
+               << "2\t32\t96\t0\t64\t64\t128\t1\ttrue\n";
+      return;
+    }
+    if (proof == "replay_analysis")
+    {
+      snapshot << "source\tcurrent_process_replay\tactive_match_metadata\tmap_name\tfirst_frame\tlast_frame\tobserved_player_count\n"
+               << "active-match-live-metadata\tfalse\ttrue\tUnitTest\t100\t"
+               << replayLastFrame << "\t2\n";
+      return;
+    }
+    snapshot << "field\tvalue\n"
+             << "passed\ttrue\n";
+  }
+
+  void writeProofSnapshot(
+    const std::filesystem::path& path,
+    const std::string& proof,
+    int processId,
+    std::uint64_t heartbeat,
+    std::uint64_t frameId,
+    bool activeMatchCorrelated)
   {
     std::ofstream snapshot(path);
-    snapshot << "field\tvalue\n"
-             << "proof\t" << proof << '\n'
-             << "passed\ttrue\n";
+    snapshot << "# schema=starcraft-api.resident-snapshot.v1\n"
+             << "# proof=" << proof << '\n'
+             << "# source_identity=resident-adapter\n"
+             << "# process_id=" << processId << '\n'
+             << "# heartbeat=" << heartbeat << '\n'
+             << "# frame_id=" << frameId << '\n'
+             << "# active_match_correlated="
+             << (activeMatchCorrelated ? "true" : "false") << '\n';
+    writeProofSnapshotPayload(snapshot, proof);
+  }
+
+  void writeProofSnapshots(
+    const std::filesystem::path& bridgeDir,
+    int processId,
+    std::uint64_t heartbeat,
+    std::uint64_t frameId,
+    bool activeMatchCorrelated)
+  {
+    const std::vector<std::pair<std::string, std::string>> snapshots = {
+      { "draw_overlays.snapshot.tsv", "draw_overlays" },
+      { "units.snapshot.tsv", "read_units" },
+      { "events.snapshot.tsv", "dispatch_events" },
+      { "replay.snapshot.tsv", "replay_analysis" },
+      { "multiplayer_sync.snapshot.tsv", "multiplayer_sync" },
+      { "ai_module_load.snapshot.tsv", "load_ai_modules" },
+      { "map.snapshot.tsv", "read_map_data" },
+      { "players.snapshot.tsv", "read_player_data" },
+      { "bullets.snapshot.tsv", "read_bullet_data" },
+      { "regions.snapshot.tsv", "read_region_data" }
+    };
+    for (const auto& snapshotSpec : snapshots)
+    {
+      writeProofSnapshot(
+        bridgeDir / snapshotSpec.first,
+        snapshotSpec.second,
+        processId,
+        heartbeat,
+        frameId,
+        activeMatchCorrelated);
+    }
   }
 
   bool residentStateProofAlreadyWritesBehaviorProof(const RuntimeExecutorBehaviorProof& proof)
@@ -167,15 +292,7 @@ int main()
                   << "source\tlive-sc-r-command-path\n"
                   << "behavior_checked\ttrue\n";
   }
-  writeProofSnapshot(bridgeDir / "draw_overlays.snapshot.tsv", "draw_overlays");
-  writeProofSnapshot(bridgeDir / "events.snapshot.tsv", "dispatch_events");
-  writeProofSnapshot(bridgeDir / "replay.snapshot.tsv", "replay_analysis");
-  writeProofSnapshot(bridgeDir / "multiplayer_sync.snapshot.tsv", "multiplayer_sync");
-  writeProofSnapshot(bridgeDir / "ai_module_load.snapshot.tsv", "load_ai_modules");
-  writeProofSnapshot(bridgeDir / "map.snapshot.tsv", "read_map_data");
-  writeProofSnapshot(bridgeDir / "players.snapshot.tsv", "read_player_data");
-  writeProofSnapshot(bridgeDir / "bullets.snapshot.tsv", "read_bullet_data");
-  writeProofSnapshot(bridgeDir / "regions.snapshot.tsv", "read_region_data");
+  writeProofSnapshots(bridgeDir, currentProcessId(), 20, 102, true);
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
@@ -185,6 +302,7 @@ int main()
     ready << "executor=unit-test\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     ready << "proof.attach=passed\n";
+    ready << "proof.attach.source=resident-adapter\n";
     RuntimeEnvironment proofEnvironment = attachableRemastered;
     proofEnvironment.executorBridgePath = bridgeDir.string();
     writeResidentStateProofs(ready, proofEnvironment);
@@ -280,6 +398,10 @@ int main()
     ready << "proof.issue_commands.encoded_bytes=10\n";
     ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
     ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
+    ready << "proof.attach.source=resident-adapter\n";
+    RuntimeEnvironment fullProofEnvironment = attachableRemastered;
+    fullProofEnvironment.executorBridgePath = bridgeDir.string();
+    writeResidentStateProofs(ready, fullProofEnvironment);
     ready << "proof.draw_overlays.source=live-render-hook\n";
     ready << "proof.draw_overlays.hook_address=0x1300\n";
     ready << "proof.draw_overlays.snapshot=draw_overlays.snapshot.tsv\n";
@@ -323,6 +445,7 @@ int main()
     ready << "proof.read_bullet_data.source=live-sc-r-bullet-table\n";
     ready << "proof.read_bullet_data.address=0x1800\n";
     ready << "proof.read_bullet_data.record_size=128\n";
+    ready << "proof.read_bullet_data.active_records=2\n";
     ready << "proof.read_bullet_data.snapshot=bullets.snapshot.tsv\n";
     ready << "proof.read_region_data.source=live-bwapi-region-graph\n";
     ready << "proof.read_region_data.region_count=3\n";

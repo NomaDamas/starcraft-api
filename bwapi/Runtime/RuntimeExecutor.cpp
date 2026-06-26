@@ -10,7 +10,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <iterator>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -197,21 +200,525 @@ namespace BWAPI::Runtime
       return readReadyValue(readyPath, key) == "true";
     }
 
-    bool readySnapshotExists(
+    std::filesystem::path resolveReadyRelativePath(
       const std::filesystem::path& readyPath,
-      const std::string& key)
+      const std::string& value)
+    {
+      std::filesystem::path path(value);
+      if (path.is_absolute())
+        return path;
+      return readyPath.parent_path() / path;
+    }
+
+    bool pathIsWithinDirectory(
+      const std::filesystem::path& directory,
+      const std::filesystem::path& path)
+    {
+      auto directoryIt = directory.begin();
+      auto pathIt = path.begin();
+      for (; directoryIt != directory.end(); ++directoryIt, ++pathIt)
+      {
+        if (pathIt == path.end() || *directoryIt != *pathIt)
+          return false;
+      }
+      return true;
+    }
+
+    bool readySnapshotPath(
+      const std::filesystem::path& readyPath,
+      const std::string& key,
+      std::filesystem::path& snapshot)
     {
       const std::string value = readReadyValue(readyPath, key);
       if (value.empty())
         return false;
-      std::filesystem::path snapshot(value);
-      if (!snapshot.is_absolute())
-        snapshot = readyPath.parent_path() / snapshot;
+
+      const std::filesystem::path requested(value);
+      if (requested.empty() || requested.is_absolute())
+        return false;
+      snapshot = resolveReadyRelativePath(readyPath, value).lexically_normal();
       std::error_code error;
       if (!std::filesystem::is_regular_file(snapshot, error) || error)
         return false;
       const std::uintmax_t size = std::filesystem::file_size(snapshot, error);
-      return !error && size > 0;
+      if (error || size == 0)
+        return false;
+
+      const std::filesystem::path bridgeDirectory =
+        std::filesystem::canonical(readyPath.parent_path(), error);
+      if (error)
+        return false;
+      const std::filesystem::path canonicalSnapshot =
+        std::filesystem::canonical(snapshot, error);
+      if (error || !pathIsWithinDirectory(bridgeDirectory, canonicalSnapshot))
+        return false;
+      snapshot = canonicalSnapshot;
+      return true;
+    }
+
+    bool readySnapshotExists(
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      std::filesystem::path snapshot;
+      return readySnapshotPath(readyPath, key, snapshot);
+    }
+
+    struct SnapshotMetadata
+    {
+      std::unordered_map<std::string, std::string> values;
+      bool hasDuplicateKey = false;
+      std::string duplicateKey;
+    };
+
+    bool parseSnapshotMetadataLine(
+      const std::string& line,
+      SnapshotMetadata& metadata)
+    {
+      if (line.empty() || line[0] != '#')
+        return false;
+
+      std::string body = line.substr(1);
+      while (!body.empty() && (body.front() == ' ' || body.front() == '\t'))
+        body.erase(body.begin());
+      if (body.empty())
+        return true;
+
+      std::size_t separator = body.find('=');
+      if (separator == std::string::npos)
+        separator = body.find('\t');
+      if (separator == std::string::npos || separator == 0)
+        return true;
+
+      std::string key = body.substr(0, separator);
+      std::string value = body.substr(separator + 1);
+      while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+        value.erase(value.begin());
+      while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+        key.pop_back();
+      if (!key.empty())
+      {
+        if (metadata.values.find(key) != metadata.values.end())
+        {
+          metadata.hasDuplicateKey = true;
+          if (metadata.duplicateKey.empty())
+            metadata.duplicateKey = key;
+        }
+        metadata.values[key] = value;
+      }
+      return true;
+    }
+
+    SnapshotMetadata readSnapshotMetadata(
+      const std::filesystem::path& snapshot)
+    {
+      SnapshotMetadata metadata;
+      std::ifstream input(snapshot);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (!parseSnapshotMetadataLine(line, metadata))
+          break;
+      }
+      return metadata;
+    }
+
+    std::string snapshotMetadataValue(
+      const SnapshotMetadata& metadata,
+      const std::string& key)
+    {
+      auto it = metadata.values.find(key);
+      return it == metadata.values.end() ? std::string() : it->second;
+    }
+
+    bool parseUnsignedMetadataValue(
+      const SnapshotMetadata& metadata,
+      const std::string& key,
+      std::uint64_t& value)
+    {
+      auto it = metadata.values.find(key);
+      if (it == metadata.values.end() || it->second.empty())
+        return false;
+      try
+      {
+        std::size_t consumed = 0;
+        const unsigned long long parsed = std::stoull(it->second, &consumed, 0);
+        if (consumed != it->second.size())
+          return false;
+        value = static_cast<std::uint64_t>(parsed);
+        return static_cast<unsigned long long>(value) == parsed;
+      }
+      catch (...)
+      {
+        return false;
+      }
+    }
+
+    std::vector<std::string> splitTabs(const std::string& line)
+    {
+      std::vector<std::string> fields;
+      std::size_t start = 0;
+      while (start <= line.size())
+      {
+        const std::size_t tab = line.find('\t', start);
+        if (tab == std::string::npos)
+        {
+          fields.push_back(line.substr(start));
+          break;
+        }
+        fields.push_back(line.substr(start, tab - start));
+        start = tab + 1;
+      }
+      return fields;
+    }
+
+    struct ResidentSnapshotTable
+    {
+      std::vector<std::string> header;
+      std::vector<std::vector<std::string>> rows;
+    };
+
+    ResidentSnapshotTable readResidentSnapshotTable(const std::filesystem::path& snapshot)
+    {
+      ResidentSnapshotTable table;
+      std::ifstream input(snapshot);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line.empty() || line[0] == '#')
+          continue;
+        if (table.header.empty())
+        {
+          table.header = splitTabs(line);
+          continue;
+        }
+        table.rows.push_back(splitTabs(line));
+      }
+      return table;
+    }
+
+    bool snapshotTableHasColumns(
+      const ResidentSnapshotTable& table,
+      std::initializer_list<const char*> columns)
+    {
+      if (table.header.empty())
+        return false;
+      for (const char* column : columns)
+      {
+        if (std::find(table.header.begin(), table.header.end(), column) == table.header.end())
+          return false;
+      }
+      return true;
+    }
+
+    bool snapshotTableHeaderEquals(
+      const ResidentSnapshotTable& table,
+      std::initializer_list<const char*> columns)
+    {
+      if (table.header.size() != columns.size())
+        return false;
+      auto headerIt = table.header.begin();
+      for (const char* column : columns)
+      {
+        if (headerIt == table.header.end() || *headerIt != column)
+          return false;
+        ++headerIt;
+      }
+      return headerIt == table.header.end();
+    }
+
+    bool snapshotTableRowsMatchHeader(const ResidentSnapshotTable& table)
+    {
+      if (table.rows.empty())
+        return false;
+      for (const std::vector<std::string>& row : table.rows)
+      {
+        if (row.size() < table.header.size())
+          return false;
+      }
+      return true;
+    }
+
+    bool snapshotTableRowCountAtLeastReadyValue(
+      const ResidentSnapshotTable& table,
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      std::uint64_t expected = 0;
+      return parseUnsignedReadyValue(readyPath, key, expected)
+        && expected > 0
+        && table.rows.size() >= expected;
+    }
+
+    bool snapshotTableRowCountMatchesReadyValue(
+      const ResidentSnapshotTable& table,
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      std::uint64_t expected = 0;
+      return parseUnsignedReadyValue(readyPath, key, expected)
+        && expected > 0
+        && table.rows.size() == expected;
+    }
+
+    bool parseUnsignedString(const std::string& text, std::uint64_t& value)
+    {
+      if (text.empty())
+        return false;
+      try
+      {
+        std::size_t consumed = 0;
+        const unsigned long long parsed = std::stoull(text, &consumed, 0);
+        if (consumed != text.size())
+          return false;
+        value = static_cast<std::uint64_t>(parsed);
+        return static_cast<unsigned long long>(value) == parsed;
+      }
+      catch (...)
+      {
+        return false;
+      }
+    }
+
+    bool parseSignedString(const std::string& text, std::int64_t& value)
+    {
+      if (text.empty())
+        return false;
+      try
+      {
+        std::size_t consumed = 0;
+        const long long parsed = std::stoll(text, &consumed, 0);
+        if (consumed != text.size())
+          return false;
+        value = static_cast<std::int64_t>(parsed);
+        return static_cast<long long>(value) == parsed;
+      }
+      catch (...)
+      {
+        return false;
+      }
+    }
+
+    bool snapshotTableColumnUnsignedMatchesReadyValue(
+      const ResidentSnapshotTable& table,
+      const std::string& column,
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      if (table.rows.size() != 1)
+        return false;
+      const auto columnIt = std::find(table.header.begin(), table.header.end(), column);
+      if (columnIt == table.header.end())
+        return false;
+      const std::size_t columnIndex =
+        static_cast<std::size_t>(std::distance(table.header.begin(), columnIt));
+      if (table.rows.front().size() <= columnIndex)
+        return false;
+
+      std::uint64_t expected = 0;
+      std::uint64_t actual = 0;
+      return parseUnsignedReadyValue(readyPath, key, expected)
+        && parseUnsignedString(table.rows.front()[columnIndex], actual)
+        && expected == actual;
+    }
+
+    bool bulletSnapshotRowsAreValid(const ResidentSnapshotTable& table)
+    {
+      for (std::size_t rowIndex = 0; rowIndex < table.rows.size(); ++rowIndex)
+      {
+        const std::vector<std::string>& row = table.rows[rowIndex];
+        if (row.size() != table.header.size())
+          return false;
+
+        std::uint64_t index = 0;
+        std::uint64_t address = 0;
+        std::uint64_t sprite = 0;
+        std::uint64_t sourceUnit = 0;
+        std::uint64_t targetUnit = 0;
+        std::uint64_t type = 0;
+        std::int64_t x = 0;
+        std::int64_t y = 0;
+        std::int64_t velocityX = 0;
+        std::int64_t velocityY = 0;
+        std::int64_t player = 0;
+        std::uint64_t removeTimer = 0;
+
+        if (!parseUnsignedString(row[0], index)
+            || index != rowIndex
+            || !parseUnsignedString(row[1], address)
+            || address == 0
+            || !parseUnsignedString(row[2], sprite)
+            || sprite == 0
+            || !parseUnsignedString(row[3], sourceUnit)
+            || !parseUnsignedString(row[4], targetUnit)
+            || !parseUnsignedString(row[5], type)
+            || type == 0
+            || !parseSignedString(row[6], x)
+            || !parseSignedString(row[7], y)
+            || !parseSignedString(row[8], velocityX)
+            || !parseSignedString(row[9], velocityY)
+            || !parseSignedString(row[10], player)
+            || player < -1
+            || player > 11
+            || !parseUnsignedString(row[11], removeTimer)
+            || removeTimer > 255)
+        {
+          return false;
+        }
+
+        (void)sourceUnit;
+        (void)targetUnit;
+        (void)x;
+        (void)y;
+        (void)velocityX;
+        (void)velocityY;
+      }
+      return true;
+    }
+
+    bool validatedResidentSnapshotPayload(
+      const std::filesystem::path& snapshot,
+      const std::filesystem::path& readyPath,
+      const std::string& proof)
+    {
+      const ResidentSnapshotTable table = readResidentSnapshotTable(snapshot);
+      if (!snapshotTableRowsMatchHeader(table))
+        return false;
+
+      if (proof == "read_units")
+      {
+        return snapshotTableHasColumns(
+            table,
+            { "index", "node", "secondary", "sprite", "id", "x", "y", "target_x",
+              "target_y", "order", "state", "player", "type_hint", "hit_points" })
+          && snapshotTableRowCountAtLeastReadyValue(
+            table,
+            readyPath,
+            "proof.read_units.active_records");
+      }
+      if (proof == "read_player_data")
+      {
+        return snapshotTableHasColumns(
+            table,
+            { "player", "storm_id", "race", "race_inferred", "observed_unit_count",
+              "minerals", "gas", "supply_used", "supply_total", "alliance_mask" })
+          && snapshotTableRowCountAtLeastReadyValue(
+            table,
+            readyPath,
+            "proof.read_player_data.player_count");
+      }
+      if (proof == "read_map_data")
+      {
+        return snapshotTableHasColumns(
+            table,
+            { "map_name", "map_name_address", "map_tile_array_address", "tile_count",
+              "map_path", "map_file_size", "source", "replay_path", "replay_file_size" })
+          && snapshotTableColumnUnsignedMatchesReadyValue(
+            table,
+            "tile_count",
+            readyPath,
+            "proof.read_map_data.tile_count");
+      }
+      if (proof == "read_bullet_data")
+      {
+        return snapshotTableHeaderEquals(
+            table,
+            { "index", "address", "sprite", "source_unit", "target_unit", "type",
+              "x", "y", "velocity_x", "velocity_y", "player", "remove_timer" })
+          && snapshotTableRowCountMatchesReadyValue(
+            table,
+            readyPath,
+            "proof.read_bullet_data.active_records")
+          && bulletSnapshotRowsAreValid(table);
+      }
+      if (proof == "read_region_data")
+      {
+        return snapshotTableHasColumns(
+            table,
+            { "id", "center_x", "center_y", "left", "top", "right", "bottom",
+              "observed_units", "accessible" })
+          && snapshotTableRowCountAtLeastReadyValue(
+            table,
+            readyPath,
+            "proof.read_region_data.region_count");
+      }
+      if (proof == "replay_analysis")
+      {
+        return snapshotTableHasColumns(
+            table,
+            { "source", "current_process_replay", "active_match_metadata", "map_name",
+              "first_frame", "last_frame", "observed_player_count" })
+          && snapshotTableColumnUnsignedMatchesReadyValue(
+            table,
+            "last_frame",
+            readyPath,
+            "proof.replay_analysis.last_frame")
+          && snapshotTableColumnUnsignedMatchesReadyValue(
+            table,
+            "observed_player_count",
+            readyPath,
+            "proof.replay_analysis.player_count");
+      }
+      return false;
+    }
+
+    bool validatedResidentSnapshot(
+      const std::filesystem::path& readyPath,
+      const std::string& key,
+      const std::string& proof,
+      const RuntimeResidentStateProofValidationResult* residentStateProof,
+      bool requireActiveMatchCorrelation)
+    {
+      std::filesystem::path snapshot;
+      if (!readySnapshotPath(readyPath, key, snapshot))
+        return false;
+
+      const SnapshotMetadata metadata = readSnapshotMetadata(snapshot);
+      if (snapshotMetadataValue(metadata, "schema") != "starcraft-api.resident-snapshot.v1")
+        return false;
+      if (metadata.hasDuplicateKey)
+        return false;
+      if (snapshotMetadataValue(metadata, "proof") != proof)
+        return false;
+      if (snapshotMetadataValue(metadata, "source_identity") != "resident-adapter")
+        return false;
+      if (requireActiveMatchCorrelation
+          && snapshotMetadataValue(metadata, "active_match_correlated") != "true")
+      {
+        return false;
+      }
+
+      std::uint64_t snapshotProcessId = 0;
+      std::uint64_t residentProcessId = 0;
+      if (!parseUnsignedMetadataValue(metadata, "process_id", snapshotProcessId)
+          || !parseUnsignedReadyValue(readyPath, "resident.adapter.process_id", residentProcessId)
+          || snapshotProcessId == 0
+          || snapshotProcessId != residentProcessId)
+      {
+        return false;
+      }
+
+      std::uint64_t snapshotHeartbeat = 0;
+      std::uint64_t residentHeartbeat = 0;
+      if (!parseUnsignedMetadataValue(metadata, "heartbeat", snapshotHeartbeat)
+          || !parseUnsignedReadyValue(readyPath, "resident.adapter.heartbeat", residentHeartbeat)
+          || snapshotHeartbeat == 0
+          || snapshotHeartbeat != residentHeartbeat)
+      {
+        return false;
+      }
+
+      std::uint64_t frameId = 0;
+      if (!parseUnsignedMetadataValue(metadata, "frame_id", frameId) || frameId == 0)
+        return false;
+      if (residentStateProof != nullptr && !residentStateProof->samples.empty())
+      {
+        const std::uint64_t firstFrame = residentStateProof->samples.front().frame;
+        const std::uint64_t lastFrame = residentStateProof->samples.back().frame;
+        if (frameId < firstFrame || frameId > lastFrame)
+          return false;
+      }
+      return validatedResidentSnapshotPayload(snapshot, readyPath, proof);
     }
 
     bool validatedReadUnitsProof(
@@ -222,11 +729,21 @@ namespace BWAPI::Runtime
         return false;
       return readyValueIsNonZeroUnsigned(readyPath, "proof.read_units.address")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_units.record_size")
-        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_units.active_records");
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_units.active_records")
+        && validatedResidentSnapshot(
+          readyPath,
+          "proof.read_units.snapshot",
+          "read_units",
+          residentStateProof,
+          true);
     }
 
-    bool validatedReadPlayerDataProof(const std::filesystem::path& readyPath)
+    bool validatedReadPlayerDataProof(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
+      if (residentStateProof == nullptr || !residentStateProof->activeMatchValid)
+        return false;
       const bool nativePlayerTable =
         readReadyValue(readyPath, "proof.read_player_data.source") == "live-sc-r-player-table"
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_player_data.players_address")
@@ -243,33 +760,66 @@ namespace BWAPI::Runtime
 
       return (nativePlayerTable || residentProjection)
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_player_data.player_info_record_size")
-        && readySnapshotExists(readyPath, "proof.read_player_data.snapshot");
+        && validatedResidentSnapshot(
+          readyPath,
+          "proof.read_player_data.snapshot",
+          "read_player_data",
+          residentStateProof,
+          true);
     }
 
-    bool validatedReadMapDataProof(const std::filesystem::path& readyPath)
+    bool validatedReadMapDataProof(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
+      if (residentStateProof == nullptr || !residentStateProof->activeMatchValid)
+        return false;
       const std::string source = readReadyValue(readyPath, "proof.read_map_data.source");
       return (source == "live-sc-r-map-tile-array"
           || source == "live-sc-r-map-open-file+resident-tile-projection-v1")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_map_data.map_name_address")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_map_data.map_tile_array_address")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_map_data.tile_count")
-        && readySnapshotExists(readyPath, "proof.read_map_data.snapshot");
+        && validatedResidentSnapshot(
+          readyPath,
+          "proof.read_map_data.snapshot",
+          "read_map_data",
+          residentStateProof,
+          true);
     }
 
-    bool validatedReadBulletDataProof(const std::filesystem::path& readyPath)
+    bool validatedReadBulletDataProof(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
+      if (residentStateProof == nullptr || !residentStateProof->activeMatchValid)
+        return false;
       return readReadyValue(readyPath, "proof.read_bullet_data.source") == "live-sc-r-bullet-table"
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.address")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.record_size")
-        && readySnapshotExists(readyPath, "proof.read_bullet_data.snapshot");
+        && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.active_records")
+        && validatedResidentSnapshot(
+          readyPath,
+          "proof.read_bullet_data.snapshot",
+          "read_bullet_data",
+          residentStateProof,
+          true);
     }
 
-    bool validatedReadRegionDataProof(const std::filesystem::path& readyPath)
+    bool validatedReadRegionDataProof(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
+      if (residentStateProof == nullptr || !residentStateProof->activeMatchValid)
+        return false;
       return readReadyValue(readyPath, "proof.read_region_data.source") == "live-bwapi-region-graph"
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_region_data.region_count")
-        && readySnapshotExists(readyPath, "proof.read_region_data.snapshot");
+        && validatedResidentSnapshot(
+          readyPath,
+          "proof.read_region_data.snapshot",
+          "read_region_data",
+          residentStateProof,
+          true);
     }
 
     bool validatedDispatchEventsProof(
@@ -284,7 +834,9 @@ namespace BWAPI::Runtime
         && readySnapshotExists(readyPath, "proof.dispatch_events.snapshot");
     }
 
-    bool validatedReplayAnalysisProof(const std::filesystem::path& readyPath)
+    bool validatedReplayAnalysisProof(
+      const std::filesystem::path& readyPath,
+      const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
       const std::string source = readReadyValue(readyPath, "proof.replay_analysis.source");
       const bool parsedReplay =
@@ -293,10 +845,20 @@ namespace BWAPI::Runtime
       const bool activeMatchMetadata =
         source == "active-match-live-metadata"
         && readyValueIsTrue(readyPath, "proof.replay_analysis.active_match_metadata");
+      if (activeMatchMetadata
+          && (residentStateProof == nullptr || !residentStateProof->activeMatchValid))
+      {
+        return false;
+      }
       return (parsedReplay || activeMatchMetadata)
         && readyValueIsNonZeroUnsigned(readyPath, "proof.replay_analysis.last_frame")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.replay_analysis.player_count")
-        && readySnapshotExists(readyPath, "proof.replay_analysis.snapshot");
+        && validatedResidentSnapshot(
+          readyPath,
+          "proof.replay_analysis.snapshot",
+          "replay_analysis",
+          residentStateProof,
+          activeMatchMetadata);
     }
 
     bool validatedIssueCommandsProof(const std::filesystem::path& readyPath)
@@ -374,13 +936,13 @@ namespace BWAPI::Runtime
       if (proofLine == "proof.read_units=passed")
         return validatedReadUnitsProof(readyPath, residentStateProof);
       if (proofLine == "proof.read_player_data=passed")
-        return validatedReadPlayerDataProof(readyPath);
+        return validatedReadPlayerDataProof(readyPath, residentStateProof);
       if (proofLine == "proof.read_map_data=passed")
-        return validatedReadMapDataProof(readyPath);
+        return validatedReadMapDataProof(readyPath, residentStateProof);
       if (proofLine == "proof.read_bullet_data=passed")
-        return validatedReadBulletDataProof(readyPath);
+        return validatedReadBulletDataProof(readyPath, residentStateProof);
       if (proofLine == "proof.read_region_data=passed")
-        return validatedReadRegionDataProof(readyPath);
+        return validatedReadRegionDataProof(readyPath, residentStateProof);
       if (proofLine == "proof.issue_commands=passed")
         return validatedIssueCommandsProof(readyPath);
       if (proofLine == "proof.draw_overlays=passed")
@@ -388,7 +950,7 @@ namespace BWAPI::Runtime
       if (proofLine == "proof.dispatch_events=passed")
         return validatedDispatchEventsProof(readyPath, residentStateProof);
       if (proofLine == "proof.replay_analysis=passed")
-        return validatedReplayAnalysisProof(readyPath);
+        return validatedReplayAnalysisProof(readyPath, residentStateProof);
       if (proofLine == "proof.multiplayer_sync=passed")
         return validatedMultiplayerSyncProof(readyPath);
       if (proofLine == "proof.battle_net_policy=passed")

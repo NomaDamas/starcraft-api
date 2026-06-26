@@ -657,6 +657,32 @@ namespace
     return typeHint != 0 && typeHint < 1024;
   }
 
+  struct ResidentBulletRecordLayout
+  {
+    const char* name = "";
+    std::size_t recordSize = 0;
+    std::size_t existsOffset = 0;
+    std::size_t spriteOffset = 0;
+    std::size_t typeOffset = 0;
+    std::size_t positionOffset = 0;
+    std::size_t velocityOffset = 0;
+    std::size_t playerOffset = 0;
+    std::size_t targetUnitOffset = 0;
+    std::size_t sourceUnitOffset = 0;
+    std::size_t removeTimerOffset = 0;
+  };
+
+  constexpr std::array<ResidentBulletRecordLayout, 3> residentBulletRecordLayouts = {
+    ResidentBulletRecordLayout {
+      "bwapi-classic-cbullet", 112, 0x08, 0x0c, 0x24, 0x28, 0x40, 0x4c, 0x58, 0x64, 0x61 },
+    ResidentBulletRecordLayout {
+      "scr-x64-packed-cbullet", 0x88, 0x10, 0x18, 0x34, 0x40, 0x58, 0x64, 0x70, 0x78, 0x63 },
+    ResidentBulletRecordLayout {
+      "scr-x64-aligned-cbullet", 0x90, 0x10, 0x18, 0x34, 0x40, 0x58, 0x64, 0x70, 0x80, 0x63 }
+  };
+
+  constexpr std::size_t minResidentActiveBulletRecords = 1;
+
   bool containsLongPrintableAsciiRun(
     const std::vector<unsigned char>& bytes,
     std::size_t offset,
@@ -933,6 +959,41 @@ namespace
     bool allianceProjectionReady = false;
     std::string projectionSource;
     std::vector<ResidentPlayerSnapshotRecord> players;
+    std::string reason;
+  };
+
+  struct ResidentBulletSnapshotRecord
+  {
+    std::size_t index = 0;
+    std::uintptr_t address = 0;
+    std::uintptr_t spriteAddress = 0;
+    std::uintptr_t sourceUnitAddress = 0;
+    std::uintptr_t targetUnitAddress = 0;
+    std::uint16_t type = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::int32_t velocityX = 0;
+    std::int32_t velocityY = 0;
+    int player = -1;
+    std::uint8_t removeTimer = 0;
+    bool sourceUnitCorrelated = false;
+    bool targetUnitCorrelated = false;
+  };
+
+  struct ResidentBulletDataProof
+  {
+    bool passed = false;
+    std::uintptr_t address = 0;
+    std::size_t recordSize = 0;
+    std::size_t positionOffset = 0;
+    std::size_t velocityOffset = 0;
+    std::size_t sourceUnitOffset = 0;
+    std::size_t targetOffset = 0;
+    std::size_t sampledRecords = 0;
+    std::size_t activeRecords = 0;
+    std::size_t unitCorrelatedRecords = 0;
+    std::string layoutName;
+    std::vector<ResidentBulletSnapshotRecord> records;
     std::string reason;
   };
 
@@ -1765,6 +1826,530 @@ namespace
              << record.supplyUsed << '\t'
              << record.supplyTotal << '\t'
              << hexAddress(record.allianceMask) << '\n';
+    }
+    return static_cast<bool>(output);
+  }
+
+  std::uint64_t readResidentPointerLike(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset)
+  {
+    if (offset + sizeof(std::uint64_t) <= bytes.size())
+    {
+      const std::uint64_t value64 = readU64LE(bytes, offset);
+      if (value64 != 0)
+        return value64;
+    }
+    if (offset + sizeof(std::uint32_t) <= bytes.size())
+      return readU32LE(bytes, offset);
+    return 0;
+  }
+
+  bool residentRegionLooksLikeLiveData(
+    const ResidentMemoryRegion& region,
+    const std::string& executablePath)
+  {
+    if (!region.readable || !region.writable || region.executable)
+      return false;
+    if (!region.mappedPath.empty()
+        && region.mappedPath.front() == '/'
+        && !sameMappedFile(region.mappedPath, executablePath))
+    {
+      return false;
+    }
+    return true;
+  }
+
+  bool readableResidentBulletObjectPointerValue(
+    const std::vector<ResidentMemoryRegion>& regions,
+    std::uint64_t address,
+    std::size_t size,
+    std::size_t alignment,
+    const std::string& executablePath)
+  {
+    if (!plausibleRuntimeObjectPointerValue(address) || !addressFits(address))
+      return false;
+    if (alignment > 1 && (address % alignment) != 0)
+      return false;
+
+    const ResidentMemoryRegion* region =
+      findReadableResidentRegion(regions, static_cast<std::uintptr_t>(address), size);
+    return region != nullptr && residentRegionLooksLikeLiveData(*region, executablePath);
+  }
+
+  struct ResidentUnitEvidenceRange
+  {
+    std::uintptr_t address = 0;
+    std::size_t size = 0;
+    int player = -1;
+  };
+
+  void appendResidentUnitEvidenceRange(
+    std::vector<ResidentUnitEvidenceRange>& ranges,
+    std::uintptr_t address,
+    std::size_t size,
+    int player)
+  {
+    if (address == 0 || size == 0)
+      return;
+    ranges.push_back(ResidentUnitEvidenceRange{ address, size, player });
+  }
+
+  std::vector<ResidentUnitEvidenceRange> residentUnitEvidenceRanges(
+    const ResidentUnitNodeProof& unitNodeProof)
+  {
+    std::vector<ResidentUnitEvidenceRange> ranges;
+    if (!unitNodeProof.passed)
+      return ranges;
+
+    for (const ResidentUnitSnapshotRecord& record : unitNodeProof.records)
+    {
+      appendResidentUnitEvidenceRange(
+        ranges,
+        record.nodeAddress,
+        unitNodeProof.recordSize,
+        record.player);
+      appendResidentUnitEvidenceRange(ranges, record.secondaryAddress, 0xe0, record.player);
+      appendResidentUnitEvidenceRange(ranges, record.spriteAddress, 0xd0, record.player);
+    }
+    return ranges;
+  }
+
+  bool residentPointerCorrelatesWithUnitEvidence(
+    std::uint64_t address,
+    const std::vector<ResidentUnitEvidenceRange>& unitEvidence)
+  {
+    if (!addressFits(address))
+      return false;
+    const auto candidate = static_cast<std::uintptr_t>(address);
+    for (const ResidentUnitEvidenceRange& range : unitEvidence)
+    {
+      const std::uintptr_t rangeEnd = range.address + range.size;
+      if (rangeEnd < range.address)
+        continue;
+      if (candidate >= range.address && candidate < rangeEnd)
+        return true;
+    }
+    return false;
+  }
+
+  bool parseResidentBulletSnapshotRecord(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::uintptr_t recordAddress,
+    const ResidentBulletRecordLayout& layout,
+    const std::vector<ResidentMemoryRegion>& regions,
+    const std::string& executablePath,
+    const std::vector<ResidentUnitEvidenceRange>& unitEvidence,
+    ResidentBulletSnapshotRecord& record)
+  {
+    const std::size_t requiredSize = std::max({
+      layout.existsOffset + sizeof(std::uint32_t),
+      layout.spriteOffset + sizeof(std::uint32_t),
+      layout.typeOffset + sizeof(std::uint16_t),
+      layout.positionOffset + sizeof(std::uint32_t),
+      layout.velocityOffset + sizeof(std::int32_t) * 2,
+      layout.playerOffset + sizeof(unsigned char),
+      layout.targetUnitOffset + sizeof(std::uint32_t),
+      layout.sourceUnitOffset + sizeof(std::uint32_t),
+      layout.removeTimerOffset + sizeof(unsigned char)
+    });
+    if (layout.recordSize < requiredSize || offset + layout.recordSize > bytes.size())
+      return false;
+    if (containsLongPrintableAsciiRun(bytes, offset, layout.recordSize))
+      return false;
+
+    const std::uint32_t exists = readU32LE(bytes, offset + layout.existsOffset);
+    if (exists == 0 || exists > 3)
+      return false;
+
+    const std::size_t pointerAlignment =
+      layout.recordSize == residentBulletRecordLayouts.front().recordSize ? 4 : 8;
+    const std::uint64_t sprite = readResidentPointerLike(bytes, offset + layout.spriteOffset);
+    if (!readableResidentBulletObjectPointerValue(
+          regions,
+          sprite,
+          16,
+          pointerAlignment,
+          executablePath))
+      return false;
+
+    const std::uint16_t type = readU16LE(bytes, offset + layout.typeOffset);
+    const std::int16_t x = readS16LE(bytes, offset + layout.positionOffset);
+    const std::int16_t y =
+      readS16LE(bytes, offset + layout.positionOffset + sizeof(std::int16_t));
+    const std::int32_t velocityX = readS32LE(bytes, offset + layout.velocityOffset);
+    const std::int32_t velocityY =
+      readS32LE(bytes, offset + layout.velocityOffset + sizeof(std::int32_t));
+    const unsigned char player = bytes[offset + layout.playerOffset];
+    const std::uint8_t removeTimer = bytes[offset + layout.removeTimerOffset];
+    const std::uint64_t sourceUnit =
+      readResidentPointerLike(bytes, offset + layout.sourceUnitOffset);
+    const std::uint64_t targetUnit =
+      readResidentPointerLike(bytes, offset + layout.targetUnitOffset);
+
+    if (type == 0 || type >= 256 || player >= 12)
+      return false;
+    if (x < 0 || x > 16384 || y < 0 || y > 16384)
+      return false;
+    const std::int64_t velocityX64 = velocityX;
+    const std::int64_t velocityY64 = velocityY;
+    if (std::llabs(velocityX64) > 32768 * 256 || std::llabs(velocityY64) > 32768 * 256)
+      return false;
+    if (velocityX == 0 && velocityY == 0 && removeTimer == 0)
+      return false;
+
+    const bool sourceReadable = readableResidentBulletObjectPointerValue(
+          regions,
+          sourceUnit,
+          16,
+          pointerAlignment,
+          executablePath);
+    const bool targetReadable = readableResidentBulletObjectPointerValue(
+          regions,
+          targetUnit,
+          16,
+          pointerAlignment,
+          executablePath);
+    if (!sourceReadable && !targetReadable)
+      return false;
+
+    const bool sourceUnitCorrelated =
+      sourceReadable && residentPointerCorrelatesWithUnitEvidence(sourceUnit, unitEvidence);
+    const bool targetUnitCorrelated =
+      targetReadable && residentPointerCorrelatesWithUnitEvidence(targetUnit, unitEvidence);
+    if (!sourceUnitCorrelated && !targetUnitCorrelated)
+      return false;
+
+    record.address = recordAddress;
+    record.spriteAddress = static_cast<std::uintptr_t>(sprite);
+    record.sourceUnitAddress = addressFits(sourceUnit) ? static_cast<std::uintptr_t>(sourceUnit) : 0;
+    record.targetUnitAddress = addressFits(targetUnit) ? static_cast<std::uintptr_t>(targetUnit) : 0;
+    record.type = type;
+    record.x = x;
+    record.y = y;
+    record.velocityX = velocityX;
+    record.velocityY = velocityY;
+    record.player = static_cast<int>(player);
+    record.removeTimer = removeTimer;
+    record.sourceUnitCorrelated = sourceUnitCorrelated;
+    record.targetUnitCorrelated = targetUnitCorrelated;
+    return true;
+  }
+
+  ResidentBulletDataProof scoreResidentBulletArray(
+    const std::vector<unsigned char>& bytes,
+    std::uintptr_t baseAddress,
+    std::size_t offset,
+    const ResidentBulletRecordLayout& layout,
+    const std::vector<ResidentMemoryRegion>& regions,
+    const std::string& executablePath,
+    const std::vector<ResidentUnitEvidenceRange>& unitEvidence)
+  {
+    ResidentBulletDataProof proof;
+    proof.address = baseAddress + offset;
+    proof.recordSize = layout.recordSize;
+    proof.positionOffset = layout.positionOffset;
+    proof.velocityOffset = layout.velocityOffset;
+    proof.sourceUnitOffset = layout.sourceUnitOffset;
+    proof.targetOffset = layout.targetUnitOffset;
+    proof.layoutName = layout.name;
+
+    constexpr std::size_t maxSampledRecords = 2048;
+    proof.sampledRecords = std::min(maxSampledRecords, (bytes.size() - offset) / layout.recordSize);
+    for (std::size_t index = 0; index < proof.sampledRecords; ++index)
+    {
+      ResidentBulletSnapshotRecord record;
+      record.index = index;
+      const std::size_t recordOffset = offset + index * layout.recordSize;
+      if (!parseResidentBulletSnapshotRecord(
+            bytes,
+            recordOffset,
+            baseAddress + recordOffset,
+            layout,
+            regions,
+            executablePath,
+            unitEvidence,
+            record))
+      {
+        continue;
+      }
+
+      proof.records.push_back(record);
+      proof.activeRecords = proof.records.size();
+      if (record.sourceUnitCorrelated || record.targetUnitCorrelated)
+        ++proof.unitCorrelatedRecords;
+      if (proof.activeRecords >= minResidentActiveBulletRecords)
+      {
+        proof.passed = true;
+        return proof;
+      }
+    }
+
+    proof.reason = "candidate resident bullet array did not contain active projectile records";
+    return proof;
+  }
+
+  ResidentBulletDataProof proveResidentBulletArrayInBytes(
+    const std::vector<unsigned char>& bytes,
+    std::uintptr_t baseAddress,
+    const std::vector<ResidentMemoryRegion>& regions,
+    const std::string& executablePath,
+    const std::vector<ResidentUnitEvidenceRange>& unitEvidence)
+  {
+    for (const ResidentBulletRecordLayout& layout : residentBulletRecordLayouts)
+    {
+      if (layout.recordSize * minResidentActiveBulletRecords > bytes.size())
+        continue;
+
+      std::vector<std::size_t> plausibleByResidue(layout.recordSize, 0);
+      for (std::size_t recordOffset = 0; recordOffset + layout.recordSize <= bytes.size(); recordOffset += 8)
+      {
+        ResidentBulletSnapshotRecord record;
+        if (parseResidentBulletSnapshotRecord(
+              bytes,
+              recordOffset,
+              baseAddress + recordOffset,
+              layout,
+              regions,
+              executablePath,
+              unitEvidence,
+              record))
+        {
+          ++plausibleByResidue[recordOffset % layout.recordSize];
+        }
+      }
+
+      std::vector<std::size_t> residues;
+      for (std::size_t residue = 0; residue < plausibleByResidue.size(); ++residue)
+      {
+        if (plausibleByResidue[residue] > 0)
+          residues.push_back(residue);
+      }
+      std::sort(
+        residues.begin(),
+        residues.end(),
+        [&](std::size_t lhs, std::size_t rhs)
+        {
+          if (plausibleByResidue[lhs] != plausibleByResidue[rhs])
+            return plausibleByResidue[lhs] > plausibleByResidue[rhs];
+          return lhs < rhs;
+        });
+
+      constexpr std::size_t maxResiduesToScore = 32;
+      for (std::size_t index = 0; index < std::min(maxResiduesToScore, residues.size()); ++index)
+      {
+        ResidentBulletDataProof proof =
+          scoreResidentBulletArray(
+            bytes,
+            baseAddress,
+            residues[index],
+            layout,
+            regions,
+            executablePath,
+            unitEvidence);
+        if (proof.passed)
+          return proof;
+      }
+    }
+
+    return {};
+  }
+
+  bool eligibleResidentBulletScanRegion(
+    const ResidentMemoryRegion& region,
+    const std::string& executablePath)
+  {
+    constexpr std::size_t minimumBytes = 0x88 * minResidentActiveBulletRecords;
+    if (!residentRegionLooksLikeLiveData(region, executablePath) || region.size < minimumBytes)
+      return false;
+    return true;
+  }
+
+  bool discoverResidentBulletDataProof(
+    const std::string& executablePath,
+    const ResidentUnitNodeProof& unitNodeProof,
+    ResidentBulletDataProof& proof)
+  {
+    constexpr std::size_t maxScanBytes = 64 * 1024 * 1024;
+    constexpr std::size_t maxChunkBytes = 2 * 1024 * 1024;
+    const std::vector<ResidentUnitEvidenceRange> unitEvidence =
+      residentUnitEvidenceRanges(unitNodeProof);
+    if (unitEvidence.empty())
+    {
+      proof.reason = "resident bullet proof requires active unit evidence for source/target correlation";
+      return false;
+    }
+
+    std::vector<ResidentMemoryRegion> regions = listResidentMemoryRegions();
+    std::stable_sort(
+      regions.begin(),
+      regions.end(),
+      [&](const ResidentMemoryRegion& lhs, const ResidentMemoryRegion& rhs)
+      {
+        const bool lhsTarget = sameMappedFile(lhs.mappedPath, executablePath);
+        const bool rhsTarget = sameMappedFile(rhs.mappedPath, executablePath);
+        if (lhsTarget != rhsTarget)
+          return lhsTarget;
+        if (lhs.writable != rhs.writable)
+          return lhs.writable;
+        return lhs.address < rhs.address;
+      });
+
+    ResidentBulletDataProof bestProof;
+    std::size_t scannedBytes = 0;
+    for (const ResidentMemoryRegion& region : regions)
+    {
+      if (!eligibleResidentBulletScanRegion(region, executablePath))
+        continue;
+      if (scannedBytes >= maxScanBytes)
+        break;
+
+      for (std::size_t offset = 0;
+           offset < region.size && scannedBytes < maxScanBytes;
+           offset += maxChunkBytes)
+      {
+        const std::size_t bytesToRead =
+          std::min(
+            region.size - offset,
+            std::min(maxChunkBytes, maxScanBytes - scannedBytes));
+        if (bytesToRead < residentBulletRecordLayouts.front().recordSize)
+          break;
+
+        std::vector<unsigned char> bytes;
+        const std::uintptr_t baseAddress = region.address + offset;
+        if (!readResidentMemory(baseAddress, bytesToRead, bytes))
+          break;
+        scannedBytes += bytes.size();
+
+        ResidentBulletDataProof candidate =
+          proveResidentBulletArrayInBytes(
+            bytes,
+            baseAddress,
+            regions,
+            executablePath,
+            unitEvidence);
+        if (candidate.passed)
+        {
+          proof = std::move(candidate);
+          return true;
+        }
+        if (candidate.activeRecords > bestProof.activeRecords)
+          bestProof = std::move(candidate);
+      }
+    }
+
+    proof = std::move(bestProof);
+    if (proof.reason.empty())
+      proof.reason = "no active resident bullet table found in current process memory";
+    return false;
+  }
+
+  bool refreshResidentBulletDataProof(
+    ResidentBulletDataProof& proof,
+    const std::vector<ResidentMemoryRegion>& regions,
+    const std::string& executablePath,
+    const ResidentUnitNodeProof& unitNodeProof)
+  {
+    if (!proof.passed || proof.address == 0 || proof.recordSize == 0)
+      return false;
+    const std::vector<ResidentUnitEvidenceRange> unitEvidence =
+      residentUnitEvidenceRanges(unitNodeProof);
+    if (unitEvidence.empty())
+    {
+      proof = {};
+      return false;
+    }
+
+    const ResidentMemoryRegion* region =
+      findReadableResidentRegion(
+        regions,
+        proof.address,
+        proof.recordSize * minResidentActiveBulletRecords);
+    if (region == nullptr || !residentRegionLooksLikeLiveData(*region, executablePath))
+    {
+      proof = {};
+      return false;
+    }
+
+    const std::uintptr_t regionEnd = region->address + region->size;
+    const std::size_t bytesToRead =
+      std::min<std::size_t>(
+        regionEnd > proof.address ? regionEnd - proof.address : 0,
+        proof.recordSize * 256);
+    if (bytesToRead < proof.recordSize * minResidentActiveBulletRecords)
+    {
+      proof = {};
+      return false;
+    }
+
+    std::vector<unsigned char> bytes;
+    if (!readResidentMemory(proof.address, bytesToRead, bytes))
+    {
+      proof = {};
+      return false;
+    }
+
+    const auto layoutIt =
+      std::find_if(
+        residentBulletRecordLayouts.begin(),
+        residentBulletRecordLayouts.end(),
+        [&](const ResidentBulletRecordLayout& layout)
+        {
+          return layout.recordSize == proof.recordSize && proof.layoutName == layout.name;
+        });
+    if (layoutIt == residentBulletRecordLayouts.end())
+    {
+      proof = {};
+      return false;
+    }
+
+    ResidentBulletDataProof refreshed =
+      scoreResidentBulletArray(
+        bytes,
+        proof.address,
+        0,
+        *layoutIt,
+        regions,
+        executablePath,
+        unitEvidence);
+    if (!refreshed.passed)
+    {
+      proof = {};
+      return false;
+    }
+
+    proof = std::move(refreshed);
+    return true;
+  }
+
+  bool writeResidentBulletDataSnapshot(
+    const std::filesystem::path& path,
+    const ResidentBulletDataProof& proof,
+    const ResidentSnapshotContext& context)
+  {
+    std::ofstream output(path, std::ios::trunc);
+    if (!output)
+      return false;
+
+    if (!writeResidentSnapshotMetadata(output, "read_bullet_data", context))
+      return false;
+
+    output << "index\taddress\tsprite\tsource_unit\ttarget_unit\ttype\tx\ty\tvelocity_x\tvelocity_y\tplayer\tremove_timer\n";
+    for (const ResidentBulletSnapshotRecord& record : proof.records)
+    {
+      output << record.index << '\t'
+             << hexAddress(record.address) << '\t'
+             << hexAddress(record.spriteAddress) << '\t'
+             << hexAddress(record.sourceUnitAddress) << '\t'
+             << hexAddress(record.targetUnitAddress) << '\t'
+             << record.type << '\t'
+             << record.x << '\t'
+             << record.y << '\t'
+             << record.velocityX << '\t'
+             << record.velocityY << '\t'
+             << record.player << '\t'
+             << static_cast<int>(record.removeTimer) << '\n';
     }
     return static_cast<bool>(output);
   }
@@ -2826,6 +3411,7 @@ namespace
     const BWAPI::Runtime::RuntimeResidentQueueHeader& proofQueueHeader,
     const ResidentFrameCounterProof& frameCounterProof,
     const ResidentUnitNodeProof& unitNodeProof,
+    const ResidentBulletDataProof& bulletDataProof,
     const ResidentMapDataProof& mapDataProof,
     const ResidentAIModuleLoadProof& aiModuleLoadProof,
     const ResidentBattleNetPolicyProof& battleNetPolicyProof,
@@ -3140,6 +3726,60 @@ namespace
       appendReadyLine("proof.read_player_data=passed");
     }
 
+    const bool bulletSnapshotWritten =
+      unitSnapshotWritten
+      && bulletDataProof.passed
+      && writeResidentBulletDataSnapshot(
+        bridgePath / "bullets.snapshot.tsv",
+        bulletDataProof,
+        activeSnapshotContext);
+    if (bulletSnapshotWritten)
+    {
+      appendReadyLine("proof.read_bullet_data.source=live-sc-r-bullet-table");
+      appendReadyLine(
+        "proof.read_bullet_data.address="
+        + hexAddress(bulletDataProof.address));
+      appendReadyLine(
+        "proof.read_bullet_data.record_size="
+        + std::to_string(bulletDataProof.recordSize));
+      appendReadyLine("proof.read_bullet_data.layout=" + bulletDataProof.layoutName);
+      appendReadyLine(
+        "proof.read_bullet_data.sampled_records="
+        + std::to_string(bulletDataProof.sampledRecords));
+      appendReadyLine(
+        "proof.read_bullet_data.active_records="
+        + std::to_string(bulletDataProof.activeRecords));
+      appendReadyLine(
+        "proof.read_bullet_data.unit_correlated_records="
+        + std::to_string(bulletDataProof.unitCorrelatedRecords));
+      appendReadyLine("proof.read_bullet_data.snapshot=bullets.snapshot.tsv");
+      appendReadyLine(
+        "contract.binding.BW::BWDATA::BulletNodeTable=data-address|proof.read_bullet_data=passed:"
+        + hexAddress(bulletDataProof.address));
+      appendReadyLine(
+        "contract.structure.BW::CBullet="
+        + std::to_string(bulletDataProof.recordSize)
+        + "|proof.read_bullet_data=passed:"
+        + bulletDataProof.layoutName);
+      appendReadyLine(
+        "contract.field.BW::CBullet.position="
+        + std::to_string(bulletDataProof.positionOffset)
+        + "|4|proof.read_bullet_data=passed");
+      appendReadyLine(
+        "contract.field.BW::CBullet.velocity="
+        + std::to_string(bulletDataProof.velocityOffset)
+        + "|8|proof.read_bullet_data=passed");
+      appendReadyLine(
+        "contract.field.BW::CBullet.sourceUnit="
+        + std::to_string(bulletDataProof.sourceUnitOffset)
+        + "|8|proof.read_bullet_data=passed");
+      appendReadyLine(
+        "contract.field.BW::CBullet.target="
+        + std::to_string(bulletDataProof.targetOffset)
+        + "|8|proof.read_bullet_data=passed");
+      appendReadyLine("proof.read_bullet_data=passed");
+    }
+
     const bool mapSnapshotWritten =
       unitSnapshotWritten
       && mapDataProof.passed
@@ -3370,12 +4010,14 @@ namespace
     const std::filesystem::path proofQueuePath = bridgePath / RuntimeResidentProofQueueFile;
     ResidentFrameCounterProof frameCounterProof;
     ResidentUnitNodeProof unitNodeProof;
+    ResidentBulletDataProof bulletDataProof;
     ResidentMapDataProof mapDataProof;
     ResidentAIModuleLoadProof aiModuleLoadProof;
     ResidentBattleNetPolicyProof battleNetPolicyProof;
     ResidentCommandIngressProof commandIngressProof;
     ResidentOverlayIngressProof overlayIngressProof;
     std::uint64_t lastUnitDiscoveryHeartbeat = 0;
+    std::uint64_t lastBulletDiscoveryHeartbeat = 0;
     std::uint64_t lastMapDiscoveryHeartbeat = 0;
     std::uint64_t lastAIModuleProofHeartbeat = 0;
     std::uint64_t lastBattleNetPolicyProofHeartbeat = 0;
@@ -3430,6 +4072,12 @@ namespace
         {
           const std::vector<ResidentMemoryRegion> regions = listResidentMemoryRegions();
           refreshResidentUnitNodeProof(unitNodeProof, regions);
+          if (bulletDataProof.passed)
+            refreshResidentBulletDataProof(
+              bulletDataProof,
+              regions,
+              environment.executablePath,
+              unitNodeProof);
         }
         if (!unitNodeProof.passed
             && (lastUnitDiscoveryHeartbeat == 0
@@ -3451,6 +4099,32 @@ namespace
               bridgePath,
               "resident.unit_node.scan_unresolved reason="
               + unitNodeProof.reason);
+          }
+        }
+        if (!bulletDataProof.passed
+            && frameCounterProof.passed
+            && unitNodeProof.passed
+            && (lastBulletDiscoveryHeartbeat == 0
+                || heartbeat - lastBulletDiscoveryHeartbeat >= 2))
+        {
+          lastBulletDiscoveryHeartbeat = heartbeat;
+          if (discoverResidentBulletDataProof(environment.executablePath, unitNodeProof, bulletDataProof))
+          {
+            appendResidentLog(
+              bridgePath,
+              "resident.bullet.proof_found address="
+              + hexAddress(bulletDataProof.address)
+              + " active_records="
+              + std::to_string(bulletDataProof.activeRecords)
+              + " layout="
+              + bulletDataProof.layoutName);
+          }
+          else if (!bulletDataProof.reason.empty())
+          {
+            appendResidentLog(
+              bridgePath,
+              "resident.bullet.scan_unresolved reason="
+              + bulletDataProof.reason);
           }
         }
         if (!mapDataProof.passed
@@ -3515,6 +4189,7 @@ namespace
           proofQueueHeader,
           frameCounterProof,
           unitNodeProof,
+          bulletDataProof,
           mapDataProof,
           aiModuleLoadProof,
           battleNetPolicyProof,

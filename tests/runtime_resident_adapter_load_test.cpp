@@ -130,6 +130,17 @@ int main(int argc, char** argv)
     ready << "proof.read_map_data=passed\n";
     ready << "contract.binding.BW::BWDATA::MapTileArray=data-address|proof.read_map_data=passed:compat-map-tile-projection\n";
     ready << "diagnostic.read_map_data.snapshot=map.snapshot.tsv\n";
+    ready << "proof.read_bullet_data=passed\n";
+    ready << "proof.read_bullet_data.source=live-sc-r-bullet-table\n";
+    ready << "proof.read_bullet_data.address=0x77770000\n";
+    ready << "proof.read_bullet_data.record_size=136\n";
+    ready << "proof.read_bullet_data.active_records=1\n";
+    ready << "proof.read_bullet_data.unit_correlated_records=1\n";
+    ready << "proof.read_bullet_data.snapshot=bullets.snapshot.tsv\n";
+    ready << "contract.binding.BW::BWDATA::BulletNodeTable=data-address|proof.read_bullet_data=passed:stale\n";
+    ready << "contract.structure.BW::CBullet=136|proof.read_bullet_data=passed:stale\n";
+    ready << "contract.field.BW::CBullet.position=64|4|proof.read_bullet_data=passed\n";
+    ready << "diagnostic.read_bullet_data.snapshot=bullets.snapshot.tsv\n";
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
   assert(fileContainsLine(readyPath, "proof.active_match_state=passed"));
@@ -142,6 +153,23 @@ int main(int argc, char** argv)
     readyPath,
     "contract.binding.BW::BWDATA::MapTileArray=data-address|proof.read_map_data=passed:compat-map-tile-projection"));
   assert(fileContainsLine(readyPath, "diagnostic.read_map_data.snapshot=map.snapshot.tsv"));
+  assert(!fileContainsLine(readyPath, "proof.read_bullet_data=passed"));
+  assert(!fileContainsPrefix(readyPath, "proof.read_bullet_data.source="));
+  assert(!fileContainsPrefix(readyPath, "proof.read_bullet_data.address="));
+  assert(!fileContainsPrefix(readyPath, "proof.read_bullet_data.record_size="));
+  assert(!fileContainsPrefix(readyPath, "proof.read_bullet_data.active_records="));
+  assert(!fileContainsPrefix(readyPath, "proof.read_bullet_data.unit_correlated_records="));
+  assert(!fileContainsPrefix(readyPath, "proof.read_bullet_data.snapshot="));
+  assert(!fileContainsLine(
+    readyPath,
+    "contract.binding.BW::BWDATA::BulletNodeTable=data-address|proof.read_bullet_data=passed:stale"));
+  assert(!fileContainsLine(
+    readyPath,
+    "contract.structure.BW::CBullet=136|proof.read_bullet_data=passed:stale"));
+  assert(!fileContainsLine(
+    readyPath,
+    "contract.field.BW::CBullet.position=64|4|proof.read_bullet_data=passed"));
+  assert(fileContainsLine(readyPath, "diagnostic.read_bullet_data.snapshot=bullets.snapshot.tsv"));
 
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   environment.product = Product::StarCraftRemastered;

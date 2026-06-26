@@ -798,6 +798,9 @@ namespace BWAPI::Runtime
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.address")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.record_size")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.read_bullet_data.active_records")
+        && readyValueIsNonZeroUnsigned(
+          readyPath,
+          "proof.read_bullet_data.unit_correlated_records")
         && validatedResidentSnapshot(
           readyPath,
           "proof.read_bullet_data.snapshot",

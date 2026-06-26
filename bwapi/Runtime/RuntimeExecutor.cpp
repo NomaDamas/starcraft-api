@@ -737,10 +737,32 @@ namespace BWAPI::Runtime
 
     bool duplicateSensitiveReadyKey(const std::string& key)
     {
+      for (const char* exact : {
+             "proof.attach",
+             "proof.read_game_state",
+             "proof.active_match_state",
+             "proof.read_units",
+             "proof.read_player_data",
+             "proof.read_map_data",
+             "proof.read_bullet_data",
+             "proof.read_region_data",
+             "proof.issue_commands",
+             "proof.draw_overlays",
+             "proof.dispatch_events",
+             "proof.replay_analysis",
+             "proof.multiplayer_sync",
+             "proof.battle_net_policy",
+             "proof.load_ai_modules" })
+      {
+        if (key == exact)
+          return true;
+      }
+
       for (const char* prefix : {
              "contract.binding.",
              "contract.structure.",
              "contract.field.",
+             "proof.attach.",
              "proof.read_game_state.",
              "proof.active_match_state.",
              "proof.read_units.",

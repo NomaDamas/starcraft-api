@@ -234,6 +234,20 @@ int main(int argc, char** argv)
   assert(!stateProof.readGameStateValid);
   assert(!stateProof.activeMatchValid);
 
+  std::vector<std::string> duplicateExactStateProofLines =
+    residentStateProofLines(environment, 9);
+  duplicateExactStateProofLines.push_back("proof.active_match_state=failed");
+  writeReadyFile(environment, 9, duplicateExactStateProofLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(!stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
   std::vector<std::string> replayLines =
     residentStateProofLines(environment, 10, 4, "replay");
   writeReadyFile(environment, 10, replayLines);

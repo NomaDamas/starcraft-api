@@ -312,6 +312,14 @@ namespace BWAPI::Runtime
       const std::filesystem::path& readyPath,
       std::string& duplicateKey)
     {
+      for (const char* key : { "proof.read_game_state", "proof.active_match_state" })
+      {
+        if (readyKeyCount(readyPath, key) > 1)
+        {
+          duplicateKey = key;
+          return true;
+        }
+      }
       return hasDuplicateReadyKeyWithPrefix(readyPath, "resident.proof.", duplicateKey)
         || hasDuplicateReadyKeyWithPrefix(readyPath, "proof.read_game_state.", duplicateKey)
         || hasDuplicateReadyKeyWithPrefix(readyPath, "proof.active_match_state.", duplicateKey);

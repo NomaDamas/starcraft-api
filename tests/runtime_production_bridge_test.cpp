@@ -209,7 +209,7 @@ namespace
     ready << "proof.active_match_state.unit_node_record_size=64\n";
   }
 
-  void writeLiveContractProofs(std::ofstream& ready, bool includeRegionDataProof = true)
+  void writeLiveContractProofs(std::ofstream& ready)
   {
     ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
     ready << "contract.binding.BW::BWDATA::Players=data-address|proof.read_player_data=passed:players\n";
@@ -249,8 +249,26 @@ namespace
     ready << "proof.read_map_data=passed\n";
     ready << "proof.read_player_data=passed\n";
     ready << "proof.read_bullet_data=passed\n";
-    if (includeRegionDataProof)
-      ready << "proof.read_region_data=passed\n";
+  }
+
+  bool residentStateProofAlreadyWritesBehaviorProof(const RuntimeExecutorBehaviorProof& proof)
+  {
+    return std::string(proof.id) == "read-game-state"
+      || std::string(proof.id) == "active-match-state"
+      || std::string(proof.id) == "read-units";
+  }
+
+  void writeBehaviorProofLines(
+    std::ofstream& ready,
+    const std::string& omittedBehaviorProof = {})
+  {
+    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+    {
+      if (residentStateProofAlreadyWritesBehaviorProof(proof))
+        continue;
+      if (proof.id != omittedBehaviorProof)
+        ready << proof.readyFileLine << '\n';
+    }
   }
 
   void writeBootstrapReadyFile(
@@ -283,12 +301,8 @@ namespace
     writeResidentStateProofs(ready, processId, executable);
     writeValidatedProductionProofMetadata(ready);
     if (includeLiveContractProofs)
-      writeLiveContractProofs(ready, omittedBehaviorProof != "read-region-data");
-    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-    {
-      if (proof.id != omittedBehaviorProof)
-        ready << proof.readyFileLine << '\n';
-    }
+      writeLiveContractProofs(ready);
+    writeBehaviorProofLines(ready, omittedBehaviorProof);
   }
 
   void writePartialValidatedAdapterReadyFile(
@@ -305,11 +319,7 @@ namespace
     writeRuntimeCommandQueueSink(ready);
     writeResidentStateProofs(ready, processId, executable);
     writeValidatedProductionProofMetadata(ready);
-    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-    {
-      if (std::string(proof.id) != "multiplayer-sync")
-        ready << proof.readyFileLine << '\n';
-    }
+    writeBehaviorProofLines(ready, "multiplayer-sync");
   }
 }
 

@@ -195,10 +195,12 @@ namespace
     return parsed;
   }
 
+  constexpr int ResidentHeartbeatWaitAttempts = 180;
+
   bool waitForLine(
     const std::filesystem::path& path,
     const std::string& expected,
-    int attempts = 60)
+    int attempts = ResidentHeartbeatWaitAttempts)
   {
     for (int attempt = 0; attempt < attempts; ++attempt)
     {
@@ -213,7 +215,7 @@ namespace
     const std::filesystem::path& path,
     const std::string& key,
     std::uint64_t previous,
-    int attempts = 60)
+    int attempts = ResidentHeartbeatWaitAttempts)
   {
     for (int attempt = 0; attempt < attempts; ++attempt)
     {
@@ -233,7 +235,11 @@ namespace
     const std::string& command,
     std::uint64_t processId,
     std::uint64_t heartbeat,
-    std::uint64_t frameId)
+    std::uint64_t frameId,
+    bool writeBehaviorDeltas = true,
+    std::uint64_t baselineDelta = 12,
+    std::uint64_t pausedDelta = 0,
+    std::uint64_t resumedDelta = 12)
   {
     std::ofstream snapshot(path, std::ios::trunc);
     snapshot << "# schema=starcraft-api.resident-snapshot.v1\n"
@@ -263,11 +269,14 @@ namespace
              << "frame_counter_address\t0x1200\n"
              << "appended_bytes\t10\n"
              << "behavior_sample_count\t2\n"
-             << "behavior_observation\tcommand-specific-live-scr-behavior\n"
-             << "baseline_delta\t12\n"
-             << "paused_delta\t0\n"
-             << "resumed_delta\t12\n"
-             << "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
+             << "behavior_observation\tcommand-specific-live-scr-behavior\n";
+    if (writeBehaviorDeltas)
+    {
+      snapshot << "baseline_delta\t" << baselineDelta << '\n'
+               << "paused_delta\t" << pausedDelta << '\n'
+               << "resumed_delta\t" << resumedDelta << '\n';
+    }
+    snapshot << "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
              << "issue_commands_required_adapter_location\tin-process-target-runtime\n"
              << "issue_commands_required_adapter_thread_policy\texecute-on-target-runtime-thread\n"
              << "issue_commands_required_adapter_behavior\tencoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior\n"
@@ -283,6 +292,18 @@ namespace
             << "pauseGame\tgame-action\tissue_commands.pauseGame.snapshot.tsv\n"
             << "resumeGame\tgame-action\tissue_commands.resumeGame.snapshot.tsv\n";
   }
+
+  void writeSingleCommandSpecificPendingFile(
+    const std::filesystem::path& bridgePath,
+    const std::string& command,
+    const std::string& snapshotName)
+  {
+    std::ofstream pending(
+      bridgePath / RuntimeExecutorBridgeIssueCommandProofPendingFile,
+      std::ios::trunc);
+    pending << "command\tcommand_kind\tsnapshot\n"
+            << command << "\tgame-action\t" << snapshotName << '\n';
+  }
 }
 
 int main(int argc, char** argv)
@@ -292,11 +313,13 @@ int main(int argc, char** argv)
   ResidentFrameCounterFixtureTicker frameTicker;
 
   const std::filesystem::path bridgePath =
-    std::filesystem::temp_directory_path() / "starcraft-api-resident-adapter-load-test";
+    std::filesystem::temp_directory_path()
+    / ("starcraft-api-resident-adapter-load-test-" + std::to_string(getpid()));
   std::filesystem::remove_all(bridgePath);
   std::filesystem::create_directories(bridgePath);
 
   setenv("STARCRAFT_API_RESIDENT_ENABLE", "1", 1);
+  setenv("STARCRAFT_API_RESIDENT_BRIDGE_DIR", bridgePath.string().c_str(), 1);
   setenv("STARCRAFT_API_EXECUTOR_BRIDGE_DIR", bridgePath.string().c_str(), 1);
   setenv("STARCRAFT_API_VERSION", "test-build", 1);
 
@@ -432,6 +455,57 @@ int main(int argc, char** argv)
   assert(commandQueue.valid);
   assert(overlayQueue.valid);
   assert(proofQueue.valid);
+
+  const std::uint64_t missingDeltasHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  const std::uint64_t missingDeltasFrame =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "units.snapshot.tsv", "frame_id"),
+      "units.snapshot.tsv#frame_id");
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.restartGame.snapshot.tsv",
+    "restartGame",
+    static_cast<std::uint64_t>(environment.processId),
+    missingDeltasHeartbeat,
+    missingDeltasFrame,
+    false);
+  writeSingleCommandSpecificPendingFile(
+    bridgePath,
+    "restartGame",
+    "issue_commands.restartGame.snapshot.tsv");
+  require(
+    waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", missingDeltasHeartbeat),
+    "resident adapter heartbeat did not advance after missing-delta command proof handoff");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands.command.restartGame=passed"),
+    "resident adapter promoted command-specific proof without behavior delta fields");
+
+  const std::uint64_t invalidDeltasHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  const std::uint64_t invalidDeltasFrame =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "units.snapshot.tsv", "frame_id"),
+      "units.snapshot.tsv#frame_id");
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.restartGame.snapshot.tsv",
+    "restartGame",
+    static_cast<std::uint64_t>(environment.processId),
+    invalidDeltasHeartbeat,
+    invalidDeltasFrame,
+    true,
+    12,
+    1,
+    12);
+  writeSingleCommandSpecificPendingFile(
+    bridgePath,
+    "restartGame",
+    "issue_commands.restartGame.snapshot.tsv");
+  require(
+    waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", invalidDeltasHeartbeat),
+    "resident adapter heartbeat did not advance after invalid-delta command proof handoff");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands.command.restartGame=passed"),
+    "resident adapter promoted command-specific proof with invalid pause/resume behavior deltas");
 
   const std::uint64_t commandProofHeartbeat =
     requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");

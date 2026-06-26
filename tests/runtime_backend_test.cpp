@@ -268,7 +268,11 @@ namespace
     int processId,
     std::uint64_t heartbeat,
     std::uint64_t frameId,
-    const std::string& metadataCommand = {})
+    const std::string& metadataCommand = {},
+    bool writeBehaviorDeltas = true,
+    std::uint64_t baselineDelta = 12,
+    std::uint64_t pausedDelta = 0,
+    std::uint64_t resumedDelta = 12)
   {
     const std::string recordedCommand = metadataCommand.empty() ? command : metadataCommand;
     std::ofstream snapshot(path);
@@ -299,8 +303,14 @@ namespace
              << "frame_counter_address\t0x1200\n"
              << "appended_bytes\t10\n"
              << "behavior_sample_count\t2\n"
-             << "behavior_observation\tcommand-specific-live-scr-behavior\n"
-             << "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
+             << "behavior_observation\tcommand-specific-live-scr-behavior\n";
+    if (writeBehaviorDeltas)
+    {
+      snapshot << "baseline_delta\t" << baselineDelta << '\n'
+               << "paused_delta\t" << pausedDelta << '\n'
+               << "resumed_delta\t" << resumedDelta << '\n';
+    }
+    snapshot << "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
              << "issue_commands_required_adapter_location\tin-process-target-runtime\n"
              << "issue_commands_required_adapter_thread_policy\texecute-on-target-runtime-thread\n"
              << "issue_commands_required_adapter_behavior\tencoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior\n"
@@ -635,6 +645,81 @@ int main()
   assert(commandEvidenceStatusFor(
     commandSpecificProofProbe.implementedGameActionEvidence,
     "resumeGame") == RuntimeCommandEvidenceStatus::LiveProven);
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=starcraft-api-resident-adapter\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.attach.source=resident-adapter\n";
+    RuntimeEnvironment missingDeltasEnvironment = attachableRemastered;
+    missingDeltasEnvironment.executorBridgePath = bridgeDir.string();
+    const std::uint64_t heartbeat =
+      writeResidentStateProofs(ready, missingDeltasEnvironment);
+    writeResidentProofQueueReadyLines(ready, bridgeDir, heartbeat);
+    ready << "proof.issue_commands.command.pauseGame=passed\n";
+    ready << "proof.issue_commands.command.pauseGame.snapshot=issue_commands.pauseGame.snapshot.tsv\n";
+    ready << "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed\n";
+    writeCommandSpecificProofSnapshot(
+      bridgeDir / "issue_commands.pauseGame.snapshot.tsv",
+      "pauseGame",
+      "game-action",
+      currentProcessId(),
+      heartbeat,
+      102,
+      {},
+      false);
+  }
+
+  RuntimeProbeResult missingDeltasProofProbe = proofBackedRemasteredBackend->probe();
+  assert(commandEvidenceStatusFor(
+    missingDeltasProofProbe.implementedGameActionEvidence,
+    "pauseGame") == RuntimeCommandEvidenceStatus::MockTested);
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=starcraft-api-resident-adapter\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "proof.attach=passed\n";
+    ready << "proof.attach.source=resident-adapter\n";
+    RuntimeEnvironment invalidDeltasEnvironment = attachableRemastered;
+    invalidDeltasEnvironment.executorBridgePath = bridgeDir.string();
+    const std::uint64_t heartbeat =
+      writeResidentStateProofs(ready, invalidDeltasEnvironment);
+    writeResidentProofQueueReadyLines(ready, bridgeDir, heartbeat);
+    ready << "proof.issue_commands.command.pauseGame=passed\n";
+    ready << "proof.issue_commands.command.pauseGame.snapshot=issue_commands.pauseGame.snapshot.tsv\n";
+    ready << "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed\n";
+    writeCommandSpecificProofSnapshot(
+      bridgeDir / "issue_commands.pauseGame.snapshot.tsv",
+      "pauseGame",
+      "game-action",
+      currentProcessId(),
+      heartbeat,
+      102,
+      {},
+      true,
+      12,
+      1,
+      12);
+  }
+
+  RuntimeProbeResult invalidDeltasProofProbe = proofBackedRemasteredBackend->probe();
+  assert(commandEvidenceStatusFor(
+    invalidDeltasProofProbe.implementedGameActionEvidence,
+    "pauseGame") == RuntimeCommandEvidenceStatus::MockTested);
 
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);

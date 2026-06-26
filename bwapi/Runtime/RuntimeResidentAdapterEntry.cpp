@@ -1233,6 +1233,9 @@ namespace
     std::uint64_t vectorAddress = 0;
     std::uint64_t bytesInQueueAddress = 0;
     std::uint64_t frameCounterAddress = 0;
+    std::uint64_t baselineDelta = 0;
+    std::uint64_t pausedDelta = 0;
+    std::uint64_t resumedDelta = 0;
     std::uint64_t unitId = 0;
 
     return tableValueIsTrue(proof.fields, "passed")
@@ -1270,6 +1273,12 @@ namespace
       && bytesInQueueAddress > 0
       && tableUnsignedValue(proof.fields, "frame_counter_address", frameCounterAddress)
       && frameCounterAddress > 0
+      && tableUnsignedValue(proof.fields, "baseline_delta", baselineDelta)
+      && baselineDelta >= 2
+      && tableUnsignedValue(proof.fields, "paused_delta", pausedDelta)
+      && pausedDelta == 0
+      && tableUnsignedValue(proof.fields, "resumed_delta", resumedDelta)
+      && resumedDelta >= 2
       && (proof.commandKind != "unit-command"
           || (tableUnsignedValue(proof.fields, "unit_id", unitId) && unitId > 0));
   }

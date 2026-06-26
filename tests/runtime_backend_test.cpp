@@ -112,6 +112,31 @@ namespace
     return heartbeat;
   }
 
+  void writeResidentProofQueueReadyLines(
+    std::ofstream& ready,
+    const std::filesystem::path& bridgePath,
+    std::uint64_t heartbeat)
+  {
+    const std::filesystem::path proofQueuePath = bridgePath / RuntimeResidentProofQueueFile;
+    const RuntimeResidentQueueHeader desiredQueue =
+      makeRuntimeResidentQueueHeader(
+        RuntimeResidentQueueKind::Proof,
+        sizeof(RuntimeResidentRecordHeader),
+        64,
+        heartbeat);
+    RuntimeResidentQueueHeader actualQueue;
+    RuntimeResidentQueueValidationResult ensuredQueue =
+      ensureRuntimeResidentQueueFile(proofQueuePath, desiredQueue, actualQueue);
+    assert(ensuredQueue.valid);
+    for (const std::string& line : makeRuntimeResidentQueueReadyLines(
+           RuntimeResidentQueueKind::Proof,
+           RuntimeResidentProofQueueFile,
+           actualQueue))
+    {
+      ready << line << '\n';
+    }
+  }
+
   void writeProofSnapshotPayload(
     std::ofstream& snapshot,
     const std::string& proof,
@@ -165,6 +190,38 @@ namespace
                << replayLastFrame << "\t2\n";
       return;
     }
+    if (proof == "issue_commands")
+    {
+      snapshot << "field\tvalue\n"
+               << "passed\ttrue\n"
+               << "delivery_checked\ttrue\n"
+               << "behavior_checked\ttrue\n"
+               << "self_fixture\tfalse\n"
+               << "receiver_active\ttrue\n"
+               << "stale_proof_bytes_cleared\ttrue\n"
+               << "pause_frame_counter_sampled\ttrue\n"
+               << "pause_frame_counter_matched\ttrue\n"
+               << "frame_counter_candidate_count\t1\n"
+               << "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
+               << "issue_commands_required_adapter_location\tin-process-target-runtime\n"
+               << "issue_commands_required_adapter_thread_policy\texecute-on-target-runtime-thread\n"
+               << "issue_commands_required_adapter_behavior\tencoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior\n"
+               << "issue_commands_required_adapter_promotion_rule\tdo-not-emit-production-proof-until-live-behavior-is-observed\n"
+               << "command\tpauseGame/resumeGame\n"
+               << "encoded_bytes\t10 / 11\n"
+               << "attempt_count\t1\n"
+               << "storage_kind\tlive-sc-r-command-queue-v1\n"
+               << "vector_address\t0x1000\n"
+               << "bytes_in_queue_address\t0x1100\n"
+               << "buffer_begin\t0x1000\n"
+               << "frame_counter_address\t0x1200\n"
+               << "original_used_bytes\t0\n"
+               << "appended_bytes\t1\n"
+               << "baseline_delta\t12\n"
+               << "paused_delta\t0\n"
+               << "resumed_delta\t12\n";
+      return;
+    }
     snapshot << "field\tvalue\n"
              << "passed\ttrue\n";
   }
@@ -199,6 +256,7 @@ namespace
     const std::vector<std::pair<std::string, std::string>> snapshots = {
       { "draw_overlays.snapshot.tsv", "draw_overlays" },
       { "units.snapshot.tsv", "read_units" },
+      { "issue_commands.snapshot.tsv", "issue_commands" },
       { "events.snapshot.tsv", "dispatch_events" },
       { "replay.snapshot.tsv", "replay_analysis" },
       { "multiplayer_sync.snapshot.tsv", "multiplayer_sync" },
@@ -285,13 +343,6 @@ int main()
     std::filesystem::temp_directory_path() / "starcraft-api-runtime-backend-proof-test";
   std::filesystem::remove_all(bridgeDir);
   std::filesystem::create_directories(bridgeDir);
-  {
-    std::ofstream issueCommands(bridgeDir / "issue_commands.snapshot.tsv");
-    issueCommands << "field\tvalue\n"
-                  << "passed\ttrue\n"
-                  << "source\tlive-sc-r-command-path\n"
-                  << "behavior_checked\ttrue\n";
-  }
   writeProofSnapshots(bridgeDir, currentProcessId(), 20, 102, true);
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
@@ -299,13 +350,15 @@ int main()
     ready << "product=starcraft-remastered\n";
     ready << "version=unknown\n";
     ready << "process_id=" << currentProcessId() << '\n';
-    ready << "executor=unit-test\n";
+    ready << "executor=starcraft-api-resident-adapter\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     ready << "proof.attach=passed\n";
     ready << "proof.attach.source=resident-adapter\n";
+    ready << "proof.attach.queue=resident-proof.queue\n";
     RuntimeEnvironment proofEnvironment = attachableRemastered;
     proofEnvironment.executorBridgePath = bridgeDir.string();
-    writeResidentStateProofs(ready, proofEnvironment);
+    const std::uint64_t heartbeat = writeResidentStateProofs(ready, proofEnvironment);
+    writeResidentProofQueueReadyLines(ready, bridgeDir, heartbeat);
   }
 
   RuntimeEnvironment proofBackedRemastered = attachableRemastered;
@@ -347,9 +400,13 @@ int main()
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "proof.attach.source=resident-adapter\n";
+    RuntimeEnvironment issueProofEnvironment = attachableRemastered;
+    issueProofEnvironment.executorBridgePath = bridgeDir.string();
+    writeResidentStateProofs(ready, issueProofEnvironment);
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
-    ready << "proof.issue_commands.command=pauseGame\n";
+    ready << "proof.issue_commands.command=pauseGame/resumeGame\n";
     ready << "proof.issue_commands.source=live-sc-r-command-path\n";
     ready << "proof.issue_commands.delivery_checked=true\n";
     ready << "proof.issue_commands.behavior_checked=true\n";
@@ -359,7 +416,7 @@ int main()
     ready << "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n";
     ready << "proof.issue_commands.bytes_in_queue_address=0x1100\n";
     ready << "proof.issue_commands.frame_counter_address=0x1200\n";
-    ready << "proof.issue_commands.encoded_bytes=10\n";
+    ready << "proof.issue_commands.encoded_bytes=10 / 11\n";
     ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
     ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
     ready << "proof.attach=passed\n";
@@ -367,7 +424,7 @@ int main()
   }
 
   RuntimeProbeResult issueCommandOnlyProbe = proofBackedRemasteredBackend->probe();
-  assert(hasCapability(issueCommandOnlyProbe, Capability::IssueCommands));
+  assert(!hasCapability(issueCommandOnlyProbe, Capability::IssueCommands));
   assert(!hasCapability(issueCommandOnlyProbe, Capability::DrawOverlays));
   assert(issueCommandOnlyProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(issueCommandOnlyProbe.implementedUnitCommands == remasteredSurface.unitCommands);
@@ -385,7 +442,7 @@ int main()
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
-    ready << "proof.issue_commands.command=pauseGame\n";
+    ready << "proof.issue_commands.command=pauseGame/resumeGame\n";
     ready << "proof.issue_commands.source=live-sc-r-command-path\n";
     ready << "proof.issue_commands.delivery_checked=true\n";
     ready << "proof.issue_commands.behavior_checked=true\n";
@@ -395,7 +452,7 @@ int main()
     ready << "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n";
     ready << "proof.issue_commands.bytes_in_queue_address=0x1100\n";
     ready << "proof.issue_commands.frame_counter_address=0x1200\n";
-    ready << "proof.issue_commands.encoded_bytes=10\n";
+    ready << "proof.issue_commands.encoded_bytes=10 / 11\n";
     ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
     ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
     ready << "proof.attach.source=resident-adapter\n";
@@ -458,7 +515,7 @@ int main()
   }
 
   RuntimeProbeResult commandProofRemasteredProbe = proofBackedRemasteredBackend->probe();
-  assert(hasCapability(commandProofRemasteredProbe, Capability::IssueCommands));
+  assert(!hasCapability(commandProofRemasteredProbe, Capability::IssueCommands));
   assert(hasCapability(commandProofRemasteredProbe, Capability::DrawOverlays));
   assert(hasCapability(commandProofRemasteredProbe, Capability::ReadMapData));
   assert(hasCapability(commandProofRemasteredProbe, Capability::ReadPlayerData));

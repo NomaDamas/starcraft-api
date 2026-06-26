@@ -57,14 +57,48 @@ set(bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-submit-command-bridge")
 file(REMOVE_RECURSE "${bridge_dir}")
 file(MAKE_DIRECTORY "${bridge_dir}")
 file(WRITE "${bridge_dir}/issue_commands.snapshot.tsv"
-  "command\tstorage_kind\tencoded_bytes\n"
-  "pauseGame\tunit-test-runtime-command-queue-v1\t10\n")
+  "# schema=starcraft-api.resident-snapshot.v1\n"
+  "# proof=issue_commands\n"
+  "# source_identity=resident-adapter\n"
+  "# process_id=${bridge_process_id}\n"
+  "# heartbeat=20\n"
+  "# frame_id=12\n"
+  "# active_match_correlated=true\n"
+  "field\tvalue\n"
+  "passed\ttrue\n"
+  "delivery_checked\ttrue\n"
+  "behavior_checked\ttrue\n"
+  "self_fixture\tfalse\n"
+  "receiver_active\ttrue\n"
+  "stale_proof_bytes_cleared\ttrue\n"
+  "pause_frame_counter_sampled\ttrue\n"
+  "pause_frame_counter_matched\ttrue\n"
+  "frame_counter_candidate_count\t1\n"
+  "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
+  "issue_commands_required_adapter_location\tin-process-target-runtime\n"
+  "issue_commands_required_adapter_thread_policy\texecute-on-target-runtime-thread\n"
+  "issue_commands_required_adapter_behavior\tencoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior\n"
+  "issue_commands_required_adapter_promotion_rule\tdo-not-emit-production-proof-until-live-behavior-is-observed\n"
+  "command\tpauseGame/resumeGame\n"
+  "encoded_bytes\t10 / 11\n"
+  "attempt_count\t1\n"
+  "storage_kind\tlive-sc-r-command-queue-v1\n"
+  "vector_address\t0x1000\n"
+  "bytes_in_queue_address\t0x1100\n"
+  "buffer_begin\t0x1000\n"
+  "frame_counter_address\t0x1200\n"
+  "original_used_bytes\t0\n"
+  "appended_bytes\t1\n"
+  "baseline_delta\t12\n"
+  "paused_delta\t0\n"
+  "resumed_delta\t12\n")
 file(WRITE "${bridge_dir}/ready"
   "protocol=starcraft-api-file-bridge-v1\n"
   "product=starcraft-remastered\n"
   "version=test-build\n"
   "process_id=${bridge_process_id}\n"
   "executable=${STARCRAFT_API_CMAKE_COMMAND}\n"
+  "executor=starcraft-api-resident-adapter\n"
   "mode=validated-runtime-adapter\n"
   "resident.adapter=active\n"
   "resident.adapter.abi=starcraft-api-resident-adapter-v1\n"
@@ -87,7 +121,7 @@ file(WRITE "${bridge_dir}/ready"
   "command.sink=runtime-command-queue-v1\n"
   "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n"
   "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n"
-  "proof.issue_commands.command=pauseGame\n"
+  "proof.issue_commands.command=pauseGame/resumeGame\n"
   "proof.issue_commands.source=live-sc-r-command-path\n"
   "proof.issue_commands.delivery_checked=true\n"
   "proof.issue_commands.behavior_checked=true\n"
@@ -97,10 +131,12 @@ file(WRITE "${bridge_dir}/ready"
   "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n"
   "proof.issue_commands.bytes_in_queue_address=0x1100\n"
   "proof.issue_commands.frame_counter_address=0x1200\n"
-  "proof.issue_commands.encoded_bytes=10\n"
+  "proof.issue_commands.encoded_bytes=10 / 11\n"
   "proof.issue_commands.stale_proof_bytes_cleared=true\n"
   "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n"
   "proof.attach=passed\n"
+  "proof.attach.source=resident-adapter\n"
+  "proof.attach.queue=resident-proof.queue\n"
   "proof.read_game_state=passed\n"
   "proof.active_match_state=passed\n"
   "proof.read_units=passed\n"
@@ -124,19 +160,17 @@ execute_process(
   OUTPUT_VARIABLE submit_output
   ERROR_VARIABLE submit_error
 )
-if(NOT submit_result EQUAL 0)
+if(submit_result EQUAL 0)
   stop_runtime_identity_process("${bridge_process_id}")
-  message(FATAL_ERROR "expected manifest-backed command submission to pass\nstdout:\n${submit_output}\nstderr:\n${submit_error}")
+  message(FATAL_ERROR "expected fake manifest-backed command proof submission to fail\nstdout:\n${submit_output}\nstderr:\n${submit_error}")
 endif()
-if(NOT submit_output MATCHES "submitted=true")
+if(NOT submit_output MATCHES "runtime executor bridge is missing command submission proof: proof.attach=passed")
   stop_runtime_identity_process("${bridge_process_id}")
-  message(FATAL_ERROR "expected submitted=true in CLI output\nstdout:\n${submit_output}")
+  message(FATAL_ERROR "expected fake attach proof validation failure\nstdout:\n${submit_output}")
 endif()
-
-file(READ "${bridge_dir}/commands.log" command_log)
-if(NOT command_log MATCHES "game-action\\|pauseGame\\|0\\|")
+if(EXISTS "${bridge_dir}/commands.log")
   stop_runtime_identity_process("${bridge_process_id}")
-  message(FATAL_ERROR "expected pauseGame command in bridge log\nlog:\n${command_log}")
+  message(FATAL_ERROR "fake command proof must not write command log")
 endif()
 
 set(wrong_executable_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-submit-command-wrong-executable-bridge")
@@ -263,13 +297,13 @@ execute_process(
   OUTPUT_VARIABLE bridge_surface_output
   ERROR_VARIABLE bridge_surface_error
 )
-if(NOT bridge_surface_result EQUAL 0)
+if(bridge_surface_result EQUAL 0)
   stop_runtime_identity_process("${bridge_process_id}")
-  message(FATAL_ERROR "expected bridge-surface command submission to pass without manifest\nstdout:\n${bridge_surface_output}\nstderr:\n${bridge_surface_error}")
+  message(FATAL_ERROR "expected bridge-surface fake command proof submission to fail without manifest\nstdout:\n${bridge_surface_output}\nstderr:\n${bridge_surface_error}")
 endif()
-if(NOT bridge_surface_output MATCHES "submitted=true")
+if(NOT bridge_surface_output MATCHES "runtime executor bridge is missing command submission proof: proof.attach=passed")
   stop_runtime_identity_process("${bridge_process_id}")
-  message(FATAL_ERROR "expected submitted=true for bridge-surface submission\nstdout:\n${bridge_surface_output}")
+  message(FATAL_ERROR "expected bridge-surface fake attach proof validation failure\nstdout:\n${bridge_surface_output}")
 endif()
 if(NOT bridge_surface_output MATCHES "bridge-proven BWAPI command surface")
   stop_runtime_identity_process("${bridge_process_id}")

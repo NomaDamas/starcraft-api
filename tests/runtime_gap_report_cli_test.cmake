@@ -342,15 +342,16 @@ endif()
 
 foreach(needle
     "executor.bridge_mode=validated-runtime-adapter"
-    "executor.behavior_proof.missing_count=11"
+    "executor.behavior_proof.missing_count=12"
     "executor.behavior_proof.missing=proof.attach=passed"
     "executor.behavior_proof.missing=proof.read_game_state=passed"
     "executor.behavior_proof.missing=proof.active_match_state=passed"
     "executor.behavior_proof.missing=proof.read_units=passed"
+    "executor.behavior_proof.missing=proof.issue_commands=passed"
     "executor.behavior_proof.missing=proof.multiplayer_sync=passed"
     "readiness.blocking_gap=executor-behavior-proof-complete"
     "implementation_gap.category.transport.count=2"
-    "implementation_gap.category.executor-behavior-proof.count=11")
+    "implementation_gap.category.executor-behavior-proof.count=12")
   string(FIND "${bridge_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     stop_runtime_identity_process("${bridge_process_id}")

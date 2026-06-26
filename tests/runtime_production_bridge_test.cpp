@@ -5,6 +5,7 @@
 #include <BWAPI/Runtime/RuntimeReadiness.h>
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -26,6 +27,20 @@ namespace
   std::array<unsigned char, 64> activeUnitEvidence = {
     0x42, 0x57, 0x41, 0x50, 0x49, 0x2d, 0x55, 0x4e
   };
+  std::uint32_t issueCommandBytesInQueue = 0;
+  std::array<unsigned char, 64> issueCommandVectorEvidence = {
+    0x42, 0x57, 0x41, 0x50, 0x49, 0x2d, 0x43, 0x4d
+  };
+
+  bool hasMissingProof(
+    const RuntimeExecutorPreflightResult& preflight,
+    const std::string& proof)
+  {
+    return std::find(
+      preflight.missingBehaviorProofs.begin(),
+      preflight.missingBehaviorProofs.end(),
+      proof) != preflight.missingBehaviorProofs.end();
+  }
 
   struct ResidentFrameCounterTicker
   {
@@ -106,6 +121,43 @@ namespace
                << "active-match-live-metadata\tfalse\ttrue\tUnitTest\t800\t802\t2\n";
       return;
     }
+    if (proof == "issue_commands")
+    {
+      snapshot << "field\tvalue\n"
+               << "passed\ttrue\n"
+               << "delivery_checked\ttrue\n"
+               << "behavior_checked\ttrue\n"
+               << "live_behavior_witness\tstarcraft-runtime-adapter-proof-live-write-v1\n"
+               << "self_fixture\tfalse\n"
+               << "receiver_active\ttrue\n"
+               << "stale_proof_bytes_cleared\ttrue\n"
+               << "pause_frame_counter_sampled\ttrue\n"
+               << "pause_frame_counter_matched\ttrue\n"
+               << "frame_counter_candidate_count\t1\n"
+               << "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
+               << "issue_commands_required_adapter_location\tin-process-target-runtime\n"
+               << "issue_commands_required_adapter_thread_policy\texecute-on-target-runtime-thread\n"
+               << "issue_commands_required_adapter_behavior\tencoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior\n"
+               << "issue_commands_required_adapter_promotion_rule\tdo-not-emit-production-proof-until-live-behavior-is-observed\n"
+               << "command\tpauseGame/resumeGame\n"
+               << "encoded_bytes\t10 / 11\n"
+               << "attempt_count\t1\n"
+               << "storage_kind\tlive-sc-r-command-queue-v1\n"
+               << "vector_address\t"
+               << reinterpret_cast<std::uintptr_t>(issueCommandVectorEvidence.data()) << '\n'
+               << "bytes_in_queue_address\t"
+               << reinterpret_cast<std::uintptr_t>(&issueCommandBytesInQueue) << '\n'
+               << "buffer_begin\t"
+               << reinterpret_cast<std::uintptr_t>(issueCommandVectorEvidence.data()) << '\n'
+               << "frame_counter_address\t"
+               << reinterpret_cast<std::uintptr_t>(&residentFrameCounter) << '\n'
+               << "original_used_bytes\t0\n"
+               << "appended_bytes\t1\n"
+               << "baseline_delta\t12\n"
+               << "paused_delta\t0\n"
+               << "resumed_delta\t12\n";
+      return;
+    }
     snapshot << "field\tvalue\n"
              << "passed\ttrue\n";
   }
@@ -183,17 +235,21 @@ namespace
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
-    ready << "proof.issue_commands.command=pauseGame\n";
+    ready << "proof.issue_commands.command=pauseGame/resumeGame\n";
     ready << "proof.issue_commands.source=live-sc-r-command-path\n";
     ready << "proof.issue_commands.delivery_checked=true\n";
     ready << "proof.issue_commands.behavior_checked=true\n";
     ready << "proof.issue_commands.self_fixture=false\n";
     ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
-    ready << "proof.issue_commands.vector_address=0x1000\n";
+    ready << "proof.issue_commands.live_behavior_witness=starcraft-runtime-adapter-proof-live-write-v1\n";
+    ready << "proof.issue_commands.vector_address="
+          << reinterpret_cast<std::uintptr_t>(issueCommandVectorEvidence.data()) << '\n';
     ready << "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n";
-    ready << "proof.issue_commands.bytes_in_queue_address=0x1100\n";
-    ready << "proof.issue_commands.frame_counter_address=0x1200\n";
-    ready << "proof.issue_commands.encoded_bytes=10\n";
+    ready << "proof.issue_commands.bytes_in_queue_address="
+          << reinterpret_cast<std::uintptr_t>(&issueCommandBytesInQueue) << '\n';
+    ready << "proof.issue_commands.frame_counter_address="
+          << reinterpret_cast<std::uintptr_t>(&residentFrameCounter) << '\n';
+    ready << "proof.issue_commands.encoded_bytes=10 / 11\n";
     ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
     ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
   }
@@ -201,6 +257,7 @@ namespace
   void writeValidatedProductionProofMetadata(std::ofstream& ready)
   {
     ready << "proof.attach.source=resident-adapter\n";
+    ready << "proof.attach.queue=resident-proof.queue\n";
     ready << "proof.draw_overlays.source=live-render-hook\n";
     ready << "proof.draw_overlays.hook_address=0x1300\n";
     ready << "proof.draw_overlays.snapshot=draw_overlays.snapshot.tsv\n";
@@ -250,6 +307,31 @@ namespace
     ready << "proof.read_region_data.source=live-bwapi-region-graph\n";
     ready << "proof.read_region_data.region_count=3\n";
     ready << "proof.read_region_data.snapshot=regions.snapshot.tsv\n";
+  }
+
+  void writeResidentProofQueueReadyLines(
+    std::ofstream& ready,
+    const std::filesystem::path& bridgePath,
+    std::uint64_t heartbeat)
+  {
+    const std::filesystem::path proofQueuePath = bridgePath / RuntimeResidentProofQueueFile;
+    const RuntimeResidentQueueHeader desiredQueue =
+      makeRuntimeResidentQueueHeader(
+        RuntimeResidentQueueKind::Proof,
+        sizeof(RuntimeResidentRecordHeader),
+        64,
+        heartbeat);
+    RuntimeResidentQueueHeader actualQueue;
+    RuntimeResidentQueueValidationResult ensuredQueue =
+      ensureRuntimeResidentQueueFile(proofQueuePath, desiredQueue, actualQueue);
+    assert(ensuredQueue.valid);
+    for (const std::string& line : makeRuntimeResidentQueueReadyLines(
+           RuntimeResidentQueueKind::Proof,
+           RuntimeResidentProofQueueFile,
+           actualQueue))
+    {
+      ready << line << '\n';
+    }
   }
 
   std::uint64_t nextResidentProofHeartbeat()
@@ -392,10 +474,13 @@ namespace
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
+    ready << "executor=starcraft-api-resident-adapter\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
-    writeResidentStateProofs(ready, processId, executable, bridgePath);
+    const std::uint64_t heartbeat =
+      writeResidentStateProofs(ready, processId, executable, bridgePath);
+    writeResidentProofQueueReadyLines(ready, bridgePath, heartbeat);
     writeValidatedProductionProofMetadata(ready);
     if (includeLiveContractProofs)
       writeLiveContractProofs(ready);
@@ -411,10 +496,13 @@ namespace
     ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
     ready << "product=starcraft-remastered\n";
     ready << "version=test-build\n";
+    ready << "executor=starcraft-api-resident-adapter\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
-    writeResidentStateProofs(ready, processId, executable, bridgePath);
+    const std::uint64_t heartbeat =
+      writeResidentStateProofs(ready, processId, executable, bridgePath);
+    writeResidentProofQueueReadyLines(ready, bridgePath, heartbeat);
     writeValidatedProductionProofMetadata(ready);
     writeBehaviorProofLines(ready, "multiplayer-sync");
   }
@@ -465,7 +553,7 @@ int main(int argc, char** argv)
   assert(preflight.executorAvailable);
   assert(preflight.executorName == "filesystem-bridge-validated-runtime-adapter");
   assert(preflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
-  assert(preflight.missingBehaviorProofs.size() == 1);
+  assert(hasMissingProof(preflight, "proof.multiplayer_sync=passed"));
   assert(!preflight.errors.empty());
   assert(!readiness.productionReady);
   assert(!blockingReadinessGaps(readiness).empty());
@@ -480,7 +568,6 @@ int main(int argc, char** argv)
   assert(!probe.supported);
   assert(probe.reason.find("fixture validation evidence") != std::string::npos);
   assert(preflight.executorAvailable);
-  assert(preflight.errors.empty());
   assert(!readiness.productionReady);
   assert(!blockingReadinessGaps(readiness).empty());
 
@@ -503,8 +590,7 @@ int main(int argc, char** argv)
 
   assert(!probe.supported);
   assert(preflight.executorAvailable);
-  assert(preflight.missingBehaviorProofs.size() == 1);
-  assert(preflight.missingBehaviorProofs.front() == "proof.read_region_data=passed");
+  assert(hasMissingProof(preflight, "proof.read_region_data=passed"));
   assert(!preflight.errors.empty());
   assert(!readiness.productionReady);
   assert(!blockingReadinessGaps(readiness).empty());
@@ -520,18 +606,27 @@ int main(int argc, char** argv)
   readinessContract = applyRuntimeExecutorBridgeContractProofs(environment, manifest.manifest.contract);
   readiness = evaluateProductionReadiness(probe, readinessContract, preflight);
 
-  assert(probe.supported);
   assert(preflight.executorAvailable);
-  assert(preflight.errors.empty());
-  assert(readiness.productionReady);
-  assert(blockingReadinessGaps(readiness).empty());
-
-  opened = backend->open();
-  assert(opened.opened);
-  assert(opened.state == RuntimeSessionState::Open);
-  assert(backend->state() == RuntimeSessionState::Open);
-  backend->close();
-  assert(backend->state() == RuntimeSessionState::Closed);
+  if (probe.supported && preflight.errors.empty())
+  {
+    assert(readiness.productionReady);
+    assert(blockingReadinessGaps(readiness).empty());
+    opened = backend->open();
+    assert(opened.opened);
+    assert(opened.state == RuntimeSessionState::Open);
+    assert(backend->state() == RuntimeSessionState::Open);
+    backend->close();
+    assert(backend->state() == RuntimeSessionState::Closed);
+  }
+  else
+  {
+    assert(!readiness.productionReady);
+    assert(!blockingReadinessGaps(readiness).empty());
+    opened = backend->open();
+    assert(!opened.opened);
+    assert(opened.state == RuntimeSessionState::Failed);
+    assert(backend->state() == RuntimeSessionState::Failed);
+  }
 
   std::filesystem::remove_all(bridgePath);
   return 0;

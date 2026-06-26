@@ -212,6 +212,7 @@ if(TARGET starcraft-runtime-gap-report)
     NAME runtime_gap_report_evidence_cli_test
     COMMAND
       "${CMAKE_COMMAND}"
+      -DSTARCRAFT_API_CMAKE_COMMAND=${CMAKE_COMMAND}
       -DSTARCRAFT_RUNTIME_GAP_REPORT=$<TARGET_FILE:starcraft-runtime-gap-report>
       -DSTARCRAFT_API_TEST_FIXTURE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures
       -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
@@ -225,6 +226,7 @@ if(TARGET starcraft-runtime-submit-command)
     NAME runtime_submit_command_cli_manifest_gate
     COMMAND
       "${CMAKE_COMMAND}"
+      -DSTARCRAFT_API_CMAKE_COMMAND=${CMAKE_COMMAND}
       -DSTARCRAFT_RUNTIME_SUBMIT_COMMAND=$<TARGET_FILE:starcraft-runtime-submit-command>
       -DSTARCRAFT_API_TEST_FIXTURE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/fixtures
       -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
@@ -299,6 +301,16 @@ endif()
 if(TARGET bwapi-api-surface-audit)
   add_test(NAME bwapi_api_surface_audit COMMAND bwapi-api-surface-audit)
 endif()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(
+  NAME guarded_parallel_cli_test
+  COMMAND
+    "${CMAKE_COMMAND}"
+    -DGUARDED_PARALLEL=${CMAKE_SOURCE_DIR}/tools/guarded_parallel.py
+    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/guarded_parallel_cli_test.cmake
+)
 
 add_executable(public_api_smoke_test
   public_api_smoke_test.cpp

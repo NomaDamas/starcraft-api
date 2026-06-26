@@ -300,9 +300,18 @@ namespace BWAPI::Runtime
 
     bool validatedIssueCommandsProof(const std::filesystem::path& readyPath)
     {
-      return !readReadyValue(readyPath, "proof.issue_commands.command").empty()
+      const std::string storageKind = readReadyValue(readyPath, "proof.issue_commands.storage_kind");
+      return readReadyValue(readyPath, "proof.issue_commands.source") == "live-sc-r-command-path"
+        && readyValueIsTrue(readyPath, "proof.issue_commands.delivery_checked")
+        && readyValueIsTrue(readyPath, "proof.issue_commands.behavior_checked")
+        && readReadyValue(readyPath, "proof.issue_commands.self_fixture") != "true"
+        && readyValueIsTrue(readyPath, "proof.issue_commands.pause_frame_counter_matched")
+        && !readReadyValue(readyPath, "proof.issue_commands.command").empty()
         && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.vector_address")
-        && !readReadyValue(readyPath, "proof.issue_commands.storage_kind").empty()
+        && !storageKind.empty()
+        && !startsWith(storageKind, "unit-test")
+        && !startsWith(storageKind, "mock")
+        && !startsWith(storageKind, "self-fixture")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.bytes_in_queue_address")
         && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.frame_counter_address")
         && !readReadyValue(readyPath, "proof.issue_commands.encoded_bytes").empty()
@@ -1783,6 +1792,17 @@ namespace BWAPI::Runtime
     if (!identityError.empty())
     {
       rejectSubmit(result, identityError);
+      return result;
+    }
+
+    const RuntimeProcessOpenResult runtimeProcess = openRuntimeProcess(environment);
+    if (!runtimeProcess.opened)
+    {
+      rejectSubmit(
+        result,
+        runtimeProcess.reason.empty()
+          ? "runtime process identity could not be verified before command submission"
+          : runtimeProcess.reason);
       return result;
     }
 

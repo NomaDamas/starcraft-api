@@ -7,7 +7,9 @@
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 #include <BWAPI/Runtime/RuntimeReadiness.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -75,6 +77,15 @@ namespace
       return -1;
     }
     return static_cast<int>(parsed);
+  }
+
+  bool isTestFixtureManifestPath(const std::string& path)
+  {
+    std::string normalized = std::filesystem::path(path).lexically_normal().generic_string();
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+    return normalized == "tests/fixtures"
+      || normalized.rfind("tests/fixtures/", 0) == 0
+      || normalized.find("/tests/fixtures/") != std::string::npos;
   }
 }
 
@@ -159,6 +170,23 @@ int main(int argc, char** argv)
   RuntimeEnvironment environment = RuntimeEnvironment::detectHost();
   if (!manifestPath.empty())
     environment.manifestPath = manifestPath;
+
+  if (requireProduction
+      && !environment.manifestPath.empty()
+      && isTestFixtureManifestPath(environment.manifestPath))
+  {
+    std::cout << "manifest.path=" << environment.manifestPath << '\n';
+    std::cout << "manifest.production_rejected=true\n";
+    std::cout << "manifest.error=tests/fixtures manifests are parser fixtures and cannot satisfy --require-production\n";
+    std::cout << "readiness.production_ready=false\n";
+    std::cout << "implementation_gap.count=1\n";
+    std::cout << "implementation_gap.category_count=1\n";
+    std::cout << "implementation_gap.category.manifest.count=1\n";
+    std::cout << "implementation_gap.0.category=manifest\n";
+    std::cout << "implementation_gap.0.id=fixture-manifest-production-forbidden\n";
+    std::cout << "implementation_gap.0.detail=use a live-generated manifest outside tests/fixtures for production release gates\n";
+    return 2;
+  }
 
   for (int i = 1; i < argc; ++i)
   {

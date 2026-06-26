@@ -72,6 +72,29 @@ namespace
     std::filesystem::path path = std::filesystem::temp_directory_path() / name;
     std::filesystem::remove_all(path);
     std::filesystem::create_directories(path);
+    std::ofstream issueCommands(path / "issue_commands.snapshot.tsv");
+    issueCommands << "field\tvalue\n"
+                  << "passed\ttrue\n"
+                  << "source\tlive-sc-r-command-path\n"
+                  << "behavior_checked\ttrue\n";
+    const std::vector<std::pair<std::string, std::string>> snapshots = {
+      { "draw_overlays.snapshot.tsv", "draw_overlays" },
+      { "events.snapshot.tsv", "dispatch_events" },
+      { "replay.snapshot.tsv", "replay_analysis" },
+      { "multiplayer_sync.snapshot.tsv", "multiplayer_sync" },
+      { "ai_module_load.snapshot.tsv", "load_ai_modules" },
+      { "map.snapshot.tsv", "read_map_data" },
+      { "players.snapshot.tsv", "read_player_data" },
+      { "bullets.snapshot.tsv", "read_bullet_data" },
+      { "regions.snapshot.tsv", "read_region_data" }
+    };
+    for (const auto& snapshotSpec : snapshots)
+    {
+      std::ofstream snapshot(path / snapshotSpec.first);
+      snapshot << "field\tvalue\n"
+               << "proof\t" << snapshotSpec.second << '\n'
+               << "passed\ttrue\n";
+    }
     return path;
   }
 
@@ -87,6 +110,19 @@ namespace
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
+    ready << "proof.issue_commands.command=pauseGame\n";
+    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
+    ready << "proof.issue_commands.delivery_checked=true\n";
+    ready << "proof.issue_commands.behavior_checked=true\n";
+    ready << "proof.issue_commands.self_fixture=false\n";
+    ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
+    ready << "proof.issue_commands.vector_address=0x1000\n";
+    ready << "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n";
+    ready << "proof.issue_commands.bytes_in_queue_address=0x1100\n";
+    ready << "proof.issue_commands.frame_counter_address=0x1200\n";
+    ready << "proof.issue_commands.encoded_bytes=10\n";
+    ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
+    ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
   }
 
   std::uint64_t nextResidentProofHeartbeat()
@@ -132,6 +168,58 @@ namespace
     ready << "proof.active_match_state.unit_node_record_size=64\n";
   }
 
+  void writeValidatedProductionProofMetadata(std::ofstream& ready)
+  {
+    ready << "proof.attach.source=resident-adapter\n";
+    ready << "proof.draw_overlays.source=live-render-hook\n";
+    ready << "proof.draw_overlays.hook_address=0x1300\n";
+    ready << "proof.draw_overlays.snapshot=draw_overlays.snapshot.tsv\n";
+    ready << "proof.dispatch_events.frame_events=3\n";
+    ready << "proof.dispatch_events.unit_discover_events=2\n";
+    ready << "proof.dispatch_events.unit_update_events=4\n";
+    ready << "proof.dispatch_events.unique_players=2\n";
+    ready << "proof.dispatch_events.snapshot=events.snapshot.tsv\n";
+    ready << "proof.replay_analysis.source=active-match-live-metadata\n";
+    ready << "proof.replay_analysis.current_process_replay=false\n";
+    ready << "proof.replay_analysis.active_match_metadata=true\n";
+    ready << "proof.replay_analysis.map_name=UnitTest\n";
+    ready << "proof.replay_analysis.first_frame=100\n";
+    ready << "proof.replay_analysis.last_frame=140\n";
+    ready << "proof.replay_analysis.player_count=2\n";
+    ready << "proof.replay_analysis.snapshot=replay.snapshot.tsv\n";
+    ready << "proof.multiplayer_sync.source=live-snet-turn-hooks\n";
+    ready << "proof.multiplayer_sync.send_turn_address=0x1400\n";
+    ready << "proof.multiplayer_sync.receive_message_address=0x1500\n";
+    ready << "proof.multiplayer_sync.snapshot=multiplayer_sync.snapshot.tsv\n";
+    ready << "proof.battle_net_policy.status=runtime-process-visible\n";
+    ready << "proof.battle_net_policy.game_process_count=1\n";
+    ready << "proof.battle_net_policy.blocker_count=0\n";
+    ready << "proof.load_ai_modules.loader=dlopen\n";
+    ready << "proof.load_ai_modules.module_extension=.dylib\n";
+    ready << "proof.load_ai_modules.self_process_smoke=false\n";
+    ready << "proof.load_ai_modules.module_path=/tmp/starcraft-api-test-ai-module.dylib\n";
+    ready << "proof.load_ai_modules.snapshot=ai_module_load.snapshot.tsv\n";
+    ready << "proof.read_map_data.source=live-sc-r-map-tile-array\n";
+    ready << "proof.read_map_data.map_name_address=0x1600\n";
+    ready << "proof.read_map_data.map_tile_array_address=0x1700\n";
+    ready << "proof.read_map_data.tile_count=256\n";
+    ready << "proof.read_map_data.snapshot=map.snapshot.tsv\n";
+    ready << "proof.read_player_data.player_count=2\n";
+    ready << "proof.read_player_data.observed_units=4\n";
+    ready << "proof.read_player_data.player_info_projection=true\n";
+    ready << "proof.read_player_data.player_info_record_size=128\n";
+    ready << "proof.read_player_data.alliance_projection=true\n";
+    ready << "proof.read_player_data.projection_source=compat-player-projection-v1:unit-snapshot-derived\n";
+    ready << "proof.read_player_data.snapshot=players.snapshot.tsv\n";
+    ready << "proof.read_bullet_data.source=live-sc-r-bullet-table\n";
+    ready << "proof.read_bullet_data.address=0x1800\n";
+    ready << "proof.read_bullet_data.record_size=128\n";
+    ready << "proof.read_bullet_data.snapshot=bullets.snapshot.tsv\n";
+    ready << "proof.read_region_data.source=live-bwapi-region-graph\n";
+    ready << "proof.read_region_data.region_count=3\n";
+    ready << "proof.read_region_data.snapshot=regions.snapshot.tsv\n";
+  }
+
   void writeBootstrapReadyFile(
     const std::filesystem::path& bridgePath,
     int processId,
@@ -158,6 +246,7 @@ namespace
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
     writeResidentStateProofs(ready, processId, executable);
+    writeValidatedProductionProofMetadata(ready);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -175,6 +264,7 @@ namespace
     writeRuntimeIdentity(ready, processId, executable);
     writeRuntimeCommandQueueSink(ready);
     writeResidentStateProofs(ready, processId, executable);
+    writeValidatedProductionProofMetadata(ready);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
     {
       if (std::string(proof.id) != "multiplayer-sync")
@@ -200,7 +290,21 @@ namespace
           << bytesInQueueAddress << '\n';
     ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|" << evidenceProof << ':'
           << turnBufferAddress << '\n';
+    ready << "proof.issue_commands.command=pauseGame\n";
+    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
+    ready << "proof.issue_commands.delivery_checked=true\n";
+    ready << "proof.issue_commands.behavior_checked=true\n";
+    ready << "proof.issue_commands.self_fixture=false\n";
+    ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
+    ready << "proof.issue_commands.vector_address=" << turnBufferAddress << '\n';
+    ready << "proof.issue_commands.storage_kind=live-sc-r-direct-turn-buffer-v1\n";
+    ready << "proof.issue_commands.bytes_in_queue_address=" << bytesInQueueAddress << '\n';
+    ready << "proof.issue_commands.frame_counter_address=0x1200\n";
+    ready << "proof.issue_commands.encoded_bytes=10\n";
+    ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
+    ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
     writeResidentStateProofs(ready, processId, executable);
+    writeValidatedProductionProofMetadata(ready);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -218,6 +322,7 @@ namespace
     writeRuntimeIdentity(ready, processId + 100000, executable);
     writeRuntimeCommandQueueSink(ready);
     writeResidentStateProofs(ready, processId + 100000, executable);
+    writeValidatedProductionProofMetadata(ready);
     for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
       ready << proof.readyFileLine << '\n';
   }
@@ -316,6 +421,7 @@ int main(int argc, char** argv)
     ready << "version=test-build\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    writeResidentStateProofs(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
     ready << "proof.read_units=passed\n";
     ready << "contract.structure.BW::CUnit=336|proof.read_units=passed:cunit-layout\n";
     ready << "contract.field.BW::CUnit.position=40|4|proof.read_units=passed:cunit-position\n";
@@ -479,10 +585,8 @@ int main(int argc, char** argv)
   assert(!staleProcessPreflight.processIdentified);
   assert(staleProcessPreflight.targetLocated);
   assert(!staleProcessPreflight.executorAvailable);
-  assert(staleProcessPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
-  assert(staleProcessPreflight.missingBehaviorProofs.size() == 2);
-  assert(staleProcessPreflight.missingBehaviorProofs[0] == "proof.read_game_state=passed");
-  assert(staleProcessPreflight.missingBehaviorProofs[1] == "proof.active_match_state=passed");
+  assert(staleProcessPreflight.executorBridgeMode.empty());
+  assert(staleProcessPreflight.missingBehaviorProofs.empty());
   assert(!staleProcessPreflight.errors.empty());
 
   writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);

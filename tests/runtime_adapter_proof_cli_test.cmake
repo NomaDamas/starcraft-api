@@ -510,7 +510,7 @@ if(NOT units_result EQUAL 0)
 endif()
 string(REPLACE "\\" "/" normalized_units_output "${units_output}")
 foreach(needle
-    "read_units.candidate_address.count=1"
+    "read_units.candidate_address.count=2"
     "read_units.unit_array=true"
     "read_units.record_size=336"
     "read_units.layout=bwapi-classic-cunit"

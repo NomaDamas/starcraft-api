@@ -12877,8 +12877,8 @@ namespace
 
   struct SelfUnitFixture
   {
-    std::vector<std::array<unsigned char, 336>> records;
-    std::vector<std::array<unsigned char, 64>> sprites;
+    alignas(8) std::array<std::array<unsigned char, 336>, 16> records;
+    alignas(8) std::array<std::array<unsigned char, 64>, 16> sprites;
   };
 
   struct SelfUnitNodeFixture
@@ -12933,11 +12933,8 @@ namespace
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
   }
 
-  SelfUnitFixture makeSelfUnitFixture()
+  void initializeSelfUnitFixture(SelfUnitFixture& fixture)
   {
-    SelfUnitFixture fixture;
-    fixture.records.resize(16);
-    fixture.sprites.resize(fixture.records.size());
     for (std::size_t i = 0; i < fixture.records.size(); ++i)
     {
       auto& record = fixture.records[i];
@@ -12954,7 +12951,6 @@ namespace
       record[0x4d] = static_cast<unsigned char>(3 + i);
       writeU16(record, 0x64, static_cast<std::uint16_t>(i % 228));
     }
-    return fixture;
   }
 
   void initializeSelfUnitNodeFixture(SelfUnitNodeFixture& fixture)
@@ -13891,10 +13887,13 @@ int main(int argc, char** argv)
   std::string remasteredUnitNodeSnapshotFailure;
   if (self && selfUnitFixture)
   {
-    unitFixture = makeSelfUnitFixture();
-    if (unitCandidateAddresses.empty())
-      unitCandidateAddresses.push_back(
-        reinterpret_cast<std::uintptr_t>(unitFixture.records.front().data()));
+    initializeSelfUnitFixture(unitFixture);
+    const std::uintptr_t fixtureAddress =
+      reinterpret_cast<std::uintptr_t>(unitFixture.records.front().data());
+    unitCandidateAddresses.erase(
+      std::remove(unitCandidateAddresses.begin(), unitCandidateAddresses.end(), fixtureAddress),
+      unitCandidateAddresses.end());
+    unitCandidateAddresses.insert(unitCandidateAddresses.begin(), fixtureAddress);
   }
   if (self && selfUnitNodeFixture)
   {
@@ -16023,6 +16022,15 @@ int main(int argc, char** argv)
       ready << "command.sink=adapter-local-state-v1\n";
     }
     ready << "proof.issue_commands.command=" << issueCommandsProof.commandName << '\n';
+    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
+    ready << "proof.issue_commands.delivery_checked="
+          << (issueCommandsProof.deliveryChecked ? "true" : "false") << '\n';
+    ready << "proof.issue_commands.behavior_checked="
+          << (issueCommandsProof.behaviorChecked ? "true" : "false") << '\n';
+    ready << "proof.issue_commands.self_fixture="
+          << (issueCommandsProof.selfFixture ? "true" : "false") << '\n';
+    ready << "proof.issue_commands.pause_frame_counter_matched="
+          << (issueCommandsProof.pauseFrameCounterMatched ? "true" : "false") << '\n';
     ready << "proof.issue_commands.vector_address="
           << hexAddress(issueCommandsProof.vectorAddress) << '\n';
     ready << "proof.issue_commands.storage_kind="

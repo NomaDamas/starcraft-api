@@ -50,6 +50,15 @@ namespace
     if (!value.empty())
       std::cout << "export " << name << "='" << value << "'\n";
   }
+
+  bool setEnvironmentVariable(const char* name, const std::string& value)
+  {
+#if defined(_WIN32)
+    return _putenv_s(name, value.c_str()) == 0;
+#else
+    return setenv(name, value.c_str(), 1) == 0;
+#endif
+  }
 }
 
 int main(int argc, char** argv)
@@ -224,12 +233,24 @@ int main(int argc, char** argv)
 
     if (bridgePath.empty())
       bridgePath = (std::filesystem::temp_directory_path() / "starcraft-api-live-bridge").string();
-    setenv("STARCRAFT_API_RESIDENT_ENABLE", "1", 1);
-    setenv("STARCRAFT_API_EXECUTOR_BRIDGE_DIR", bridgePath.c_str(), 1);
+    if (!setEnvironmentVariable("STARCRAFT_API_RESIDENT_ENABLE", "1")
+        || !setEnvironmentVariable("STARCRAFT_API_EXECUTOR_BRIDGE_DIR", bridgePath))
+    {
+      std::cerr << "failed to set resident adapter environment\n";
+      return 1;
+    }
 #if defined(__APPLE__)
-    setenv("DYLD_INSERT_LIBRARIES", residentAdapterPath.c_str(), 1);
+    if (!setEnvironmentVariable("DYLD_INSERT_LIBRARIES", residentAdapterPath))
+    {
+      std::cerr << "failed to set DYLD_INSERT_LIBRARIES\n";
+      return 1;
+    }
 #elif defined(__linux__)
-    setenv("LD_PRELOAD", residentAdapterPath.c_str(), 1);
+    if (!setEnvironmentVariable("LD_PRELOAD", residentAdapterPath))
+    {
+      std::cerr << "failed to set LD_PRELOAD\n";
+      return 1;
+    }
 #endif
   }
 

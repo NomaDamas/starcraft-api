@@ -246,8 +246,12 @@ sources. A resident ready file may promote individual entries only through
 proof-backed live rows:
 
 ```text
-command_surface.live_unit_command.0=Attack_Move|live-proven|proof.issue_commands=passed:Attack_Move
-command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands=passed:pauseGame
+proof.issue_commands.command.Attack_Move=passed
+proof.issue_commands.command.Attack_Move.snapshot=issue_commands.Attack_Move.snapshot.tsv
+command_surface.live_unit_command.0=Attack_Move|live-proven|proof.issue_commands.command.Attack_Move=passed
+proof.issue_commands.command.pauseGame=passed
+proof.issue_commands.command.pauseGame.snapshot=issue_commands.pauseGame.snapshot.tsv
+command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed
 ```
 
 Those rows are accepted only when the referenced proof line is already validated
@@ -257,6 +261,14 @@ promoted. Aggregate `proof.issue_commands=passed` is not sufficient by itself
 to promote arbitrary command names. Hand-written manifest `live-proven` entries
 and ready rows that reference missing, mock, stale, fixture, or aggregate-only
 proof remain non-production evidence and keep the command-evidence gap open.
+The command-specific snapshot must use `# proof=issue_commands.command`,
+`# source_identity=resident-adapter`, the exact `# command=<name>` and
+`# command_kind=<unit-command|game-action>`, resident process id and heartbeat
+matching the ready file, `# active_match_correlated=true`, `self_fixture=false`,
+`delivery_checked=true`, `behavior_checked=true`, `behavior_observed=true`, and
+`live_behavior_witness=starcraft-runtime-adapter-proof-command-behavior-v1`.
+Unit-command snapshots must also identify the live BWAPI unit id whose behavior
+was observed.
 
 The required behavior proof lines are:
 

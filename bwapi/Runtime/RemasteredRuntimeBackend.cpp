@@ -5,14 +5,18 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeManifest.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
+#include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace BWAPI::Runtime
 {
@@ -101,16 +105,544 @@ namespace BWAPI::Runtime
       return evidence;
     }
 
-    bool commandEvidenceProofIsProven(
-      const RuntimeExecutorPreflightResult& preflight,
-      const std::string& detail)
+    bool fileContainsLine(const std::filesystem::path& path, const std::string& expected)
     {
-      (void)preflight;
-      (void)detail;
-      // Aggregate proof lines such as proof.issue_commands=passed are not
-      // command-specific evidence. Keep live rows fail-closed until the
-      // resident adapter emits and validates per-command behavior snapshots.
+      std::ifstream input(path);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line == expected)
+          return true;
+      }
       return false;
+    }
+
+    std::string readReadyValue(
+      const std::filesystem::path& readyPath,
+      const std::string& key)
+    {
+      std::ifstream input(readyPath);
+      const std::string prefix = key + '=';
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (line.rfind(prefix, 0) == 0)
+          return line.substr(prefix.size());
+      }
+      return {};
+    }
+
+    bool parseUnsignedString(const std::string& text, std::uint64_t& value)
+    {
+      if (text.empty())
+        return false;
+      try
+      {
+        std::size_t consumed = 0;
+        const unsigned long long parsed = std::stoull(text, &consumed, 0);
+        if (consumed != text.size())
+          return false;
+        value = static_cast<std::uint64_t>(parsed);
+        return static_cast<unsigned long long>(value) == parsed;
+      }
+      catch (...)
+      {
+        return false;
+      }
+    }
+
+    bool parseUnsignedReadyValue(
+      const std::filesystem::path& readyPath,
+      const std::string& key,
+      std::uint64_t& value)
+    {
+      return parseUnsignedString(readReadyValue(readyPath, key), value);
+    }
+
+    bool pathIsWithinDirectory(
+      const std::filesystem::path& directory,
+      const std::filesystem::path& path)
+    {
+      auto directoryIt = directory.begin();
+      auto pathIt = path.begin();
+      for (; directoryIt != directory.end(); ++directoryIt, ++pathIt)
+      {
+        if (pathIt == path.end() || *directoryIt != *pathIt)
+          return false;
+      }
+      return true;
+    }
+
+    bool readySnapshotPath(
+      const std::filesystem::path& readyPath,
+      const std::string& key,
+      std::filesystem::path& snapshot)
+    {
+      const std::string value = readReadyValue(readyPath, key);
+      if (value.empty())
+        return false;
+
+      const std::filesystem::path requested(value);
+      if (requested.empty() || requested.is_absolute())
+        return false;
+
+      snapshot = (readyPath.parent_path() / requested).lexically_normal();
+      std::error_code error;
+      if (!std::filesystem::is_regular_file(snapshot, error) || error)
+        return false;
+      const std::uintmax_t size = std::filesystem::file_size(snapshot, error);
+      if (error || size == 0)
+        return false;
+
+      const std::filesystem::path bridgeDirectory =
+        std::filesystem::canonical(readyPath.parent_path(), error);
+      if (error)
+        return false;
+      const std::filesystem::path canonicalSnapshot =
+        std::filesystem::canonical(snapshot, error);
+      if (error || !pathIsWithinDirectory(bridgeDirectory, canonicalSnapshot))
+        return false;
+
+      snapshot = canonicalSnapshot;
+      return true;
+    }
+
+    std::vector<std::string> splitTabs(const std::string& line)
+    {
+      std::vector<std::string> fields;
+      std::size_t start = 0;
+      while (start <= line.size())
+      {
+        const std::size_t tab = line.find('\t', start);
+        if (tab == std::string::npos)
+        {
+          fields.push_back(line.substr(start));
+          break;
+        }
+        fields.push_back(line.substr(start, tab - start));
+        start = tab + 1;
+      }
+      return fields;
+    }
+
+    struct SnapshotMetadata
+    {
+      std::unordered_map<std::string, std::string> values;
+      bool hasDuplicateKey = false;
+    };
+
+    bool parseSnapshotMetadataLine(
+      const std::string& line,
+      SnapshotMetadata& metadata)
+    {
+      if (line.empty() || line[0] != '#')
+        return false;
+
+      std::string body = line.substr(1);
+      while (!body.empty() && (body.front() == ' ' || body.front() == '\t'))
+        body.erase(body.begin());
+      if (body.empty())
+        return true;
+
+      std::size_t separator = body.find('=');
+      if (separator == std::string::npos)
+        separator = body.find('\t');
+      if (separator == std::string::npos || separator == 0)
+        return true;
+
+      std::string key = body.substr(0, separator);
+      std::string value = body.substr(separator + 1);
+      while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+        key.pop_back();
+      while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+        value.erase(value.begin());
+
+      if (!key.empty())
+      {
+        if (metadata.values.find(key) != metadata.values.end())
+          metadata.hasDuplicateKey = true;
+        metadata.values[key] = value;
+      }
+      return true;
+    }
+
+    SnapshotMetadata readSnapshotMetadata(const std::filesystem::path& snapshot)
+    {
+      SnapshotMetadata metadata;
+      std::ifstream input(snapshot);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        if (!parseSnapshotMetadataLine(line, metadata))
+          break;
+      }
+      return metadata;
+    }
+
+    std::string snapshotMetadataValue(
+      const SnapshotMetadata& metadata,
+      const std::string& key)
+    {
+      const auto it = metadata.values.find(key);
+      return it == metadata.values.end() ? std::string() : it->second;
+    }
+
+    bool parseUnsignedMetadataValue(
+      const SnapshotMetadata& metadata,
+      const std::string& key,
+      std::uint64_t& value)
+    {
+      return parseUnsignedString(snapshotMetadataValue(metadata, key), value);
+    }
+
+    struct SnapshotFieldValueTable
+    {
+      std::unordered_map<std::string, std::string> values;
+      bool headerValid = false;
+      bool hasDuplicateKey = false;
+      bool hasMalformedRow = false;
+      std::size_t rowCount = 0;
+    };
+
+    SnapshotFieldValueTable readSnapshotFieldValueTable(const std::filesystem::path& snapshot)
+    {
+      SnapshotFieldValueTable table;
+      std::ifstream input(snapshot);
+      std::string line;
+      bool headerSeen = false;
+      while (std::getline(input, line))
+      {
+        if (!headerSeen && (line.empty() || line[0] == '#'))
+          continue;
+        if (headerSeen && line.empty())
+          break;
+        if (headerSeen && line[0] == '#')
+          continue;
+
+        const std::vector<std::string> fields = splitTabs(line);
+        if (!headerSeen)
+        {
+          headerSeen = true;
+          table.headerValid = fields.size() == 2
+            && fields[0] == "field"
+            && fields[1] == "value";
+          if (!table.headerValid)
+            return table;
+          continue;
+        }
+
+        if (fields.size() != 2 || fields[0].empty())
+        {
+          table.hasMalformedRow = true;
+          continue;
+        }
+        if (table.values.find(fields[0]) != table.values.end())
+          table.hasDuplicateKey = true;
+        table.values[fields[0]] = fields[1];
+        ++table.rowCount;
+      }
+      return table;
+    }
+
+    std::string snapshotFieldValue(
+      const SnapshotFieldValueTable& table,
+      const std::string& key)
+    {
+      const auto it = table.values.find(key);
+      return it == table.values.end() ? std::string() : it->second;
+    }
+
+    bool snapshotFieldValueIsTrue(
+      const SnapshotFieldValueTable& table,
+      const std::string& key)
+    {
+      return snapshotFieldValue(table, key) == "true";
+    }
+
+    bool snapshotFieldValueIsFalse(
+      const SnapshotFieldValueTable& table,
+      const std::string& key)
+    {
+      return snapshotFieldValue(table, key) == "false";
+    }
+
+    bool snapshotFieldUnsignedValue(
+      const SnapshotFieldValueTable& table,
+      const std::string& key,
+      std::uint64_t& value)
+    {
+      return parseUnsignedString(snapshotFieldValue(table, key), value);
+    }
+
+    bool preflightHasValidatedProof(
+      const RuntimeExecutorPreflightResult& preflight,
+      const std::string& proofLine)
+    {
+      return std::find(
+        preflight.missingBehaviorProofs.begin(),
+        preflight.missingBehaviorProofs.end(),
+        proofLine) == preflight.missingBehaviorProofs.end();
+    }
+
+    bool preflightSupportsCommandSpecificEvidence(
+      const RuntimeExecutorPreflightResult& preflight,
+      const std::string& expectedKind)
+    {
+      if (preflight.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode
+          || !preflightHasValidatedProof(preflight, "proof.read_game_state=passed")
+          || !preflightHasValidatedProof(preflight, "proof.active_match_state=passed"))
+      {
+        return false;
+      }
+
+      return expectedKind != "unit-command"
+        || preflightHasValidatedProof(preflight, "proof.read_units=passed");
+    }
+
+    bool readyFileMatchesEnvironmentProcess(
+      const std::filesystem::path& readyPath,
+      const RuntimeEnvironment& environment)
+    {
+      std::uint64_t readyProcessId = 0;
+      if (!parseUnsignedReadyValue(readyPath, "process_id", readyProcessId)
+          || readyProcessId == 0)
+      {
+        return false;
+      }
+      if (environment.processId > 0
+          && readyProcessId != static_cast<std::uint64_t>(environment.processId))
+      {
+        return false;
+      }
+
+      const std::string readyExecutable = readReadyValue(readyPath, "executable");
+      return environment.executablePath.empty()
+        || readyExecutable.empty()
+        || readyExecutable == environment.executablePath;
+    }
+
+    bool readyFileHasValidatedActiveMatchContext(const std::filesystem::path& readyPath)
+    {
+      std::uint64_t readyProcessId = 0;
+      std::uint64_t activeMatchProcessId = 0;
+      std::uint64_t residentHeartbeat = 0;
+      std::uint64_t activeMatchHeartbeat = 0;
+      std::uint64_t activeUnitCount = 0;
+      return fileContainsLine(readyPath, "proof.active_match_state=passed")
+        && readReadyValue(readyPath, "resident.proof.active_match.source") == "resident"
+        && !readReadyValue(readyPath, "resident.proof.active_match.mode").empty()
+        && parseUnsignedReadyValue(readyPath, "process_id", readyProcessId)
+        && readyProcessId > 0
+        && parseUnsignedReadyValue(
+          readyPath,
+          "resident.proof.active_match.process_id",
+          activeMatchProcessId)
+        && activeMatchProcessId == readyProcessId
+        && parseUnsignedReadyValue(
+          readyPath,
+          "resident.adapter.heartbeat",
+          residentHeartbeat)
+        && residentHeartbeat > 0
+        && parseUnsignedReadyValue(
+          readyPath,
+          "resident.proof.active_match.heartbeat",
+          activeMatchHeartbeat)
+        && activeMatchHeartbeat == residentHeartbeat
+        && parseUnsignedReadyValue(
+          readyPath,
+          "resident.proof.active_match.unit_activity_count",
+          activeUnitCount)
+        && activeUnitCount > 0;
+    }
+
+    bool readyFileHasCommandSpecificEvidenceContext(
+      const std::filesystem::path& readyPath,
+      const std::string& expectedKind,
+      const RuntimeResidentStateProofValidationResult& residentStateProof)
+    {
+      if (readReadyValue(readyPath, "executor") != "starcraft-api-resident-adapter"
+          || readReadyValue(readyPath, "resident.adapter") != "active"
+          || readReadyValue(readyPath, "resident.adapter.abi") != RuntimeResidentAdapterAbi
+          || !fileContainsLine(readyPath, RuntimeExecutorBridgeActiveCommandReceiverLine)
+          || !fileContainsLine(readyPath, RuntimeExecutorBridgeRuntimeCommandQueueSinkLine)
+          || !fileContainsLine(readyPath, "proof.attach=passed")
+          || !fileContainsLine(readyPath, "proof.read_game_state=passed")
+          || !readyFileHasValidatedActiveMatchContext(readyPath))
+      {
+        return false;
+      }
+      if (!residentStateProof.readGameStateValid
+          || !residentStateProof.activeMatchValid
+          || residentStateProof.samples.empty())
+      {
+        return false;
+      }
+
+      return expectedKind != "unit-command"
+        || fileContainsLine(readyPath, "proof.read_units=passed");
+    }
+
+    std::string commandSpecificProofLine(const std::string& commandName)
+    {
+      return "proof.issue_commands.command." + commandName + "=passed";
+    }
+
+    std::string commandSpecificSnapshotKey(const std::string& commandName)
+    {
+      return "proof.issue_commands.command." + commandName + ".snapshot";
+    }
+
+    bool validatedCommandSpecificSnapshotPayload(
+      const std::filesystem::path& snapshot,
+      const std::string& commandName,
+      const std::string& expectedKind)
+    {
+      const SnapshotFieldValueTable fields = readSnapshotFieldValueTable(snapshot);
+      if (!fields.headerValid
+          || fields.hasDuplicateKey
+          || fields.hasMalformedRow
+          || fields.rowCount == 0)
+      {
+        return false;
+      }
+
+      std::uint64_t encodedBytes = 0;
+      std::uint64_t attemptCount = 0;
+      std::uint64_t appendedBytes = 0;
+      std::uint64_t behaviorSampleCount = 0;
+      std::uint64_t queueAddress = 0;
+      std::uint64_t bytesInQueueAddress = 0;
+      std::uint64_t frameCounterAddress = 0;
+      std::uint64_t unitId = 0;
+      return snapshotFieldValueIsTrue(fields, "passed")
+        && snapshotFieldValueIsTrue(fields, "delivery_checked")
+        && snapshotFieldValueIsTrue(fields, "behavior_checked")
+        && snapshotFieldValueIsTrue(fields, "receiver_active")
+        && snapshotFieldValueIsTrue(fields, "behavior_observed")
+        && snapshotFieldValueIsFalse(fields, "self_fixture")
+        && snapshotFieldValue(fields, "command") == commandName
+        && snapshotFieldValue(fields, "command_kind") == expectedKind
+        && snapshotFieldValue(fields, "live_behavior_witness")
+          == "starcraft-runtime-adapter-proof-command-behavior-v1"
+        && snapshotFieldValue(fields, "storage_kind") == "live-sc-r-command-queue-v1"
+        && snapshotFieldValue(fields, "issue_commands_required_adapter_abi")
+          == "starcraft-api-resident-adapter-v1"
+        && snapshotFieldValue(fields, "issue_commands_required_adapter_location")
+          == "in-process-target-runtime"
+        && snapshotFieldValue(fields, "issue_commands_required_adapter_thread_policy")
+          == "execute-on-target-runtime-thread"
+        && snapshotFieldValue(fields, "issue_commands_required_adapter_behavior")
+          == "encoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior"
+        && snapshotFieldValue(fields, "issue_commands_required_adapter_promotion_rule")
+          == "promote-only-this-command-name-from-this-snapshot"
+        && snapshotFieldUnsignedValue(fields, "encoded_bytes", encodedBytes)
+        && encodedBytes > 0
+        && snapshotFieldUnsignedValue(fields, "attempt_count", attemptCount)
+        && attemptCount > 0
+        && snapshotFieldUnsignedValue(fields, "appended_bytes", appendedBytes)
+        && appendedBytes > 0
+        && snapshotFieldUnsignedValue(fields, "behavior_sample_count", behaviorSampleCount)
+        && behaviorSampleCount > 0
+        && snapshotFieldUnsignedValue(fields, "vector_address", queueAddress)
+        && queueAddress > 0
+        && snapshotFieldUnsignedValue(fields, "bytes_in_queue_address", bytesInQueueAddress)
+        && bytesInQueueAddress > 0
+        && snapshotFieldUnsignedValue(fields, "frame_counter_address", frameCounterAddress)
+        && frameCounterAddress > 0
+        && (expectedKind != "unit-command"
+            || (snapshotFieldUnsignedValue(fields, "unit_id", unitId) && unitId > 0));
+    }
+
+    bool validatedCommandSpecificSnapshotMetadata(
+      const std::filesystem::path& snapshot,
+      const std::filesystem::path& readyPath,
+      const std::string& commandName,
+      const std::string& expectedKind,
+      const RuntimeResidentStateProofValidationResult& residentStateProof)
+    {
+      const SnapshotMetadata metadata = readSnapshotMetadata(snapshot);
+      if (metadata.hasDuplicateKey)
+        return false;
+      if (snapshotMetadataValue(metadata, "schema") != "starcraft-api.resident-snapshot.v1")
+        return false;
+      if (snapshotMetadataValue(metadata, "proof") != "issue_commands.command")
+        return false;
+      if (snapshotMetadataValue(metadata, "source_identity") != "resident-adapter")
+        return false;
+      if (snapshotMetadataValue(metadata, "command") != commandName)
+        return false;
+      if (snapshotMetadataValue(metadata, "command_kind") != expectedKind)
+        return false;
+      if (snapshotMetadataValue(metadata, "active_match_correlated") != "true")
+        return false;
+
+      std::uint64_t snapshotProcessId = 0;
+      std::uint64_t residentProcessId = 0;
+      if (!parseUnsignedMetadataValue(metadata, "process_id", snapshotProcessId)
+          || !parseUnsignedReadyValue(readyPath, "resident.adapter.process_id", residentProcessId)
+          || snapshotProcessId == 0
+          || snapshotProcessId != residentProcessId)
+      {
+        return false;
+      }
+
+      std::uint64_t snapshotHeartbeat = 0;
+      std::uint64_t residentHeartbeat = 0;
+      if (!parseUnsignedMetadataValue(metadata, "heartbeat", snapshotHeartbeat)
+          || !parseUnsignedReadyValue(readyPath, "resident.adapter.heartbeat", residentHeartbeat)
+          || snapshotHeartbeat == 0
+          || snapshotHeartbeat != residentHeartbeat)
+      {
+        return false;
+      }
+
+      std::uint64_t frameId = 0;
+      if (!parseUnsignedMetadataValue(metadata, "frame_id", frameId) || frameId == 0)
+        return false;
+      if (residentStateProof.samples.empty())
+        return false;
+      const std::uint64_t firstFrame = residentStateProof.samples.front().frame;
+      const std::uint64_t lastFrame = residentStateProof.samples.back().frame;
+      return frameId >= firstFrame && frameId <= lastFrame;
+    }
+
+    bool commandEvidenceProofIsProven(
+      const std::filesystem::path& readyPath,
+      const RuntimeExecutorPreflightResult& preflight,
+      const RuntimeEnvironment& environment,
+      const RuntimeResidentStateProofValidationResult& residentStateProof,
+      const std::string& detail,
+      const std::string& commandName,
+      const std::string& expectedKind)
+    {
+      // Aggregate proof lines such as proof.issue_commands=passed are not
+      // command-specific evidence. A live row may promote only the exact command
+      // whose command-specific behavior snapshot has been validated.
+      if (!preflightSupportsCommandSpecificEvidence(preflight, expectedKind))
+        return false;
+      if (!readyFileMatchesEnvironmentProcess(readyPath, environment))
+        return false;
+      if (!readyFileHasCommandSpecificEvidenceContext(readyPath, expectedKind, residentStateProof))
+        return false;
+
+      const std::string proofLine = commandSpecificProofLine(commandName);
+      if (detail != proofLine || !fileContainsLine(readyPath, proofLine))
+        return false;
+
+      std::filesystem::path snapshot;
+      if (!readySnapshotPath(readyPath, commandSpecificSnapshotKey(commandName), snapshot))
+        return false;
+
+      if (!validatedCommandSpecificSnapshotMetadata(
+            snapshot,
+            readyPath,
+            commandName,
+            expectedKind,
+            residentStateProof))
+        return false;
+      if (!validatedCommandSpecificSnapshotPayload(snapshot, commandName, expectedKind))
+        return false;
+      return true;
     }
 
     bool allAsciiDigits(const std::string& value)
@@ -161,7 +693,10 @@ namespace BWAPI::Runtime
       const std::filesystem::path& readyPath,
       const std::string& keyPrefix,
       const std::vector<std::string>& expectedNames,
-      const RuntimeExecutorPreflightResult& preflight)
+      const std::string& expectedKind,
+      const RuntimeEnvironment& environment,
+      const RuntimeExecutorPreflightResult& preflight,
+      const RuntimeResidentStateProofValidationResult& residentStateProof)
     {
       std::vector<RuntimeCommandEvidence> result;
       std::unordered_set<std::string> seenNames;
@@ -183,7 +718,14 @@ namespace BWAPI::Runtime
         if (!parseBridgeLiveCommandEvidenceValue(line.substr(separator + 1), evidence)
             || evidence.status != RuntimeCommandEvidenceStatus::LiveProven
             || !expectedCommandEvidenceName(expectedNames, evidence.name)
-            || !commandEvidenceProofIsProven(preflight, evidence.detail)
+            || !commandEvidenceProofIsProven(
+              readyPath,
+              preflight,
+              environment,
+              residentStateProof,
+              evidence.detail,
+              evidence.name,
+              expectedKind)
             || !seenNames.insert(evidence.name).second)
         {
           return {};
@@ -227,6 +769,10 @@ namespace BWAPI::Runtime
         std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
       if (!std::filesystem::is_regular_file(readyPath, error) || error)
         return;
+      const RuntimeResidentBridgeValidationResult resident =
+        validateRuntimeResidentBridgeReadyFile(environment, readyPath);
+      const RuntimeResidentStateProofValidationResult residentStateProof =
+        validateRuntimeResidentStateProofs(environment, readyPath, resident);
 
       mergeLiveCommandEvidence(
         result.implementedUnitCommandEvidence,
@@ -234,14 +780,20 @@ namespace BWAPI::Runtime
           readyPath,
           "command_surface.live_unit_command.",
           result.implementedUnitCommands,
-          preflight));
+          "unit-command",
+          environment,
+          preflight,
+          residentStateProof));
       mergeLiveCommandEvidence(
         result.implementedGameActionEvidence,
         readProofBackedLiveCommandEvidence(
           readyPath,
           "command_surface.live_game_action.",
           result.implementedGameActions,
-          preflight));
+          "game-action",
+          environment,
+          preflight,
+          residentStateProof));
     }
   }
 

@@ -7,9 +7,11 @@
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace BWAPI::Runtime
@@ -98,6 +100,149 @@ namespace BWAPI::Runtime
       }
       return evidence;
     }
+
+    bool commandEvidenceProofIsProven(
+      const RuntimeExecutorPreflightResult& preflight,
+      const std::string& detail)
+    {
+      (void)preflight;
+      (void)detail;
+      // Aggregate proof lines such as proof.issue_commands=passed are not
+      // command-specific evidence. Keep live rows fail-closed until the
+      // resident adapter emits and validates per-command behavior snapshots.
+      return false;
+    }
+
+    bool allAsciiDigits(const std::string& value)
+    {
+      return !value.empty()
+        && std::all_of(
+          value.begin(),
+          value.end(),
+          [](unsigned char c) { return std::isdigit(c) != 0; });
+    }
+
+    bool parseBridgeLiveCommandEvidenceValue(
+      const std::string& value,
+      RuntimeCommandEvidence& evidence)
+    {
+      const std::size_t first = value.find('|');
+      const std::size_t second = first == std::string::npos
+        ? std::string::npos
+        : value.find('|', first + 1);
+      if (first == std::string::npos
+          || second == std::string::npos
+          || value.find('|', second + 1) != std::string::npos)
+      {
+        return false;
+      }
+
+      evidence.name = value.substr(0, first);
+      evidence.detail = value.substr(second + 1);
+      RuntimeCommandEvidenceStatus status = RuntimeCommandEvidenceStatus::Unknown;
+      if (evidence.name.empty()
+          || evidence.detail.empty()
+          || !parseRuntimeCommandEvidenceStatus(value.substr(first + 1, second - first - 1), status))
+      {
+        return false;
+      }
+      evidence.status = status;
+      return true;
+    }
+
+    bool expectedCommandEvidenceName(
+      const std::vector<std::string>& expectedNames,
+      const std::string& name)
+    {
+      return std::find(expectedNames.begin(), expectedNames.end(), name) != expectedNames.end();
+    }
+
+    std::vector<RuntimeCommandEvidence> readProofBackedLiveCommandEvidence(
+      const std::filesystem::path& readyPath,
+      const std::string& keyPrefix,
+      const std::vector<std::string>& expectedNames,
+      const RuntimeExecutorPreflightResult& preflight)
+    {
+      std::vector<RuntimeCommandEvidence> result;
+      std::unordered_set<std::string> seenNames;
+      std::ifstream input(readyPath);
+      std::string line;
+      while (std::getline(input, line))
+      {
+        const std::size_t separator = line.find('=');
+        if (separator == std::string::npos)
+          continue;
+
+        const std::string key = line.substr(0, separator);
+        if (key.rfind(keyPrefix, 0) != 0)
+          continue;
+        if (!allAsciiDigits(key.substr(keyPrefix.size())))
+          return {};
+
+        RuntimeCommandEvidence evidence;
+        if (!parseBridgeLiveCommandEvidenceValue(line.substr(separator + 1), evidence)
+            || evidence.status != RuntimeCommandEvidenceStatus::LiveProven
+            || !expectedCommandEvidenceName(expectedNames, evidence.name)
+            || !commandEvidenceProofIsProven(preflight, evidence.detail)
+            || !seenNames.insert(evidence.name).second)
+        {
+          return {};
+        }
+        result.push_back(std::move(evidence));
+      }
+      return result;
+    }
+
+    void mergeLiveCommandEvidence(
+      std::vector<RuntimeCommandEvidence>& target,
+      const std::vector<RuntimeCommandEvidence>& liveEvidence)
+    {
+      for (const RuntimeCommandEvidence& live : liveEvidence)
+      {
+        auto it = std::find_if(
+          target.begin(),
+          target.end(),
+          [&](const RuntimeCommandEvidence& existing)
+          {
+            return existing.name == live.name;
+          });
+        if (it != target.end())
+          *it = live;
+      }
+    }
+
+    void applyBridgeLiveCommandEvidence(
+      RuntimeProbeResult& result,
+      const RuntimeEnvironment& environment,
+      const RuntimeExecutorPreflightResult& preflight)
+    {
+      if (environment.executorBridgePath.empty()
+          || preflight.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode)
+      {
+        return;
+      }
+
+      std::error_code error;
+      const std::filesystem::path readyPath =
+        std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
+      if (!std::filesystem::is_regular_file(readyPath, error) || error)
+        return;
+
+      mergeLiveCommandEvidence(
+        result.implementedUnitCommandEvidence,
+        readProofBackedLiveCommandEvidence(
+          readyPath,
+          "command_surface.live_unit_command.",
+          result.implementedUnitCommands,
+          preflight));
+      mergeLiveCommandEvidence(
+        result.implementedGameActionEvidence,
+        readProofBackedLiveCommandEvidence(
+          readyPath,
+          "command_surface.live_game_action.",
+          result.implementedGameActions,
+          preflight));
+    }
   }
 
   RemasteredRuntimeBackend::RemasteredRuntimeBackend(RuntimeEnvironment environment)
@@ -150,6 +295,7 @@ namespace BWAPI::Runtime
 
     RuntimeExecutorPreflightResult preflight = preflightRuntimeExecutor(environment_, contract);
     addValidatedBridgeCapabilities(result, preflight);
+    applyBridgeLiveCommandEvidence(result, environment_, preflight);
 
     result.supported = true;
     result.supported = canClaimProductionSupport(result, contract)

@@ -210,6 +210,7 @@ namespace
                << "passed\ttrue\n"
                << "delivery_checked\ttrue\n"
                << "behavior_checked\ttrue\n"
+               << "live_behavior_witness\tstarcraft-runtime-adapter-proof-live-write-v1\n"
                << "self_fixture\tfalse\n"
                << "receiver_active\ttrue\n"
                << "stale_proof_bytes_cleared\ttrue\n"
@@ -421,7 +422,7 @@ int main()
     ready << "product=starcraft-remastered\n";
     ready << "version=unknown\n";
     ready << "process_id=" << currentProcessId() << '\n';
-    ready << "executor=unit-test\n";
+    ready << "executor=starcraft-api-resident-adapter\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     ready << "proof.attach=passed\n";
     ready << RuntimeExecutorBridgeCommandSurfaceLine << '\n';
@@ -446,6 +447,49 @@ int main()
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
+    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:bytes-in-command-queue\n";
+    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:turn-buffer\n";
+    ready << "proof.issue_commands.command=pauseGame/resumeGame\n";
+    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
+    ready << "proof.issue_commands.delivery_checked=true\n";
+    ready << "proof.issue_commands.behavior_checked=true\n";
+    ready << "proof.issue_commands.live_behavior_witness=starcraft-runtime-adapter-proof-live-write-v1\n";
+    ready << "proof.issue_commands.self_fixture=false\n";
+    ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
+    ready << "proof.issue_commands.vector_address=0x1000\n";
+    ready << "proof.issue_commands.storage_kind=live-sc-r-command-queue-v1\n";
+    ready << "proof.issue_commands.bytes_in_queue_address=0x1100\n";
+    ready << "proof.issue_commands.frame_counter_address=0x1200\n";
+    ready << "proof.issue_commands.encoded_bytes=10 / 11\n";
+    ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
+    ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
+    ready << "command_surface.live_unit_command.0=Attack_Move|live-proven|proof.issue_commands=passed:Attack_Move\n";
+    ready << "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands=passed:pauseGame\n";
+    RuntimeEnvironment fakeLiveEvidenceEnvironment = attachableRemastered;
+    fakeLiveEvidenceEnvironment.executorBridgePath = bridgeDir.string();
+    writeResidentStateProofs(ready, fakeLiveEvidenceEnvironment);
+    ready << "proof.issue_commands=passed\n";
+  }
+
+  RuntimeProbeResult rejectedFakeLiveEvidenceProbe = proofBackedRemasteredBackend->probe();
+  assert(!hasCapability(rejectedFakeLiveEvidenceProbe, Capability::IssueCommands));
+  assert(commandEvidenceStatusFor(
+    rejectedFakeLiveEvidenceProbe.implementedUnitCommandEvidence,
+    "Attack_Move") == RuntimeCommandEvidenceStatus::MockTested);
+  assert(commandEvidenceStatusFor(
+    rejectedFakeLiveEvidenceProbe.implementedGameActionEvidence,
+    "pauseGame") == RuntimeCommandEvidenceStatus::MockTested);
+
+  {
+    std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=unknown\n";
+    ready << "process_id=" << currentProcessId() << '\n';
+    ready << "executor=starcraft-api-resident-adapter\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
+    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
     ready << "proof.attach.source=resident-adapter\n";
     RuntimeEnvironment issueProofEnvironment = attachableRemastered;
     issueProofEnvironment.executorBridgePath = bridgeDir.string();
@@ -456,6 +500,7 @@ int main()
     ready << "proof.issue_commands.source=live-sc-r-command-path\n";
     ready << "proof.issue_commands.delivery_checked=true\n";
     ready << "proof.issue_commands.behavior_checked=true\n";
+    ready << "proof.issue_commands.live_behavior_witness=starcraft-runtime-adapter-proof-live-write-v1\n";
     ready << "proof.issue_commands.self_fixture=false\n";
     ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
     ready << "proof.issue_commands.vector_address=0x1000\n";
@@ -475,6 +520,9 @@ int main()
   assert(issueCommandOnlyProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(issueCommandOnlyProbe.implementedUnitCommands == remasteredSurface.unitCommands);
   assert(issueCommandOnlyProbe.implementedGameActions == remasteredSurface.gameActions);
+  assert(commandEvidenceStatusFor(
+    issueCommandOnlyProbe.implementedUnitCommandEvidence,
+    "Attack_Move") == RuntimeCommandEvidenceStatus::MockTested);
 
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
@@ -482,7 +530,7 @@ int main()
     ready << "product=starcraft-remastered\n";
     ready << "version=unknown\n";
     ready << "process_id=" << currentProcessId() << '\n';
-    ready << "executor=unit-test\n";
+    ready << "executor=starcraft-api-resident-adapter\n";
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
     ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
@@ -492,6 +540,7 @@ int main()
     ready << "proof.issue_commands.source=live-sc-r-command-path\n";
     ready << "proof.issue_commands.delivery_checked=true\n";
     ready << "proof.issue_commands.behavior_checked=true\n";
+    ready << "proof.issue_commands.live_behavior_witness=starcraft-runtime-adapter-proof-live-write-v1\n";
     ready << "proof.issue_commands.self_fixture=false\n";
     ready << "proof.issue_commands.pause_frame_counter_matched=true\n";
     ready << "proof.issue_commands.vector_address=0x1000\n";
@@ -501,6 +550,8 @@ int main()
     ready << "proof.issue_commands.encoded_bytes=10 / 11\n";
     ready << "proof.issue_commands.stale_proof_bytes_cleared=true\n";
     ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
+    ready << "command_surface.live_unit_command.0=Attack_Move|live-proven|proof.issue_commands=passed:Attack_Move\n";
+    ready << "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands=passed:pauseGame\n";
     ready << "proof.attach.source=resident-adapter\n";
     RuntimeEnvironment fullProofEnvironment = attachableRemastered;
     fullProofEnvironment.executorBridgePath = bridgeDir.string();
@@ -571,6 +622,18 @@ int main()
   assert(commandProofRemasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(commandProofRemasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
   assert(commandProofRemasteredProbe.implementedGameActions == remasteredSurface.gameActions);
+  assert(commandEvidenceStatusFor(
+    commandProofRemasteredProbe.implementedUnitCommandEvidence,
+    "Attack_Move") == RuntimeCommandEvidenceStatus::MockTested);
+  assert(commandEvidenceStatusFor(
+    commandProofRemasteredProbe.implementedUnitCommandEvidence,
+    "Attack_Unit") == RuntimeCommandEvidenceStatus::MockTested);
+  assert(commandEvidenceStatusFor(
+    commandProofRemasteredProbe.implementedGameActionEvidence,
+    "pauseGame") == RuntimeCommandEvidenceStatus::MockTested);
+  assert(commandEvidenceStatusFor(
+    commandProofRemasteredProbe.implementedGameActionEvidence,
+    "drawBox") == RuntimeCommandEvidenceStatus::AdapterLocal);
   std::filesystem::remove_all(bridgeDir);
 
   RuntimeEnvironment legacy = detected;

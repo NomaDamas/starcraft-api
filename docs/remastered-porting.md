@@ -239,6 +239,25 @@ contract.binding.BW::BWDATA::TurnBuffer=command-queue|<non-fixture-evidence-id>
 
 Without these lines, `proof.issue_commands=passed` is treated as missing by preflight. This prevents a diagnostic bridge log from being mistaken for a working in-game Move/Attack/Build command path.
 
+Per-command production evidence is separate from the static command-surface listing.
+`command_surface.unit_command.<n>` and `command_surface.game_action.<n>` describe
+the current surface/evidence status, but they are not trusted as live proof
+sources. A resident ready file may promote individual entries only through
+proof-backed live rows:
+
+```text
+command_surface.live_unit_command.0=Attack_Move|live-proven|proof.issue_commands=passed:Attack_Move
+command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands=passed:pauseGame
+```
+
+Those rows are accepted only when the referenced proof line is already validated
+for the selected runtime process, resident adapter ABI, heartbeat, active-match
+state, snapshot metadata, and the specific command/action behavior being
+promoted. Aggregate `proof.issue_commands=passed` is not sufficient by itself
+to promote arbitrary command names. Hand-written manifest `live-proven` entries
+and ready rows that reference missing, mock, stale, fixture, or aggregate-only
+proof remain non-production evidence and keep the command-evidence gap open.
+
 The required behavior proof lines are:
 
 ```text

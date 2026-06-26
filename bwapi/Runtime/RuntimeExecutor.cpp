@@ -1691,6 +1691,8 @@ namespace BWAPI::Runtime
              "proof.multiplayer_sync.",
              "proof.battle_net_policy.",
              "proof.load_ai_modules.",
+             "command_surface.live_unit_command.",
+             "command_surface.live_game_action.",
              "resident.proof.",
              "resident.queue." })
       {

@@ -18,6 +18,8 @@ namespace BWAPI::Runtime
   inline constexpr const char* RuntimeExecutorBridgeRuntimeCommandQueueSinkLine = "command.sink=runtime-command-queue-v1";
   inline constexpr const char* RuntimeExecutorBridgeReadyFile = "ready";
   inline constexpr const char* RuntimeExecutorBridgeCommandFile = "commands.log";
+  inline constexpr const char* RuntimeExecutorBridgeIssueCommandProofPendingFile =
+    "issue_commands.command.pending.tsv";
 
   struct RuntimeExecutorBehaviorProof
   {

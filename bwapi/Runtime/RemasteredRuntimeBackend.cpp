@@ -513,6 +513,9 @@ namespace BWAPI::Runtime
       std::uint64_t queueAddress = 0;
       std::uint64_t bytesInQueueAddress = 0;
       std::uint64_t frameCounterAddress = 0;
+      std::uint64_t baselineDelta = 0;
+      std::uint64_t pausedDelta = 0;
+      std::uint64_t resumedDelta = 0;
       std::uint64_t unitId = 0;
       return snapshotFieldValueIsTrue(fields, "passed")
         && snapshotFieldValueIsTrue(fields, "delivery_checked")
@@ -549,6 +552,12 @@ namespace BWAPI::Runtime
         && bytesInQueueAddress > 0
         && snapshotFieldUnsignedValue(fields, "frame_counter_address", frameCounterAddress)
         && frameCounterAddress > 0
+        && snapshotFieldUnsignedValue(fields, "baseline_delta", baselineDelta)
+        && baselineDelta >= 2
+        && snapshotFieldUnsignedValue(fields, "paused_delta", pausedDelta)
+        && pausedDelta == 0
+        && snapshotFieldUnsignedValue(fields, "resumed_delta", resumedDelta)
+        && resumedDelta >= 2
         && (expectedKind != "unit-command"
             || (snapshotFieldUnsignedValue(fields, "unit_id", unitId) && unitId > 0));
     }

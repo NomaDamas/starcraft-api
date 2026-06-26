@@ -3,12 +3,17 @@
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
 
+#include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -17,6 +22,101 @@ using namespace BWAPI::Runtime;
 
 namespace
 {
+  struct CompactUnitNodeFixture
+  {
+    std::uint64_t previous = 0;
+    std::uint64_t next = 0;
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    std::uint64_t sprite = 0;
+    std::uint64_t secondary = 0;
+  };
+
+  static_assert(sizeof(CompactUnitNodeFixture) == 0x28);
+
+  alignas(16) std::array<CompactUnitNodeFixture, 3> residentUnitNodeFixture = {};
+  alignas(16) std::array<std::array<unsigned char, 0xd0>, 3> residentSpriteFixture = {};
+  alignas(16) std::array<std::array<unsigned char, 0xe0>, 3> residentSecondaryFixture = {};
+  alignas(4) std::atomic<std::uint32_t> residentFrameCounterFixture{ 128 };
+
+  struct ResidentFrameCounterFixtureTicker
+  {
+    std::atomic<bool> running{ true };
+    std::thread thread;
+
+    ResidentFrameCounterFixtureTicker()
+      : thread([this]()
+        {
+          while (running.load(std::memory_order_relaxed))
+          {
+            residentFrameCounterFixture.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(42));
+          }
+        })
+    {
+    }
+
+    ~ResidentFrameCounterFixtureTicker()
+    {
+      running.store(false, std::memory_order_relaxed);
+      if (thread.joinable())
+        thread.join();
+    }
+  };
+
+  void require(bool condition, const std::string& message)
+  {
+    if (condition)
+      return;
+    std::cerr << message << '\n';
+    std::exit(1);
+  }
+
+  template <std::size_t Size>
+  void writeU16LE(std::array<unsigned char, Size>& bytes, std::size_t offset, std::uint16_t value)
+  {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  }
+
+  template <std::size_t Size>
+  void writeU32LE(std::array<unsigned char, Size>& bytes, std::size_t offset, std::uint32_t value)
+  {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+  }
+
+  void populateResidentUnitFixture()
+  {
+    for (std::size_t index = 0; index < residentUnitNodeFixture.size(); ++index)
+    {
+      residentSpriteFixture[index].fill(0);
+      residentSecondaryFixture[index].fill(0);
+
+      writeU32LE(residentSpriteFixture[index], 0x68, static_cast<std::uint32_t>(1 + index));
+      writeU32LE(residentSpriteFixture[index], 0x6c, static_cast<std::uint32_t>(index % 2));
+      writeU32LE(residentSpriteFixture[index], 0x80, static_cast<std::uint32_t>(4096 + index));
+
+      residentSecondaryFixture[index][0x14] = static_cast<unsigned char>(index % 2);
+      residentSecondaryFixture[index][0x1a] = 20;
+      residentSecondaryFixture[index][0x1b] = 40;
+      residentSecondaryFixture[index][0xc0] = static_cast<unsigned char>(index % 2);
+      writeU16LE(residentSecondaryFixture[index], 0x10, static_cast<std::uint16_t>(1 + index));
+      writeU16LE(residentSecondaryFixture[index], 0xd0, static_cast<std::uint16_t>(1 + index));
+    }
+
+    for (std::size_t index = 0; index < residentUnitNodeFixture.size(); ++index)
+    {
+      CompactUnitNodeFixture& node = residentUnitNodeFixture[index];
+      node.previous = reinterpret_cast<std::uint64_t>(
+        &residentUnitNodeFixture[(index + residentUnitNodeFixture.size() - 1) % residentUnitNodeFixture.size()]);
+      node.next = reinterpret_cast<std::uint64_t>(
+        &residentUnitNodeFixture[(index + 1) % residentUnitNodeFixture.size()]);
+      node.x = static_cast<std::int32_t>(64 + (index * 32));
+      node.y = static_cast<std::int32_t>(80 + (index * 32));
+      node.sprite = reinterpret_cast<std::uint64_t>(residentSpriteFixture[index].data());
+      node.secondary = reinterpret_cast<std::uint64_t>(residentSecondaryFixture[index].data());
+    }
+  }
+
   bool fileContainsLine(const std::filesystem::path& path, const std::string& expected)
   {
     std::ifstream input(path);
@@ -52,18 +152,174 @@ namespace
     }
     return false;
   }
+
+  std::string fileValue(const std::filesystem::path& path, const std::string& key)
+  {
+    const std::string prefix = key + '=';
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line))
+    {
+      if (line.rfind(prefix, 0) == 0)
+        return line.substr(prefix.size());
+    }
+    return {};
+  }
+
+  std::string snapshotMetadataValue(const std::filesystem::path& path, const std::string& key)
+  {
+    const std::string prefix = "# " + key + '=';
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line))
+    {
+      if (line.rfind(prefix, 0) == 0)
+        return line.substr(prefix.size());
+    }
+    return {};
+  }
+
+  bool parseUnsignedStrict(const std::string& value, std::uint64_t& parsed)
+  {
+    if (value.empty())
+      return false;
+    char* end = nullptr;
+    parsed = std::strtoull(value.c_str(), &end, 10);
+    return end != nullptr && *end == '\0';
+  }
+
+  std::uint64_t requireUnsignedValue(const std::string& value, const std::string& context)
+  {
+    std::uint64_t parsed = 0;
+    require(parseUnsignedStrict(value, parsed), "missing or invalid unsigned value for " + context + ": " + value);
+    return parsed;
+  }
+
+  constexpr int ResidentHeartbeatWaitAttempts = 180;
+
+  bool waitForLine(
+    const std::filesystem::path& path,
+    const std::string& expected,
+    int attempts = ResidentHeartbeatWaitAttempts)
+  {
+    for (int attempt = 0; attempt < attempts; ++attempt)
+    {
+      if (fileContainsLine(path, expected))
+        return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return fileContainsLine(path, expected);
+  }
+
+  bool waitForReadyUnsignedGreater(
+    const std::filesystem::path& path,
+    const std::string& key,
+    std::uint64_t previous,
+    int attempts = ResidentHeartbeatWaitAttempts)
+  {
+    for (int attempt = 0; attempt < attempts; ++attempt)
+    {
+      const std::string value = fileValue(path, key);
+      std::uint64_t parsed = 0;
+      if (parseUnsignedStrict(value, parsed) && parsed > previous)
+        return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    const std::string value = fileValue(path, key);
+    std::uint64_t parsed = 0;
+    return parseUnsignedStrict(value, parsed) && parsed > previous;
+  }
+
+  void writeCommandSpecificIssueSnapshot(
+    const std::filesystem::path& path,
+    const std::string& command,
+    std::uint64_t processId,
+    std::uint64_t heartbeat,
+    std::uint64_t frameId,
+    bool writeBehaviorDeltas = true,
+    std::uint64_t baselineDelta = 12,
+    std::uint64_t pausedDelta = 0,
+    std::uint64_t resumedDelta = 12)
+  {
+    std::ofstream snapshot(path, std::ios::trunc);
+    snapshot << "# schema=starcraft-api.resident-snapshot.v1\n"
+             << "# proof=issue_commands.command\n"
+             << "# source_identity=resident-adapter\n"
+             << "# process_id=" << processId << '\n'
+             << "# heartbeat=" << heartbeat << '\n'
+             << "# frame_id=" << frameId << '\n'
+             << "# active_match_correlated=true\n"
+             << "# command=" << command << '\n'
+             << "# command_kind=game-action\n"
+             << "field\tvalue\n"
+             << "passed\ttrue\n"
+             << "delivery_checked\ttrue\n"
+             << "behavior_checked\ttrue\n"
+             << "receiver_active\ttrue\n"
+             << "behavior_observed\ttrue\n"
+             << "self_fixture\tfalse\n"
+             << "live_behavior_witness\tstarcraft-runtime-adapter-proof-command-behavior-v1\n"
+             << "command\t" << command << '\n'
+             << "command_kind\tgame-action\n"
+             << "encoded_bytes\t10\n"
+             << "attempt_count\t1\n"
+             << "storage_kind\tlive-sc-r-command-queue-v1\n"
+             << "vector_address\t0x1000\n"
+             << "bytes_in_queue_address\t0x1100\n"
+             << "frame_counter_address\t0x1200\n"
+             << "appended_bytes\t10\n"
+             << "behavior_sample_count\t2\n"
+             << "behavior_observation\tcommand-specific-live-scr-behavior\n";
+    if (writeBehaviorDeltas)
+    {
+      snapshot << "baseline_delta\t" << baselineDelta << '\n'
+               << "paused_delta\t" << pausedDelta << '\n'
+               << "resumed_delta\t" << resumedDelta << '\n';
+    }
+    snapshot << "issue_commands_required_adapter_abi\tstarcraft-api-resident-adapter-v1\n"
+             << "issue_commands_required_adapter_location\tin-process-target-runtime\n"
+             << "issue_commands_required_adapter_thread_policy\texecute-on-target-runtime-thread\n"
+             << "issue_commands_required_adapter_behavior\tencoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior\n"
+             << "issue_commands_required_adapter_promotion_rule\tpromote-only-this-command-name-from-this-snapshot\n";
+  }
+
+  void writeCommandSpecificPendingFile(const std::filesystem::path& bridgePath)
+  {
+    std::ofstream pending(
+      bridgePath / RuntimeExecutorBridgeIssueCommandProofPendingFile,
+      std::ios::trunc);
+    pending << "command\tcommand_kind\tsnapshot\n"
+            << "pauseGame\tgame-action\tissue_commands.pauseGame.snapshot.tsv\n"
+            << "resumeGame\tgame-action\tissue_commands.resumeGame.snapshot.tsv\n";
+  }
+
+  void writeSingleCommandSpecificPendingFile(
+    const std::filesystem::path& bridgePath,
+    const std::string& command,
+    const std::string& snapshotName)
+  {
+    std::ofstream pending(
+      bridgePath / RuntimeExecutorBridgeIssueCommandProofPendingFile,
+      std::ios::trunc);
+    pending << "command\tcommand_kind\tsnapshot\n"
+            << command << "\tgame-action\t" << snapshotName << '\n';
+  }
 }
 
 int main(int argc, char** argv)
 {
   assert(argc > 0);
+  populateResidentUnitFixture();
+  ResidentFrameCounterFixtureTicker frameTicker;
 
   const std::filesystem::path bridgePath =
-    std::filesystem::temp_directory_path() / "starcraft-api-resident-adapter-load-test";
+    std::filesystem::temp_directory_path()
+    / ("starcraft-api-resident-adapter-load-test-" + std::to_string(getpid()));
   std::filesystem::remove_all(bridgePath);
   std::filesystem::create_directories(bridgePath);
 
   setenv("STARCRAFT_API_RESIDENT_ENABLE", "1", 1);
+  setenv("STARCRAFT_API_RESIDENT_BRIDGE_DIR", bridgePath.string().c_str(), 1);
   setenv("STARCRAFT_API_EXECUTOR_BRIDGE_DIR", bridgePath.string().c_str(), 1);
   setenv("STARCRAFT_API_VERSION", "test-build", 1);
 
@@ -114,6 +370,12 @@ int main(int argc, char** argv)
   assert(fileContainsLine(readyPath, "resident.projection.bwgame.size=256"));
   assert(fileContainsLine(readyPath, "resident.projection.bwgame.elapsedFrames_offset=8"));
   assert(fileContainsLine(readyPath, "resident.projection.bwgame.elapsedFrames_bytes=4"));
+  require(
+    waitForLine(readyPath, "proof.read_units.snapshot=units.snapshot.tsv"),
+    "resident adapter did not write live read-units snapshot proof");
+  require(
+    std::filesystem::exists(bridgePath / "units.snapshot.tsv"),
+    "resident adapter ready file claimed units snapshot but the snapshot file is missing");
 
   {
     std::ofstream ready(readyPath, std::ios::app);
@@ -193,6 +455,138 @@ int main(int argc, char** argv)
   assert(commandQueue.valid);
   assert(overlayQueue.valid);
   assert(proofQueue.valid);
+
+  const std::uint64_t missingDeltasHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  const std::uint64_t missingDeltasFrame =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "units.snapshot.tsv", "frame_id"),
+      "units.snapshot.tsv#frame_id");
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.restartGame.snapshot.tsv",
+    "restartGame",
+    static_cast<std::uint64_t>(environment.processId),
+    missingDeltasHeartbeat,
+    missingDeltasFrame,
+    false);
+  writeSingleCommandSpecificPendingFile(
+    bridgePath,
+    "restartGame",
+    "issue_commands.restartGame.snapshot.tsv");
+  require(
+    waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", missingDeltasHeartbeat),
+    "resident adapter heartbeat did not advance after missing-delta command proof handoff");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands.command.restartGame=passed"),
+    "resident adapter promoted command-specific proof without behavior delta fields");
+
+  const std::uint64_t invalidDeltasHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  const std::uint64_t invalidDeltasFrame =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "units.snapshot.tsv", "frame_id"),
+      "units.snapshot.tsv#frame_id");
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.restartGame.snapshot.tsv",
+    "restartGame",
+    static_cast<std::uint64_t>(environment.processId),
+    invalidDeltasHeartbeat,
+    invalidDeltasFrame,
+    true,
+    12,
+    1,
+    12);
+  writeSingleCommandSpecificPendingFile(
+    bridgePath,
+    "restartGame",
+    "issue_commands.restartGame.snapshot.tsv");
+  require(
+    waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", invalidDeltasHeartbeat),
+    "resident adapter heartbeat did not advance after invalid-delta command proof handoff");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands.command.restartGame=passed"),
+    "resident adapter promoted command-specific proof with invalid pause/resume behavior deltas");
+
+  const std::uint64_t commandProofHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  const std::uint64_t commandProofFrame =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "units.snapshot.tsv", "frame_id"),
+      "units.snapshot.tsv#frame_id");
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.pauseGame.snapshot.tsv",
+    "pauseGame",
+    static_cast<std::uint64_t>(environment.processId),
+    commandProofHeartbeat,
+    commandProofFrame);
+  writeCommandSpecificIssueSnapshot(
+    bridgePath / "issue_commands.resumeGame.snapshot.tsv",
+    "resumeGame",
+    static_cast<std::uint64_t>(environment.processId),
+    commandProofHeartbeat,
+    commandProofFrame);
+  writeCommandSpecificPendingFile(bridgePath);
+
+  require(
+    waitForLine(readyPath, "proof.issue_commands.command.pauseGame=passed"),
+    "resident adapter did not promote pending pauseGame command-specific proof");
+  require(
+    waitForLine(readyPath, "proof.issue_commands.command.resumeGame=passed"),
+    "resident adapter did not promote pending resumeGame command-specific proof");
+  require(
+    fileContainsLine(
+      readyPath,
+      "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed"),
+    "pauseGame live-proven command surface row is missing");
+  require(
+    fileContainsLine(
+      readyPath,
+      "command_surface.live_game_action.1=resumeGame|live-proven|proof.issue_commands.command.resumeGame=passed"),
+    "resumeGame live-proven command surface row is missing");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands=passed"),
+    "command-specific proof must not promote aggregate proof.issue_commands=passed");
+  require(
+    !std::filesystem::exists(bridgePath / RuntimeExecutorBridgeIssueCommandProofPendingFile),
+    "resident adapter did not remove consumed command-specific pending proof handoff");
+  const std::uint64_t firstRefreshedCommandProofHeartbeat =
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "issue_commands.pauseGame.snapshot.tsv", "heartbeat"),
+      "issue_commands.pauseGame.snapshot.tsv#heartbeat");
+  require(
+    firstRefreshedCommandProofHeartbeat >= commandProofHeartbeat,
+    "resident adapter did not rewrite command-specific snapshot with a current heartbeat");
+
+  const std::uint64_t firstReadyHeartbeat =
+    requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+  require(
+    waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", firstReadyHeartbeat),
+    "resident adapter heartbeat did not advance after command-specific proof promotion");
+  require(
+    fileContainsLine(readyPath, "proof.issue_commands.command.pauseGame=passed"),
+    "pauseGame command-specific proof was dropped on resident heartbeat refresh");
+  require(
+    fileContainsLine(readyPath, "proof.issue_commands.command.resumeGame=passed"),
+    "resumeGame command-specific proof was dropped on resident heartbeat refresh");
+  require(
+    fileContainsLine(
+      readyPath,
+      "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed"),
+    "pauseGame live-proven command surface row was dropped on resident heartbeat refresh");
+  require(
+    fileContainsLine(
+      readyPath,
+      "command_surface.live_game_action.1=resumeGame|live-proven|proof.issue_commands.command.resumeGame=passed"),
+    "resumeGame live-proven command surface row was dropped on resident heartbeat refresh");
+  require(
+    !fileContainsLine(readyPath, "proof.issue_commands=passed"),
+    "resident heartbeat refresh promoted forbidden aggregate proof.issue_commands=passed");
+  require(
+    requireUnsignedValue(
+      snapshotMetadataValue(bridgePath / "issue_commands.pauseGame.snapshot.tsv", "heartbeat"),
+      "issue_commands.pauseGame.snapshot.tsv#heartbeat")
+      > firstRefreshedCommandProofHeartbeat,
+    "resident adapter did not refresh command-specific snapshot heartbeat on subsequent ready rewrite");
 
   RuntimeCommandRequest pauseCommand;
   pauseCommand.kind = RuntimeCommandKind::GameAction;

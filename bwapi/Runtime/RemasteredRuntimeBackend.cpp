@@ -389,7 +389,8 @@ namespace BWAPI::Runtime
       const std::string& expectedKind)
     {
       if (preflight.executorBridgeMode != RuntimeExecutorBridgeValidatedAdapterMode
-          || !preflightHasValidatedProof(preflight, "proof.read_game_state=passed"))
+          || !preflightHasValidatedProof(preflight, "proof.read_game_state=passed")
+          || !preflightHasValidatedProof(preflight, "proof.active_match_state=passed"))
       {
         return false;
       }
@@ -456,7 +457,8 @@ namespace BWAPI::Runtime
 
     bool readyFileHasCommandSpecificEvidenceContext(
       const std::filesystem::path& readyPath,
-      const std::string& expectedKind)
+      const std::string& expectedKind,
+      const RuntimeResidentStateProofValidationResult& residentStateProof)
     {
       if (readReadyValue(readyPath, "executor") != "starcraft-api-resident-adapter"
           || readReadyValue(readyPath, "resident.adapter") != "active"
@@ -466,6 +468,12 @@ namespace BWAPI::Runtime
           || !fileContainsLine(readyPath, "proof.attach=passed")
           || !fileContainsLine(readyPath, "proof.read_game_state=passed")
           || !readyFileHasValidatedActiveMatchContext(readyPath))
+      {
+        return false;
+      }
+      if (!residentStateProof.readGameStateValid
+          || !residentStateProof.activeMatchValid
+          || residentStateProof.samples.empty())
       {
         return false;
       }
@@ -549,7 +557,8 @@ namespace BWAPI::Runtime
       const std::filesystem::path& snapshot,
       const std::filesystem::path& readyPath,
       const std::string& commandName,
-      const std::string& expectedKind)
+      const std::string& expectedKind,
+      const RuntimeResidentStateProofValidationResult& residentStateProof)
     {
       const SnapshotMetadata metadata = readSnapshotMetadata(snapshot);
       if (metadata.hasDuplicateKey)
@@ -588,13 +597,20 @@ namespace BWAPI::Runtime
       }
 
       std::uint64_t frameId = 0;
-      return parseUnsignedMetadataValue(metadata, "frame_id", frameId) && frameId > 0;
+      if (!parseUnsignedMetadataValue(metadata, "frame_id", frameId) || frameId == 0)
+        return false;
+      if (residentStateProof.samples.empty())
+        return false;
+      const std::uint64_t firstFrame = residentStateProof.samples.front().frame;
+      const std::uint64_t lastFrame = residentStateProof.samples.back().frame;
+      return frameId >= firstFrame && frameId <= lastFrame;
     }
 
     bool commandEvidenceProofIsProven(
       const std::filesystem::path& readyPath,
       const RuntimeExecutorPreflightResult& preflight,
       const RuntimeEnvironment& environment,
+      const RuntimeResidentStateProofValidationResult& residentStateProof,
       const std::string& detail,
       const std::string& commandName,
       const std::string& expectedKind)
@@ -606,7 +622,7 @@ namespace BWAPI::Runtime
         return false;
       if (!readyFileMatchesEnvironmentProcess(readyPath, environment))
         return false;
-      if (!readyFileHasCommandSpecificEvidenceContext(readyPath, expectedKind))
+      if (!readyFileHasCommandSpecificEvidenceContext(readyPath, expectedKind, residentStateProof))
         return false;
 
       const std::string proofLine = commandSpecificProofLine(commandName);
@@ -617,7 +633,12 @@ namespace BWAPI::Runtime
       if (!readySnapshotPath(readyPath, commandSpecificSnapshotKey(commandName), snapshot))
         return false;
 
-      if (!validatedCommandSpecificSnapshotMetadata(snapshot, readyPath, commandName, expectedKind))
+      if (!validatedCommandSpecificSnapshotMetadata(
+            snapshot,
+            readyPath,
+            commandName,
+            expectedKind,
+            residentStateProof))
         return false;
       if (!validatedCommandSpecificSnapshotPayload(snapshot, commandName, expectedKind))
         return false;
@@ -674,7 +695,8 @@ namespace BWAPI::Runtime
       const std::vector<std::string>& expectedNames,
       const std::string& expectedKind,
       const RuntimeEnvironment& environment,
-      const RuntimeExecutorPreflightResult& preflight)
+      const RuntimeExecutorPreflightResult& preflight,
+      const RuntimeResidentStateProofValidationResult& residentStateProof)
     {
       std::vector<RuntimeCommandEvidence> result;
       std::unordered_set<std::string> seenNames;
@@ -700,6 +722,7 @@ namespace BWAPI::Runtime
               readyPath,
               preflight,
               environment,
+              residentStateProof,
               evidence.detail,
               evidence.name,
               expectedKind)
@@ -746,6 +769,10 @@ namespace BWAPI::Runtime
         std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
       if (!std::filesystem::is_regular_file(readyPath, error) || error)
         return;
+      const RuntimeResidentBridgeValidationResult resident =
+        validateRuntimeResidentBridgeReadyFile(environment, readyPath);
+      const RuntimeResidentStateProofValidationResult residentStateProof =
+        validateRuntimeResidentStateProofs(environment, readyPath, resident);
 
       mergeLiveCommandEvidence(
         result.implementedUnitCommandEvidence,
@@ -755,7 +782,8 @@ namespace BWAPI::Runtime
           result.implementedUnitCommands,
           "unit-command",
           environment,
-          preflight));
+          preflight,
+          residentStateProof));
       mergeLiveCommandEvidence(
         result.implementedGameActionEvidence,
         readProofBackedLiveCommandEvidence(
@@ -764,7 +792,8 @@ namespace BWAPI::Runtime
           result.implementedGameActions,
           "game-action",
           environment,
-          preflight));
+          preflight,
+          residentStateProof));
     }
   }
 

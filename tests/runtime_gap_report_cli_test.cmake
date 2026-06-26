@@ -85,6 +85,7 @@ foreach(needle
     "implementation_gap.category_count="
     "implementation_gap.category.backend.count=1"
     "implementation_gap.category.capability.count="
+    "implementation_gap.category.command-evidence.count=72"
     "implementation_gap.category.data-address.count="
     "implementation_gap.category.structure-layout.count="
     "implementation_gap.category.structure-field.count="

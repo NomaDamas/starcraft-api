@@ -75,6 +75,20 @@ namespace BWAPI::Runtime
       return missing;
     }
 
+    std::vector<std::string> nonProductionCommandEvidence(
+      const std::vector<std::string>& required,
+      const std::vector<RuntimeCommandEvidence>& evidenceEntries)
+    {
+      std::vector<std::string> missing;
+      for (const std::string& entry : required)
+      {
+        const RuntimeCommandEvidenceStatus status = commandEvidenceStatusFor(evidenceEntries, entry);
+        if (!isProductionCommandEvidenceStatus(status))
+          missing.push_back(entry + "=" + toString(status));
+      }
+      return missing;
+    }
+
     std::string countDetail(int actual, int required, const char* label)
     {
       std::ostringstream out;
@@ -161,6 +175,17 @@ namespace BWAPI::Runtime
       RuntimeReadinessSeverity::Error,
       missingUnitCommands.empty() ? "all BWAPI unit commands are implemented by name" : join(missingUnitCommands));
 
+    const std::vector<std::string> nonLiveUnitCommands =
+      nonProductionCommandEvidence(commandSurface.unitCommands, probe.implementedUnitCommandEvidence);
+    addCheck(
+      report,
+      "unit-command-evidence-live",
+      nonLiveUnitCommands.empty(),
+      RuntimeReadinessSeverity::Error,
+      nonLiveUnitCommands.empty()
+        ? "all BWAPI unit commands have live-proven behavior evidence"
+        : join(nonLiveUnitCommands));
+
     const std::vector<std::string> missingGameActions =
       missingEntries(commandSurface.gameActions, probe.implementedGameActions);
     addCheck(
@@ -169,6 +194,17 @@ namespace BWAPI::Runtime
       missingGameActions.empty(),
       RuntimeReadinessSeverity::Error,
       missingGameActions.empty() ? "all BWAPI game action methods are implemented by name" : join(missingGameActions));
+
+    const std::vector<std::string> nonLiveGameActions =
+      nonProductionCommandEvidence(commandSurface.gameActions, probe.implementedGameActionEvidence);
+    addCheck(
+      report,
+      "game-action-evidence-live",
+      nonLiveGameActions.empty(),
+      RuntimeReadinessSeverity::Error,
+      nonLiveGameActions.empty()
+        ? "all BWAPI game actions have live-proven behavior evidence"
+        : join(nonLiveGameActions));
 
     const std::vector<std::string> missingCapabilityNames = missingCapabilities(probe, contract);
     addCheck(

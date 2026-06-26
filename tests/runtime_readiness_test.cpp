@@ -3,11 +3,20 @@
 
 #include <cassert>
 #include <string>
+#include <vector>
 
 using namespace BWAPI::Runtime;
 
 namespace
 {
+  std::vector<RuntimeCommandEvidence> liveCommandEvidence(const std::vector<std::string>& names)
+  {
+    std::vector<RuntimeCommandEvidence> evidence;
+    for (const std::string& name : names)
+      evidence.push_back({ name, RuntimeCommandEvidenceStatus::LiveProven, "unit-test-live-proof" });
+    return evidence;
+  }
+
   std::string productionEvidenceForBinding(const RuntimeBinding& binding)
   {
     if (binding.name == "BW::BWDATA::Game")
@@ -99,6 +108,8 @@ namespace
     probe.implementedCommandSurfaceEntries = contract.requiredCommandSurfaceEntries;
     probe.implementedUnitCommands = commandSurface.unitCommands;
     probe.implementedGameActions = commandSurface.gameActions;
+    probe.implementedUnitCommandEvidence = liveCommandEvidence(commandSurface.unitCommands);
+    probe.implementedGameActionEvidence = liveCommandEvidence(commandSurface.gameActions);
     return probe;
   }
 
@@ -195,6 +206,18 @@ int main()
   RuntimeReadinessReport actionGap = evaluateProductionReadiness(missingGameAction, contract, preflight);
   assert(!actionGap.productionReady);
   assert(hasBlockingGap(actionGap, "game-action-surface-complete"));
+
+  RuntimeProbeResult mockCommandEvidence = probe;
+  mockCommandEvidence.implementedUnitCommandEvidence.front().status = RuntimeCommandEvidenceStatus::MockTested;
+  RuntimeReadinessReport commandEvidenceGap = evaluateProductionReadiness(mockCommandEvidence, contract, preflight);
+  assert(!commandEvidenceGap.productionReady);
+  assert(hasBlockingGap(commandEvidenceGap, "unit-command-evidence-live"));
+
+  RuntimeProbeResult adapterLocalActionEvidence = probe;
+  adapterLocalActionEvidence.implementedGameActionEvidence.front().status = RuntimeCommandEvidenceStatus::AdapterLocal;
+  RuntimeReadinessReport actionEvidenceGap = evaluateProductionReadiness(adapterLocalActionEvidence, contract, preflight);
+  assert(!actionEvidenceGap.productionReady);
+  assert(hasBlockingGap(actionEvidenceGap, "game-action-evidence-live"));
 
   RuntimeContract unresolved = makeRemasteredParityContract("test-build");
   RuntimeReadinessReport contractGap = evaluateProductionReadiness(probe, unresolved, preflight);

@@ -2,11 +2,21 @@
 #include <BWAPI/Runtime/RuntimeImplementationGap.h>
 
 #include <cassert>
+#include <string>
+#include <vector>
 
 using namespace BWAPI::Runtime;
 
 namespace
 {
+  std::vector<RuntimeCommandEvidence> liveCommandEvidence(const std::vector<std::string>& names)
+  {
+    std::vector<RuntimeCommandEvidence> evidence;
+    for (const std::string& name : names)
+      evidence.push_back({ name, RuntimeCommandEvidenceStatus::LiveProven, "unit-test-live-proof" });
+    return evidence;
+  }
+
   std::string productionEvidenceForBinding(const RuntimeBinding& binding)
   {
     if (binding.name == "BW::BWDATA::Game")
@@ -96,6 +106,8 @@ namespace
     probe.capabilities = contract.requiredCapabilities;
     probe.implementedUnitCommands = surface.unitCommands;
     probe.implementedGameActions = surface.gameActions;
+    probe.implementedUnitCommandEvidence = liveCommandEvidence(surface.unitCommands);
+    probe.implementedGameActionEvidence = liveCommandEvidence(surface.gameActions);
     probe.implementedApiSurfaceMethods = contract.requiredApiSurfaceMethods;
     probe.implementedCommandSurfaceEntries = contract.requiredCommandSurfaceEntries;
     return probe;
@@ -132,6 +144,7 @@ int main()
   assert(countRuntimeImplementationGapsByCategory(gaps, "command-surface") == 1);
   assert(countRuntimeImplementationGapsByCategory(gaps, "unit-command") == makeBWAPICommandSurface().unitCommands.size());
   assert(countRuntimeImplementationGapsByCategory(gaps, "game-action") == makeBWAPICommandSurface().gameActions.size());
+  assert(countRuntimeImplementationGapsByCategory(gaps, "command-evidence") == makeBWAPICommandSurface().totalEntries());
   assert(countRuntimeImplementationGapsByCategory(gaps, "capability") == incompleteContract.requiredCapabilities.size());
   assert(countRuntimeImplementationGapsByCategory(gaps, "memory-access") == 1);
   assert(countRuntimeImplementationGapsByCategory(gaps, "data-address") > 0);
@@ -169,6 +182,12 @@ int main()
   std::vector<RuntimeImplementationGap> memoryGaps =
     collectRuntimeImplementationGaps(fullProbe(completeContract), completeContract, memoryBlockedPreflight);
   assert(countRuntimeImplementationGapsByCategory(memoryGaps, "memory-access") == 1);
+
+  RuntimeProbeResult nonLiveCommandProof = fullProbe(completeContract);
+  nonLiveCommandProof.implementedUnitCommandEvidence.front().status = RuntimeCommandEvidenceStatus::MockTested;
+  std::vector<RuntimeImplementationGap> commandEvidenceGaps =
+    collectRuntimeImplementationGaps(nonLiveCommandProof, completeContract, cleanPreflight());
+  assert(countRuntimeImplementationGapsByCategory(commandEvidenceGaps, "command-evidence") == 1);
 
   return 0;
 }

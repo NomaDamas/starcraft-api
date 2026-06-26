@@ -13857,6 +13857,20 @@ int main(int argc, char** argv)
   std::cout << "command_surface.unit_commands=" << commandSurface.unitCommands.size() << '\n';
   std::cout << "command_surface.game_actions=" << commandSurface.gameActions.size() << '\n';
   std::cout << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
+  for (const RuntimeCommandEvidence& evidence : commandSurface.unitCommandEvidence)
+  {
+    std::cout << "command_surface.unit_command_evidence=" << evidence.name << ' ' << toString(evidence.status);
+    if (!evidence.detail.empty())
+      std::cout << ' ' << evidence.detail;
+    std::cout << '\n';
+  }
+  for (const RuntimeCommandEvidence& evidence : commandSurface.gameActionEvidence)
+  {
+    std::cout << "command_surface.game_action_evidence=" << evidence.name << ' ' << toString(evidence.status);
+    if (!evidence.detail.empty())
+      std::cout << ' ' << evidence.detail;
+    std::cout << '\n';
+  }
 
   if (!appendGameAction.empty())
   {
@@ -15974,6 +15988,18 @@ int main(int argc, char** argv)
   ready << "command_surface.unit_commands=" << commandSurface.unitCommands.size() << '\n';
   ready << "command_surface.game_actions=" << commandSurface.gameActions.size() << '\n';
   ready << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
+  for (std::size_t i = 0; i < commandSurface.unitCommandEvidence.size(); ++i)
+  {
+    const RuntimeCommandEvidence& evidence = commandSurface.unitCommandEvidence[i];
+    ready << "command_surface.unit_command." << i << '=' << evidence.name << '|'
+          << toString(evidence.status) << '|' << evidence.detail << '\n';
+  }
+  for (std::size_t i = 0; i < commandSurface.gameActionEvidence.size(); ++i)
+  {
+    const RuntimeCommandEvidence& evidence = commandSurface.gameActionEvidence[i];
+    ready << "command_surface.game_action." << i << '=' << evidence.name << '|'
+          << toString(evidence.status) << '|' << evidence.detail << '\n';
+  }
   for (const std::string& line : preservedReadyEvidenceLines)
     ready << line << '\n';
   for (const std::string& line : preservedResidentEvidenceLines)

@@ -26,6 +26,8 @@ foreach(needle
     "attach.memory_accessible=true"
     "command_surface.ready=true"
     "command_surface.entries=72"
+    "command_surface.unit_command_evidence=Attack_Move mock-tested runtime-command-encoder-test"
+    "command_surface.game_action_evidence=drawBox adapter-local adapter-local-runtime-facade"
     "proof.attach=passed")
   string(FIND "${proof_output}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
@@ -47,6 +49,7 @@ foreach(needle
     "contract.binding.shared-memory-client-transport=transport|proof.attach=passed"
     "proof.command_surface=runtime-command-surface-v1"
     "command_surface.entries=72"
+    "command_surface.unit_command.0=Attack_Move|mock-tested|runtime-command-encoder-test"
     "proof.attach=passed")
   string(FIND "${ready}" "${needle}" needle_index)
   if(needle_index EQUAL -1)

@@ -78,7 +78,25 @@ namespace BWAPI::Runtime
       const RuntimeCommandSurface surface = makeBWAPICommandSurface();
       result.implementedUnitCommands = surface.unitCommands;
       result.implementedGameActions = surface.gameActions;
+      result.implementedUnitCommandEvidence = surface.unitCommandEvidence;
+      result.implementedGameActionEvidence = surface.gameActionEvidence;
       result.implementedCommandSurfaceEntries = surface.totalEntries();
+    }
+
+    std::vector<RuntimeCommandEvidence> staticManifestCommandEvidence(
+      std::vector<RuntimeCommandEvidence> evidence)
+    {
+      for (RuntimeCommandEvidence& entry : evidence)
+      {
+        if (entry.status != RuntimeCommandEvidenceStatus::LiveProven)
+          continue;
+
+        entry.status = RuntimeCommandEvidenceStatus::DocumentedScenario;
+        entry.detail = entry.detail.empty()
+          ? "static-manifest-live-proof-requires-validated-resident-proof"
+          : entry.detail + ":static-manifest-live-proof-requires-validated-resident-proof";
+      }
+      return evidence;
     }
   }
 
@@ -112,6 +130,10 @@ namespace BWAPI::Runtime
         result.capabilities = manifest.manifest.capabilities;
         result.implementedUnitCommands = manifest.manifest.unitCommands;
         result.implementedGameActions = manifest.manifest.gameActions;
+        result.implementedUnitCommandEvidence =
+          staticManifestCommandEvidence(manifest.manifest.unitCommandEvidence);
+        result.implementedGameActionEvidence =
+          staticManifestCommandEvidence(manifest.manifest.gameActionEvidence);
         result.implementedApiSurfaceMethods = manifest.manifest.implementedApiSurfaceMethods;
         result.implementedCommandSurfaceEntries = manifest.manifest.implementedCommandSurfaceEntries;
       }

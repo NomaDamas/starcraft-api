@@ -69,6 +69,18 @@ namespace BWAPI::Runtime
       return value.rfind(prefix, 0) == 0;
     }
 
+    bool hasProductionCommandEvidence(
+      const std::vector<std::string>& requiredEntries,
+      const std::vector<RuntimeCommandEvidence>& evidenceEntries)
+    {
+      for (const std::string& entry : requiredEntries)
+      {
+        if (!isProductionCommandEvidenceStatus(commandEvidenceStatusFor(evidenceEntries, entry)))
+          return false;
+      }
+      return true;
+    }
+
     bool isNonProductionEvidence(const std::string& evidence)
     {
       return evidence == "fixture"
@@ -579,6 +591,10 @@ namespace BWAPI::Runtime
       if (!containsCommandSurfaceEntry(probe.implementedGameActions, gameAction))
         return false;
     }
+    if (!hasProductionCommandEvidence(commandSurface.unitCommands, probe.implementedUnitCommandEvidence))
+      return false;
+    if (!hasProductionCommandEvidence(commandSurface.gameActions, probe.implementedGameActionEvidence))
+      return false;
 
     return std::all_of(
       contract.requiredCapabilities.begin(),

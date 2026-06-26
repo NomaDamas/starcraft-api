@@ -197,6 +197,20 @@ int main(int argc, char** argv)
     std::cout << "probe.unit_command=" << unitCommand << '\n';
   for (const std::string& gameAction : probe.implementedGameActions)
     std::cout << "probe.game_action=" << gameAction << '\n';
+  for (const RuntimeCommandEvidence& evidence : probe.implementedUnitCommandEvidence)
+  {
+    std::cout << "probe.unit_command_evidence=" << evidence.name << ' ' << toString(evidence.status);
+    if (!evidence.detail.empty())
+      std::cout << ' ' << evidence.detail;
+    std::cout << '\n';
+  }
+  for (const RuntimeCommandEvidence& evidence : probe.implementedGameActionEvidence)
+  {
+    std::cout << "probe.game_action_evidence=" << evidence.name << ' ' << toString(evidence.status);
+    if (!evidence.detail.empty())
+      std::cout << ' ' << evidence.detail;
+    std::cout << '\n';
+  }
   std::cout << "probe.implemented_api_surface_methods=" << probe.implementedApiSurfaceMethods << '\n';
   std::cout << "probe.implemented_command_surface_entries=" << probe.implementedCommandSurfaceEntries << '\n';
 
@@ -228,6 +242,20 @@ int main(int argc, char** argv)
         std::cout << "manifest.unit_command=" << unitCommand << '\n';
       for (const std::string& gameAction : manifest.manifest.gameActions)
         std::cout << "manifest.game_action=" << gameAction << '\n';
+      for (const RuntimeCommandEvidence& evidence : manifest.manifest.unitCommandEvidence)
+      {
+        std::cout << "manifest.unit_command_evidence=" << evidence.name << ' ' << toString(evidence.status);
+        if (!evidence.detail.empty())
+          std::cout << ' ' << evidence.detail;
+        std::cout << '\n';
+      }
+      for (const RuntimeCommandEvidence& evidence : manifest.manifest.gameActionEvidence)
+      {
+        std::cout << "manifest.game_action_evidence=" << evidence.name << ' ' << toString(evidence.status);
+        if (!evidence.detail.empty())
+          std::cout << ' ' << evidence.detail;
+        std::cout << '\n';
+      }
     }
   }
 

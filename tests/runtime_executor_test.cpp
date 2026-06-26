@@ -1261,10 +1261,8 @@ int main(int argc, char** argv)
   RuntimeExecutorPreflightResult freshResidentPreflight =
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(freshResidentPreflight.executorAvailable);
-  const bool freshIssueCommandsMissing =
-    hasMissingProof(freshResidentPreflight, "proof.issue_commands=passed");
-  if (freshIssueCommandsMissing)
-    assert(!freshResidentPreflight.errors.empty());
+  assert(hasMissingProof(freshResidentPreflight, "proof.issue_commands=passed"));
+  assert(!freshResidentPreflight.errors.empty());
 
   const std::filesystem::path readyPath = bridgePath / RuntimeExecutorBridgeReadyFile;
   std::error_code timestampError;
@@ -1422,9 +1420,8 @@ int main(int argc, char** argv)
   assert(partialProofPreflight.executorAvailable);
   assert(partialProofPreflight.executorName == "filesystem-bridge-validated-runtime-adapter");
   assert(partialProofPreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
-  const bool partialIssueCommandsMissing =
-    hasMissingProof(partialProofPreflight, "proof.issue_commands=passed");
-  assert(partialProofPreflight.missingBehaviorProofs.size() == (partialIssueCommandsMissing ? 2U : 1U));
+  assert(partialProofPreflight.missingBehaviorProofs.size() == 2);
+  assert(hasMissingProof(partialProofPreflight, "proof.issue_commands=passed"));
   assert(hasMissingProof(partialProofPreflight, "proof.multiplayer_sync=passed"));
   assert(!partialProofPreflight.errors.empty());
 
@@ -1579,10 +1576,8 @@ int main(int argc, char** argv)
   assert(bridgePreflight.executorAvailable);
   assert(bridgePreflight.executorName == "filesystem-bridge-validated-runtime-adapter");
   assert(bridgePreflight.executorBridgeMode == RuntimeExecutorBridgeValidatedAdapterMode);
-  const bool bridgeIssueCommandsMissing =
-    hasMissingProof(bridgePreflight, "proof.issue_commands=passed");
-  if (bridgeIssueCommandsMissing)
-    assert(!bridgePreflight.errors.empty());
+  assert(hasMissingProof(bridgePreflight, "proof.issue_commands=passed"));
+  assert(!bridgePreflight.errors.empty());
 
   RuntimeCommandRequest unitCommand;
   unitCommand.kind = RuntimeCommandKind::UnitCommand;
@@ -1596,20 +1591,11 @@ int main(int argc, char** argv)
 
   RuntimeExecutorSubmitResult submitted =
     submitRuntimeCommands(bridgeEnvironment, { unitCommand, gameAction });
-  if (bridgeIssueCommandsMissing)
-  {
-    assert(!submitted.submitted);
-    assert(!submitted.errors.empty());
-    assert(submitted.reason.find(
-      "issue-commands proof is missing validated production metadata") != std::string::npos);
-    assert(!std::filesystem::exists(bridgePath / RuntimeExecutorBridgeCommandFile));
-  }
-  else
-  {
-    assert(submitted.submitted);
-    assert(submitted.submittedCommands == 2);
-    assert(submitted.errors.empty());
-  }
+  assert(!submitted.submitted);
+  assert(!submitted.errors.empty());
+  assert(submitted.reason.find(
+    "issue-commands proof is missing validated production metadata") != std::string::npos);
+  assert(!std::filesystem::exists(bridgePath / RuntimeExecutorBridgeCommandFile));
 
   std::filesystem::path directBridgePath =
     makeBridgePath("starcraft-api-runtime-executor-direct-test");

@@ -1197,25 +1197,9 @@ namespace BWAPI::Runtime
       const std::filesystem::path& readyPath,
       const RuntimeResidentStateProofValidationResult* residentStateProof)
     {
-      if (residentStateProof == nullptr || !residentStateProof->activeMatchValid)
-        return false;
-      return readReadyValue(readyPath, "executor") == "starcraft-api-resident-adapter"
-        && readReadyValue(readyPath, "resident.adapter.abi") == RuntimeResidentAdapterAbi
-        && readReadyValue(readyPath, "proof.issue_commands.source") == "live-sc-r-command-path"
-        && readyValueIsTrue(readyPath, "proof.issue_commands.delivery_checked")
-        && readyValueIsTrue(readyPath, "proof.issue_commands.behavior_checked")
-        && readReadyValue(readyPath, "proof.issue_commands.live_behavior_witness")
-          == "starcraft-runtime-adapter-proof-live-write-v1"
-        && readReadyValue(readyPath, "proof.issue_commands.self_fixture") == "false"
-        && readyValueIsTrue(readyPath, "proof.issue_commands.pause_frame_counter_matched")
-        && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.vector_address")
-        && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.bytes_in_queue_address")
-        && readyValueIsNonZeroUnsigned(readyPath, "proof.issue_commands.frame_counter_address")
-        && readReadyValue(readyPath, "proof.issue_commands.storage_kind") == "live-sc-r-command-queue-v1"
-        && !readReadyValue(readyPath, "proof.issue_commands.command").empty()
-        && !readReadyValue(readyPath, "proof.issue_commands.encoded_bytes").empty()
-        && readyValueIsTrue(readyPath, "proof.issue_commands.stale_proof_bytes_cleared")
-        && validatedIssueCommandsSnapshot(readyPath, residentStateProof);
+      (void)readyPath;
+      (void)residentStateProof;
+      return false;
     }
 
     bool validatedDrawOverlaysProof(const std::filesystem::path& readyPath)

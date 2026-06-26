@@ -101,57 +101,15 @@ namespace BWAPI::Runtime
       return evidence;
     }
 
-    bool hasCapability(
-      const RuntimeExecutorPreflightResult& preflight,
-      Capability capability)
-    {
-      return std::find(
-        preflight.provenCapabilities.begin(),
-        preflight.provenCapabilities.end(),
-        capability) != preflight.provenCapabilities.end();
-    }
-
-    std::string proofLineFromCommandEvidenceDetail(const std::string& detail)
-    {
-      if (detail.rfind("proof.", 0) != 0)
-        return {};
-      const std::size_t separator = detail.find(':');
-      return separator == std::string::npos
-        ? detail
-        : detail.substr(0, separator);
-    }
-
     bool commandEvidenceProofIsProven(
       const RuntimeExecutorPreflightResult& preflight,
       const std::string& detail)
     {
-      const std::string proofLine = proofLineFromCommandEvidenceDetail(detail);
-      if (proofLine == "proof.issue_commands=passed")
-        return hasCapability(preflight, Capability::IssueCommands);
-      if (proofLine == "proof.draw_overlays=passed")
-        return hasCapability(preflight, Capability::DrawOverlays);
-      if (proofLine == "proof.dispatch_events=passed")
-        return hasCapability(preflight, Capability::DispatchEvents);
-      if (proofLine == "proof.multiplayer_sync=passed")
-        return hasCapability(preflight, Capability::MultiplayerSync);
-      if (proofLine == "proof.battle_net_policy=passed")
-        return hasCapability(preflight, Capability::BattleNet);
-      if (proofLine == "proof.load_ai_modules=passed")
-        return hasCapability(preflight, Capability::LoadAIModules);
-      if (proofLine == "proof.replay_analysis=passed")
-        return hasCapability(preflight, Capability::ReplayAnalysis);
-      if (proofLine == "proof.read_game_state=passed")
-        return hasCapability(preflight, Capability::ReadGameState);
-      if (proofLine == "proof.read_units=passed")
-        return hasCapability(preflight, Capability::ReadUnitData);
-      if (proofLine == "proof.read_map_data=passed")
-        return hasCapability(preflight, Capability::ReadMapData);
-      if (proofLine == "proof.read_player_data=passed")
-        return hasCapability(preflight, Capability::ReadPlayerData);
-      if (proofLine == "proof.read_bullet_data=passed")
-        return hasCapability(preflight, Capability::ReadBulletData);
-      if (proofLine == "proof.read_region_data=passed")
-        return hasCapability(preflight, Capability::ReadRegionData);
+      (void)preflight;
+      (void)detail;
+      // Aggregate proof lines such as proof.issue_commands=passed are not
+      // command-specific evidence. Keep live rows fail-closed until the
+      // resident adapter emits and validates per-command behavior snapshots.
       return false;
     }
 

@@ -515,7 +515,7 @@ int main()
   }
 
   RuntimeProbeResult issueCommandOnlyProbe = proofBackedRemasteredBackend->probe();
-  assert(hasCapability(issueCommandOnlyProbe, Capability::IssueCommands));
+  assert(!hasCapability(issueCommandOnlyProbe, Capability::IssueCommands));
   assert(!hasCapability(issueCommandOnlyProbe, Capability::DrawOverlays));
   assert(issueCommandOnlyProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(issueCommandOnlyProbe.implementedUnitCommands == remasteredSurface.unitCommands);
@@ -612,7 +612,7 @@ int main()
   }
 
   RuntimeProbeResult commandProofRemasteredProbe = proofBackedRemasteredBackend->probe();
-  assert(hasCapability(commandProofRemasteredProbe, Capability::IssueCommands));
+  assert(!hasCapability(commandProofRemasteredProbe, Capability::IssueCommands));
   assert(hasCapability(commandProofRemasteredProbe, Capability::DrawOverlays));
   assert(hasCapability(commandProofRemasteredProbe, Capability::ReadMapData));
   assert(hasCapability(commandProofRemasteredProbe, Capability::ReadPlayerData));
@@ -624,13 +624,13 @@ int main()
   assert(commandProofRemasteredProbe.implementedGameActions == remasteredSurface.gameActions);
   assert(commandEvidenceStatusFor(
     commandProofRemasteredProbe.implementedUnitCommandEvidence,
-    "Attack_Move") == RuntimeCommandEvidenceStatus::LiveProven);
+    "Attack_Move") == RuntimeCommandEvidenceStatus::MockTested);
   assert(commandEvidenceStatusFor(
     commandProofRemasteredProbe.implementedUnitCommandEvidence,
     "Attack_Unit") == RuntimeCommandEvidenceStatus::MockTested);
   assert(commandEvidenceStatusFor(
     commandProofRemasteredProbe.implementedGameActionEvidence,
-    "pauseGame") == RuntimeCommandEvidenceStatus::LiveProven);
+    "pauseGame") == RuntimeCommandEvidenceStatus::MockTested);
   assert(commandEvidenceStatusFor(
     commandProofRemasteredProbe.implementedGameActionEvidence,
     "drawBox") == RuntimeCommandEvidenceStatus::AdapterLocal);

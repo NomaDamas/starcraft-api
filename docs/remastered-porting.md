@@ -252,9 +252,11 @@ command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands=pa
 
 Those rows are accepted only when the referenced proof line is already validated
 for the selected runtime process, resident adapter ABI, heartbeat, active-match
-state, and snapshot metadata. Hand-written manifest `live-proven` entries and
-ready rows that reference missing, mock, stale, or fixture proof remain
-non-production evidence and keep the command-evidence gap open.
+state, snapshot metadata, and the specific command/action behavior being
+promoted. Aggregate `proof.issue_commands=passed` is not sufficient by itself
+to promote arbitrary command names. Hand-written manifest `live-proven` entries
+and ready rows that reference missing, mock, stale, fixture, or aggregate-only
+proof remain non-production evidence and keep the command-evidence gap open.
 
 The required behavior proof lines are:
 

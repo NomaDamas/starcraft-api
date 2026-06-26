@@ -86,7 +86,14 @@ namespace BWAPI::Runtime
     {
       if (path.empty())
         return {};
-      return std::filesystem::path(path).lexically_normal().string();
+
+      std::error_code error;
+      std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
+      if (error)
+        normalized = std::filesystem::absolute(path, error);
+      if (error)
+        normalized = path;
+      return normalized.lexically_normal().string();
     }
 
     bool liveBridgeMatchesEnvironment(
@@ -141,7 +148,22 @@ namespace BWAPI::Runtime
           return false;
       }
 
-      return true;
+      RuntimeEnvironment bridgeEnvironment = environment;
+      bridgeEnvironment.executorBridgePath = bridgePath.string();
+      RuntimeResidentBridgeValidationResult resident =
+        validateRuntimeResidentBridgeReadyFile(bridgeEnvironment, readyPath);
+      return resident.present && resident.active && resident.valid;
+    }
+
+    std::filesystem::path normalizedBridgeCandidatePath(const std::filesystem::path& path)
+    {
+      std::error_code error;
+      std::filesystem::path normalized = std::filesystem::weakly_canonical(path, error);
+      if (error)
+        normalized = std::filesystem::absolute(path, error);
+      if (error)
+        normalized = path;
+      return normalized.lexically_normal();
     }
 
     std::vector<std::filesystem::path> liveBridgeCandidatePaths()
@@ -174,7 +196,7 @@ namespace BWAPI::Runtime
       std::vector<std::filesystem::path> unique;
       for (const std::filesystem::path& candidate : candidates)
       {
-        const std::filesystem::path normalized = candidate.lexically_normal();
+        const std::filesystem::path normalized = normalizedBridgeCandidatePath(candidate);
         if (std::find(unique.begin(), unique.end(), normalized) == unique.end())
           unique.push_back(normalized);
       }
@@ -189,11 +211,14 @@ namespace BWAPI::Runtime
       if (environment.processId <= 0)
         return {};
 
+      std::vector<std::filesystem::path> matches;
       for (const std::filesystem::path& bridgePath : liveBridgeCandidatePaths())
       {
         if (liveBridgeMatchesEnvironment(environment, bridgePath))
-          return bridgePath.string();
+          matches.push_back(bridgePath);
       }
+      if (matches.size() == 1)
+        return matches.front().string();
       return {};
     }
 
@@ -2664,7 +2689,7 @@ namespace BWAPI::Runtime
     if (environment.processId <= 0)
     {
       const std::vector<int> processIds = findRuntimeProcessIds(installation);
-      if (!processIds.empty())
+      if (processIds.size() == 1)
         environment.processId = processIds.front();
     }
 

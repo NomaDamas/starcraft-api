@@ -10,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 
 namespace BWAPI::Runtime
@@ -279,6 +280,41 @@ namespace BWAPI::Runtime
           return false;
       }
       return true;
+    }
+
+    bool hasDuplicateReadyKeyWithPrefix(
+      const std::filesystem::path& readyPath,
+      const char* prefix,
+      std::string& duplicateKey)
+    {
+      std::ifstream input(readyPath);
+      std::unordered_set<std::string> seen;
+      std::string line;
+      while (std::getline(input, line))
+      {
+        const std::size_t separator = line.find('=');
+        if (separator == std::string::npos)
+          continue;
+
+        const std::string key = line.substr(0, separator);
+        if (key.rfind(prefix, 0) != 0)
+          continue;
+        if (!seen.insert(key).second)
+        {
+          duplicateKey = key;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    bool hasDuplicateResidentStateProofKey(
+      const std::filesystem::path& readyPath,
+      std::string& duplicateKey)
+    {
+      return hasDuplicateReadyKeyWithPrefix(readyPath, "resident.proof.", duplicateKey)
+        || hasDuplicateReadyKeyWithPrefix(readyPath, "proof.read_game_state.", duplicateKey)
+        || hasDuplicateReadyKeyWithPrefix(readyPath, "proof.active_match_state.", duplicateKey);
     }
 
     bool parseProofProcessAndHeartbeat(
@@ -886,6 +922,13 @@ namespace BWAPI::Runtime
     result.activeMatchProofPresent = readyValue(readyPath, "proof.active_match_state") == "passed";
     if (!result.readGameStateProofPresent && !result.activeMatchProofPresent)
       return result;
+
+    std::string duplicateKey;
+    if (hasDuplicateResidentStateProofKey(readyPath, duplicateKey))
+    {
+      addError(result.errors, "resident state proof ready file has duplicate key: " + duplicateKey);
+      return result;
+    }
 
     if (!resident.present || !resident.valid)
     {

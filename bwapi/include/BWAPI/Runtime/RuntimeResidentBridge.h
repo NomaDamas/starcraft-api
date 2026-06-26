@@ -48,7 +48,7 @@ namespace BWAPI::Runtime
 
   struct RuntimeResidentBridgeValidationOptions
   {
-    std::uint64_t minimumHeartbeat = 1;
+    std::uint64_t minimumHeartbeat = 2;
     std::uint64_t maximumReadyFileAgeMs = 30000;
   };
 

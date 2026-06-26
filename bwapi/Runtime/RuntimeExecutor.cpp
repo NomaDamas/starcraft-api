@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -734,6 +735,60 @@ namespace BWAPI::Runtime
       return false;
     }
 
+    bool duplicateSensitiveReadyKey(const std::string& key)
+    {
+      for (const char* prefix : {
+             "contract.binding.",
+             "contract.structure.",
+             "contract.field.",
+             "proof.read_game_state.",
+             "proof.active_match_state.",
+             "proof.read_units.",
+             "proof.read_player_data.",
+             "proof.read_map_data.",
+             "proof.read_bullet_data.",
+             "proof.read_region_data.",
+             "proof.issue_commands.",
+             "proof.draw_overlays.",
+             "proof.dispatch_events.",
+             "proof.replay_analysis.",
+             "proof.multiplayer_sync.",
+             "proof.battle_net_policy.",
+             "proof.load_ai_modules.",
+             "resident.proof.",
+             "resident.queue." })
+      {
+        if (key.rfind(prefix, 0) == 0)
+          return true;
+      }
+      return false;
+    }
+
+    bool bridgeReadyFileHasDuplicateEvidenceKeys(
+      const std::filesystem::path& readyPath,
+      std::string& duplicateKey)
+    {
+      std::ifstream input(readyPath);
+      std::unordered_set<std::string> seen;
+      std::string line;
+      while (std::getline(input, line))
+      {
+        const std::size_t separator = line.find('=');
+        if (separator == std::string::npos)
+          continue;
+
+        const std::string key = line.substr(0, separator);
+        if (!duplicateSensitiveReadyKey(key))
+          continue;
+        if (!seen.insert(key).second)
+        {
+          duplicateKey = key;
+          return true;
+        }
+      }
+      return false;
+    }
+
     std::filesystem::path residentHeartbeatStatePath(const std::filesystem::path& readyPath)
     {
       return readyPath.parent_path() / ".resident-heartbeat-state";
@@ -1135,6 +1190,12 @@ namespace BWAPI::Runtime
           "runtime executor bridge ready file has duplicate identity key: " + duplicateKey);
         return true;
       }
+      if (bridgeReadyFileHasDuplicateEvidenceKeys(readyPath, duplicateKey))
+      {
+        result.errors.push_back(
+          "runtime executor bridge ready file has duplicate evidence key: " + duplicateKey);
+        return true;
+      }
       if (!fileContainsLine(readyPath, std::string("product=") + toString(environment.product)))
       {
         result.errors.push_back("runtime executor bridge ready file product does not match the selected runtime");
@@ -1529,6 +1590,8 @@ namespace BWAPI::Runtime
   {
     if (environment.executorBridgePath.empty())
       return contract;
+    if (environment.processId <= 0)
+      return contract;
 
     std::error_code error;
     const std::filesystem::path readyPath = readyFilePath(environment);
@@ -1537,9 +1600,13 @@ namespace BWAPI::Runtime
     std::string duplicateKey;
     if (bridgeReadyFileHasDuplicateIdentityKeys(readyPath, duplicateKey))
       return contract;
+    if (bridgeReadyFileHasDuplicateEvidenceKeys(readyPath, duplicateKey))
+      return contract;
     if (!bridgeReadyFileMatchesRuntime(environment, readyPath))
       return contract;
     if (!validateBridgeRuntimeIdentity(environment, readyPath).empty())
+      return contract;
+    if (!openRuntimeProcess(environment).opened)
       return contract;
 
     RuntimeResidentBridgeValidationResult resident =
@@ -1771,6 +1838,12 @@ namespace BWAPI::Runtime
     if (bridgeReadyFileHasDuplicateIdentityKeys(readyPath, duplicateKey))
     {
       result.reason = "runtime executor bridge ready file has duplicate identity key: " + duplicateKey;
+      result.errors.push_back(result.reason);
+      return result;
+    }
+    if (bridgeReadyFileHasDuplicateEvidenceKeys(readyPath, duplicateKey))
+    {
+      result.reason = "runtime executor bridge ready file has duplicate evidence key: " + duplicateKey;
       result.errors.push_back(result.reason);
       return result;
     }

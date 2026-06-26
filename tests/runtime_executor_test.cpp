@@ -530,6 +530,57 @@ int main(int argc, char** argv)
   assert(acceptedGameStateLayout != nullptr && acceptedGameStateLayout->size == 256);
   assert(acceptedElapsedFrames != nullptr && acceptedElapsedFrames->resolved);
 
+  const std::string fixtureExecutable = fixturePath("remastered-complete.manifest");
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, fixtureExecutable);
+    writeResidentStateProofs(ready, bridgeEnvironment.processId, fixtureExecutable);
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
+    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:bwgame-layout\n";
+    ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
+  }
+  RuntimeEnvironment mismatchedActualExecutableEnvironment = bridgeEnvironment;
+  mismatchedActualExecutableEnvironment.executablePath = fixtureExecutable;
+  RuntimeContract rejectedActualExecutableMismatchProof =
+    applyRuntimeExecutorBridgeContractProofs(
+      mismatchedActualExecutableEnvironment,
+      makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedActualExecutableMismatchBinding =
+    findRuntimeBinding(
+      rejectedActualExecutableMismatchProof,
+      "BW::BWDATA::Game",
+      BindingKind::DataAddress);
+  const StructureLayout* rejectedActualExecutableMismatchLayout =
+    findStructureLayout(rejectedActualExecutableMismatchProof, "BW::BWGame");
+  const StructureField* rejectedActualExecutableMismatchField =
+    findStructureField(rejectedActualExecutableMismatchProof, "BW::BWGame", "elapsedFrames");
+  assert(rejectedActualExecutableMismatchBinding != nullptr
+    && !rejectedActualExecutableMismatchBinding->resolved);
+  assert(rejectedActualExecutableMismatchLayout != nullptr
+    && rejectedActualExecutableMismatchLayout->size == 0);
+  assert(rejectedActualExecutableMismatchField != nullptr
+    && !rejectedActualExecutableMismatchField->resolved);
+
+  RuntimeEnvironment unselectedProcessBridgeEnvironment = bridgeEnvironment;
+  unselectedProcessBridgeEnvironment.processId = 0;
+  RuntimeContract rejectedUnselectedProcessProof =
+    applyRuntimeExecutorBridgeContractProofs(
+      unselectedProcessBridgeEnvironment,
+      makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedUnselectedGameStateBinding =
+    findRuntimeBinding(rejectedUnselectedProcessProof, "BW::BWDATA::Game", BindingKind::DataAddress);
+  const StructureLayout* rejectedUnselectedGameStateLayout =
+    findStructureLayout(rejectedUnselectedProcessProof, "BW::BWGame");
+  const StructureField* rejectedUnselectedElapsedFrames =
+    findStructureField(rejectedUnselectedProcessProof, "BW::BWGame", "elapsedFrames");
+  assert(rejectedUnselectedGameStateBinding != nullptr && !rejectedUnselectedGameStateBinding->resolved);
+  assert(rejectedUnselectedGameStateLayout != nullptr && rejectedUnselectedGameStateLayout->size == 0);
+  assert(rejectedUnselectedElapsedFrames != nullptr && !rejectedUnselectedElapsedFrames->resolved);
+
   writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult freshResidentPreflight =
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
@@ -547,6 +598,16 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(!replayedResidentPreflight.executorAvailable);
   assert(!replayedResidentPreflight.errors.empty());
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    ready << "proof.issue_commands.source=mock-command-path\n";
+  }
+  RuntimeExecutorPreflightResult duplicateEvidencePreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(!duplicateEvidencePreflight.executorAvailable);
+  assert(!duplicateEvidencePreflight.errors.empty());
 
   writePartialValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult partialProofPreflight =

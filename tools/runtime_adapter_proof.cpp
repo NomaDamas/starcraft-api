@@ -12933,9 +12933,8 @@ namespace
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
   }
 
-  SelfUnitFixture makeSelfUnitFixture()
+  void initializeSelfUnitFixture(SelfUnitFixture& fixture)
   {
-    SelfUnitFixture fixture;
     for (std::size_t i = 0; i < fixture.records.size(); ++i)
     {
       auto& record = fixture.records[i];
@@ -12952,7 +12951,6 @@ namespace
       record[0x4d] = static_cast<unsigned char>(3 + i);
       writeU16(record, 0x64, static_cast<std::uint16_t>(i % 228));
     }
-    return fixture;
   }
 
   void initializeSelfUnitNodeFixture(SelfUnitNodeFixture& fixture)
@@ -13889,7 +13887,7 @@ int main(int argc, char** argv)
   std::string remasteredUnitNodeSnapshotFailure;
   if (self && selfUnitFixture)
   {
-    unitFixture = makeSelfUnitFixture();
+    initializeSelfUnitFixture(unitFixture);
     const std::uintptr_t fixtureAddress =
       reinterpret_cast<std::uintptr_t>(unitFixture.records.front().data());
     unitCandidateAddresses.erase(

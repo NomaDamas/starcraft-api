@@ -64,7 +64,7 @@ file(WRITE "${bridge_dir}/ready"
   "product=starcraft-remastered\n"
   "version=test-build\n"
   "process_id=${bridge_process_id}\n"
-  "executable=${STARCRAFT_RUNTIME_SUBMIT_COMMAND}\n"
+  "executable=${STARCRAFT_API_CMAKE_COMMAND}\n"
   "mode=validated-runtime-adapter\n"
   "resident.adapter=active\n"
   "resident.adapter.abi=starcraft-api-resident-adapter-v1\n"
@@ -117,7 +117,7 @@ execute_process(
   COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --manifest "${manifest}"
     --process-id "${bridge_process_id}"
-    --executable "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --executable "${STARCRAFT_API_CMAKE_COMMAND}"
     --bridge "${bridge_dir}"
     --game-action pauseGame
   RESULT_VARIABLE submit_result
@@ -137,6 +137,46 @@ file(READ "${bridge_dir}/commands.log" command_log)
 if(NOT command_log MATCHES "game-action\\|pauseGame\\|0\\|")
   stop_runtime_identity_process("${bridge_process_id}")
   message(FATAL_ERROR "expected pauseGame command in bridge log\nlog:\n${command_log}")
+endif()
+
+set(wrong_executable_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-submit-command-wrong-executable-bridge")
+file(REMOVE_RECURSE "${wrong_executable_bridge_dir}")
+file(MAKE_DIRECTORY "${wrong_executable_bridge_dir}")
+file(WRITE "${wrong_executable_bridge_dir}/issue_commands.snapshot.tsv"
+  "command\tstorage_kind\tencoded_bytes\n"
+  "pauseGame\tunit-test-runtime-command-queue-v1\t10\n")
+file(WRITE "${wrong_executable_bridge_dir}/ready"
+  "protocol=starcraft-api-file-bridge-v1\n"
+  "product=starcraft-remastered\n"
+  "version=test-build\n"
+  "process_id=${bridge_process_id}\n"
+  "executable=${STARCRAFT_RUNTIME_SUBMIT_COMMAND}\n"
+  "mode=validated-runtime-adapter\n"
+  "proof.command_surface=runtime-command-surface-v1\n"
+  "command.receiver=active\n"
+  "command.sink=runtime-command-queue-v1\n"
+  "proof.issue_commands=passed\n"
+  "proof.attach=passed\n")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --product starcraft-remastered
+    --version test-build
+    --process-id "${bridge_process_id}"
+    --executable "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --bridge "${wrong_executable_bridge_dir}"
+    --game-action pauseGame
+  RESULT_VARIABLE wrong_executable_result
+  OUTPUT_VARIABLE wrong_executable_output
+  ERROR_VARIABLE wrong_executable_error
+)
+if(wrong_executable_result EQUAL 0)
+  stop_runtime_identity_process("${bridge_process_id}")
+  message(FATAL_ERROR "expected live pid with wrong executable to fail\nstdout:\n${wrong_executable_output}\nstderr:\n${wrong_executable_error}")
+endif()
+if(NOT wrong_executable_output MATCHES "runtime process executable does not match selected runtime")
+  stop_runtime_identity_process("${bridge_process_id}")
+  message(FATAL_ERROR "expected executable identity failure\nstdout:\n${wrong_executable_output}\nstderr:\n${wrong_executable_error}")
 endif()
 
 execute_process(
@@ -188,14 +228,14 @@ file(WRITE "${bootstrap_bridge_dir}/ready"
   "product=starcraft-remastered\n"
   "version=test-build\n"
   "process_id=${bridge_process_id}\n"
-  "executable=${STARCRAFT_RUNTIME_SUBMIT_COMMAND}\n"
+  "executable=${STARCRAFT_API_CMAKE_COMMAND}\n"
   "mode=launch-attach-bootstrap\n")
 
 execute_process(
   COMMAND "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
     --manifest "${manifest}"
     --process-id "${bridge_process_id}"
-    --executable "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --executable "${STARCRAFT_API_CMAKE_COMMAND}"
     --bridge "${bootstrap_bridge_dir}"
     --game-action pauseGame
   RESULT_VARIABLE bootstrap_submit_result
@@ -216,7 +256,7 @@ execute_process(
     --product starcraft-remastered
     --version test-build
     --process-id "${bridge_process_id}"
-    --executable "${STARCRAFT_RUNTIME_SUBMIT_COMMAND}"
+    --executable "${STARCRAFT_API_CMAKE_COMMAND}"
     --bridge "${bridge_dir}"
     --game-action pauseGame
   RESULT_VARIABLE bridge_surface_result
@@ -238,4 +278,5 @@ endif()
 
 file(REMOVE_RECURSE "${bridge_dir}")
 file(REMOVE_RECURSE "${bootstrap_bridge_dir}")
+file(REMOVE_RECURSE "${wrong_executable_bridge_dir}")
 stop_runtime_identity_process("${bridge_process_id}")

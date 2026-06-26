@@ -1795,6 +1795,17 @@ namespace BWAPI::Runtime
       return result;
     }
 
+    const RuntimeProcessOpenResult runtimeProcess = openRuntimeProcess(environment);
+    if (!runtimeProcess.opened)
+    {
+      rejectSubmit(
+        result,
+        runtimeProcess.reason.empty()
+          ? "runtime process identity could not be verified before command submission"
+          : runtimeProcess.reason);
+      return result;
+    }
+
     RuntimeResidentBridgeValidationResult resident =
       validateRuntimeResidentBridgeReadyFile(environment, readyPath);
     if (resident.present && !resident.valid)

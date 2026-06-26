@@ -154,14 +154,42 @@ namespace BWAPI::Runtime
         + suffix;
     }
 
-    std::filesystem::path resolveReadyRelativePath(
+    bool pathIsWithinDirectory(
+      const std::filesystem::path& directory,
+      const std::filesystem::path& path)
+    {
+      auto directoryIt = directory.begin();
+      auto pathIt = path.begin();
+      for (; directoryIt != directory.end(); ++directoryIt, ++pathIt)
+      {
+        if (pathIt == path.end() || *directoryIt != *pathIt)
+          return false;
+      }
+      return true;
+    }
+
+    bool resolveContainedReadyRelativePath(
       const std::filesystem::path& readyPath,
-      const std::string& value)
+      const std::string& value,
+      std::filesystem::path& resolved)
     {
       std::filesystem::path path(value);
-      if (path.is_absolute())
-        return path;
-      return readyPath.parent_path() / path;
+      if (path.empty() || path.is_absolute())
+        return false;
+
+      resolved = (readyPath.parent_path() / path).lexically_normal();
+      std::error_code error;
+      const std::filesystem::path bridgeDirectory =
+        std::filesystem::canonical(readyPath.parent_path(), error);
+      if (error)
+        return false;
+      const std::filesystem::path canonicalResolved =
+        std::filesystem::canonical(resolved, error);
+      if (error || !pathIsWithinDirectory(bridgeDirectory, canonicalResolved))
+        return false;
+
+      resolved = canonicalResolved;
+      return true;
     }
 
     bool readResidentQueueHeaderFile(
@@ -213,8 +241,14 @@ namespace BWAPI::Runtime
           errors.push_back("resident adapter ready file has duplicate key: " + key);
       }
 
-      const std::filesystem::path queuePath =
-        resolveReadyRelativePath(readyPath, queuePathValue);
+      std::filesystem::path queuePath;
+      if (!resolveContainedReadyRelativePath(readyPath, queuePathValue, queuePath))
+      {
+        errors.push_back(
+          std::string("resident ") + label
+          + " queue path must be relative and inside the bridge directory");
+        return;
+      }
       RuntimeResidentQueueHeader header;
       if (!readResidentQueueHeaderFile(queuePath, header, errors))
         return;
@@ -436,6 +470,7 @@ namespace BWAPI::Runtime
 
     bool validateReadGameStateResidentSelfReadProof(
       const std::filesystem::path& readyPath,
+      int processId,
       const std::vector<std::uint64_t>& frames,
       std::vector<std::string>& errors)
     {
@@ -474,7 +509,7 @@ namespace BWAPI::Runtime
         return false;
       }
 
-      return true;
+      return validateReadGameStateLiveMemoryProof(readyPath, processId, frames, errors);
     }
 
     bool validateLiveReadableEvidenceAddress(
@@ -563,11 +598,6 @@ namespace BWAPI::Runtime
 
       std::uintptr_t readStateAddress = 0;
       parseAddress(readyValue(readyPath, "proof.read_game_state.address"), readStateAddress);
-      const bool residentPreservedActiveUnitMemory =
-        readyValue(readyPath, "resident.proof.active_match.validation")
-          == "resident-preserved-active-unit-memory-v1"
-        && readyValue(readyPath, "resident.proof.active_match.address_read")
-          == "resident-self";
       std::uintptr_t address = 0;
       if (evidence == "active-unit-records")
       {
@@ -586,8 +616,6 @@ namespace BWAPI::Runtime
           errors.push_back("resident active_match unit array evidence reuses the read_game_state counter address");
           return false;
         }
-        if (residentPreservedActiveUnitMemory)
-          return true;
         return validateLiveReadableEvidenceAddress(
           processId,
           address,
@@ -619,8 +647,6 @@ namespace BWAPI::Runtime
         errors.push_back("resident active_match unit-node evidence does not match read_units proof");
         return false;
       }
-      if (residentPreservedActiveUnitMemory)
-        return true;
       const std::size_t proofReadBytes =
         recordSize < 64
           ? static_cast<std::size_t>(recordSize)
@@ -996,7 +1022,11 @@ namespace BWAPI::Runtime
           == "resident-self-read-v1";
       if (readGameStateValid
           && residentSelfReadProof
-          && !validateReadGameStateResidentSelfReadProof(readyPath, frames, result.errors))
+          && !validateReadGameStateResidentSelfReadProof(
+            readyPath,
+            resident.processId,
+            frames,
+            result.errors))
       {
         readGameStateValid = false;
       }
@@ -1196,6 +1226,12 @@ namespace BWAPI::Runtime
         actualHeader.readSequence = existing.readSequence;
         actualHeader.writeSequence = existing.writeSequence;
       }
+    }
+
+    {
+      std::ofstream createQueue(queuePath, std::ios::binary | std::ios::app);
+      if (!createQueue)
+        addError(desired.errors, "unable to create resident queue file");
     }
 
     std::error_code resizeError;

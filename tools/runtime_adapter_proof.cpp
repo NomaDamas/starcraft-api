@@ -2079,7 +2079,101 @@ namespace
   {
     return startsWith(line, "resident.adapter")
       || startsWith(line, "resident.queue.")
+      || startsWith(line, "resident.proof.")
+      || line == "proof.read_game_state=passed"
+      || line == "proof.active_match_state=passed"
+      || line == "proof.read_units=passed"
+      || startsWith(line, "proof.read_game_state.")
+      || startsWith(line, "proof.active_match_state.")
+      || startsWith(line, "proof.read_units.")
       || startsWith(line, "resident.projection.");
+  }
+
+  bool parseLastUnsignedCsvValue(const std::string& value, std::uint64_t& output)
+  {
+    if (value.empty())
+      return false;
+
+    std::size_t start = 0;
+    bool sawValue = false;
+    while (start <= value.size())
+    {
+      const std::size_t comma = value.find(',', start);
+      const std::string part =
+        comma == std::string::npos
+          ? value.substr(start)
+          : value.substr(start, comma - start);
+      if (part.empty() || !parseUnsignedStrict(part, output))
+        return false;
+      sawValue = true;
+      if (comma == std::string::npos)
+        break;
+      start = comma + 1;
+    }
+    return sawValue;
+  }
+
+  struct IssueCommandsSnapshotMetadata
+  {
+    int processId = 0;
+    std::uint64_t heartbeat = 0;
+    std::uint64_t frameId = 0;
+    bool activeMatchCorrelated = false;
+  };
+
+  bool readIssueCommandsSnapshotMetadata(
+    const RuntimeEnvironment& environment,
+    IssueCommandsSnapshotMetadata& metadata,
+    std::string& reason)
+  {
+    const std::filesystem::path readyPath =
+      std::filesystem::path(environment.executorBridgePath) / RuntimeExecutorBridgeReadyFile;
+    const std::vector<std::string> lines = readReadyFileLines(readyPath);
+    if (lines.empty())
+    {
+      reason = "issue-commands production snapshot requires an existing resident adapter ready file";
+      return false;
+    }
+    if (!existingReadyIdentityMatches(lines, environment) || !readyWasWrittenByResidentAdapter(lines))
+    {
+      reason = "issue-commands production snapshot requires current-runtime resident adapter metadata";
+      return false;
+    }
+
+    int residentProcessId = 0;
+    std::uint64_t heartbeat = 0;
+    std::uint64_t readGameStateHeartbeat = 0;
+    std::uint64_t activeMatchHeartbeat = 0;
+    if (!parsePositiveInt(readyValue(lines, "resident.adapter.process_id"), residentProcessId)
+        || residentProcessId != environment.processId
+        || !parseUnsignedStrict(readyValue(lines, "resident.adapter.heartbeat"), heartbeat)
+        || heartbeat == 0
+        || readyValue(lines, "proof.read_game_state") != "passed"
+        || readyValue(lines, "proof.active_match_state") != "passed"
+        || readyValue(lines, "resident.proof.read_game_state.source") != "resident"
+        || readyValue(lines, "resident.proof.active_match.source") != "resident"
+        || readyValue(lines, "resident.proof.active_match.mode") != "match"
+        || !parseUnsignedStrict(
+          readyValue(lines, "resident.proof.read_game_state.heartbeat"),
+          readGameStateHeartbeat)
+        || readGameStateHeartbeat != heartbeat
+        || !parseUnsignedStrict(
+          readyValue(lines, "resident.proof.active_match.heartbeat"),
+          activeMatchHeartbeat)
+        || activeMatchHeartbeat != heartbeat
+        || !parseLastUnsignedCsvValue(
+          readyValue(lines, "resident.proof.read_game_state.frame_samples"),
+          metadata.frameId)
+        || metadata.frameId == 0)
+    {
+      reason = "issue-commands production snapshot requires resident frame and active-match correlation metadata";
+      return false;
+    }
+
+    metadata.processId = residentProcessId;
+    metadata.heartbeat = heartbeat;
+    metadata.activeMatchCorrelated = true;
+    return true;
   }
 
   bool shouldSkipImageMappedRegion(
@@ -10874,8 +10968,16 @@ namespace
   bool writeIssueCommandsSnapshot(
     const std::filesystem::path& path,
     const IssueCommandsProof& proof,
+    const RuntimeEnvironment& environment,
     std::string& reason)
   {
+    IssueCommandsSnapshotMetadata metadata;
+    if (proof.passed
+        && !readIssueCommandsSnapshotMetadata(environment, metadata, reason))
+    {
+      return false;
+    }
+
     std::ofstream output(path);
     if (!output)
     {
@@ -10883,10 +10985,22 @@ namespace
       return false;
     }
 
+    if (proof.passed)
+    {
+      output << "# schema=starcraft-api.resident-snapshot.v1\n";
+      output << "# proof=issue_commands\n";
+      output << "# source_identity=resident-adapter\n";
+      output << "# process_id=" << metadata.processId << '\n';
+      output << "# heartbeat=" << metadata.heartbeat << '\n';
+      output << "# frame_id=" << metadata.frameId << '\n';
+      output << "# active_match_correlated="
+             << (metadata.activeMatchCorrelated ? "true" : "false") << '\n';
+    }
     output << "field\tvalue\n";
     output << "passed\t" << (proof.passed ? "true" : "false") << '\n';
     output << "delivery_checked\t" << (proof.deliveryChecked ? "true" : "false") << '\n';
     output << "behavior_checked\t" << (proof.behaviorChecked ? "true" : "false") << '\n';
+    output << "live_behavior_witness\tstarcraft-runtime-adapter-proof-live-write-v1\n";
     output << "self_fixture\t" << (proof.selfFixture ? "true" : "false") << '\n';
     output << "receiver_active\t" << (proof.receiverActive ? "true" : "false") << '\n';
     output << "stale_proof_bytes_cleared\t" << (proof.staleProofBytesCleared ? "true" : "false") << '\n';
@@ -15649,6 +15763,7 @@ int main(int argc, char** argv)
     const bool issueWritten = writeIssueCommandsSnapshot(
       issueCommandsPath,
       issueCommandsProof,
+      environment,
       issueReason);
     issueCommandsSnapshotWritten = issueWritten;
     std::cout << "issue_commands.snapshot.success="
@@ -15727,9 +15842,7 @@ int main(int argc, char** argv)
     && willWriteReadGameStateProof
     && willWriteReadUnitsProof;
   const bool willWriteIssueCommandsProof =
-    proveIssueCommands
-    && issueCommandsProof.passed
-    && issueCommandsSnapshotWritten;
+    false;
   const bool willWriteDrawOverlaysProof =
     proveDrawOverlays
     && drawOverlaysProof.passed
@@ -15822,6 +15935,8 @@ int main(int argc, char** argv)
         for (const std::string& line : existingReadyLines)
         {
           if (!preservableResidentEvidenceLine(line))
+            continue;
+          if (readyLineReferencesAnyProofToken(line, invalidatedProofTokens))
             continue;
           if (preservedResident.insert(line).second)
             preservedResidentEvidenceLines.push_back(line);
@@ -15969,44 +16084,6 @@ int main(int argc, char** argv)
   }
   if (unitScanDiagnosticsSnapshotWritten)
     ready << "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv\n";
-  if (proveIssueCommands
-      && issueCommandsProof.passed
-      && issueCommandsSnapshotWritten)
-  {
-    if (issueCommandsProof.receiverActive)
-    {
-      ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
-      ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
-      ready << "command.sink=adapter-local-state-v1\n";
-    }
-    ready << "proof.issue_commands.command=" << issueCommandsProof.commandName << '\n';
-    ready << "proof.issue_commands.source=live-sc-r-command-path\n";
-    ready << "proof.issue_commands.delivery_checked="
-          << (issueCommandsProof.deliveryChecked ? "true" : "false") << '\n';
-    ready << "proof.issue_commands.behavior_checked="
-          << (issueCommandsProof.behaviorChecked ? "true" : "false") << '\n';
-    ready << "proof.issue_commands.self_fixture="
-          << (issueCommandsProof.selfFixture ? "true" : "false") << '\n';
-    ready << "proof.issue_commands.pause_frame_counter_matched="
-          << (issueCommandsProof.pauseFrameCounterMatched ? "true" : "false") << '\n';
-    ready << "proof.issue_commands.vector_address="
-          << hexAddress(issueCommandsProof.vectorAddress) << '\n';
-    ready << "proof.issue_commands.storage_kind="
-          << issueCommandsProof.commandQueue.storageKind << '\n';
-    ready << "proof.issue_commands.bytes_in_queue_address="
-          << hexAddress(issueCommandsProof.commandQueue.bytesInQueueAddress) << '\n';
-    ready << "proof.issue_commands.frame_counter_address="
-          << hexAddress(issueCommandsProof.frameCounterAddress) << '\n';
-    ready << "proof.issue_commands.encoded_bytes=" << issueCommandsProof.encodedBytes << '\n';
-    ready << "proof.issue_commands.stale_proof_bytes_cleared="
-          << (issueCommandsProof.staleProofBytesCleared ? "true" : "false") << '\n';
-    ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
-    ready << "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue|proof.issue_commands=passed:"
-          << hexAddress(issueCommandsProof.commandQueue.bytesInQueueAddress) << '\n';
-    ready << "contract.binding.BW::BWDATA::TurnBuffer=command-queue|proof.issue_commands=passed:"
-          << hexAddress(issueCommandsProof.bufferBegin) << '\n';
-    ready << issueCommandsBehaviorProof->readyFileLine << '\n';
-  }
   if (proveIssueCommands && issueCommandsSnapshotWritten)
   {
     ready << "diagnostic.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
@@ -16317,10 +16394,7 @@ int main(int argc, char** argv)
     std::cout << activeMatchStateBehaviorProof->readyFileLine << '\n';
   if (readUnitsReady)
     std::cout << readUnitsBehaviorProof->readyFileLine << '\n';
-  if (proveIssueCommands
-      && issueCommandsProof.passed
-      && issueCommandsSnapshotWritten
-      && issueCommandsProof.receiverActive)
+  if (willWriteIssueCommandsProof)
     std::cout << issueCommandsBehaviorProof->readyFileLine << '\n';
   if (proveDrawOverlays && drawOverlaysProof.passed && drawOverlaysSnapshotWritten)
     std::cout << drawOverlaysBehaviorProof->readyFileLine << '\n';

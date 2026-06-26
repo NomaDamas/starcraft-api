@@ -3462,25 +3462,25 @@ namespace
     for (const std::string& line :
          makeRuntimeResidentQueueReadyLines(
            RuntimeResidentQueueKind::Command,
-           commandQueuePath,
+           RuntimeResidentCommandQueueFile,
            commandQueueHeader))
       appendReadyLine(line);
     for (const std::string& line :
          makeRuntimeResidentQueueReadyLines(
            RuntimeResidentQueueKind::Overlay,
-           overlayQueuePath,
+           RuntimeResidentOverlayQueueFile,
            overlayQueueHeader))
       appendReadyLine(line);
     for (const std::string& line :
          makeRuntimeResidentQueueReadyLines(
            RuntimeResidentQueueKind::Proof,
-           proofQueuePath,
+           RuntimeResidentProofQueueFile,
            proofQueueHeader))
       appendReadyLine(line);
 
     appendReadyLine("proof.attach=passed");
     appendReadyLine("proof.attach.source=resident-adapter");
-    appendReadyLine("proof.attach.queue=" + proofQueuePath.string());
+    appendReadyLine(std::string("proof.attach.queue=") + RuntimeResidentProofQueueFile);
     appendReadyLine("contract.binding.shared-memory-client-transport=transport|proof.attach=passed:resident-proof-queue-v1");
 
     if (frameCounterProof.passed && frameCounterProof.samples.size() >= 3)

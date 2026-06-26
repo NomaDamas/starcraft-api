@@ -425,6 +425,30 @@ int main(int argc, char** argv)
     bridgePath / RuntimeExecutorBridgeReadyFile,
     resident);
   assert(stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
+  residentPreservedActiveLines =
+    residentStateProofLines(
+      environment,
+      18,
+      4,
+      "match",
+      true,
+      true,
+      reinterpret_cast<std::uintptr_t>(activeUnitEvidence.data()));
+  residentPreservedActiveLines.push_back(
+    "resident.proof.active_match.validation=resident-preserved-active-unit-memory-v1");
+  residentPreservedActiveLines.push_back(
+    "resident.proof.active_match.address_read=resident-self");
+  writeReadyFile(environment, 18, residentPreservedActiveLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
   assert(stateProof.activeMatchValid);
 
   writeReadyFile(environment, 7, { "proof.issue_commands=passed" });
@@ -728,12 +752,39 @@ int main(int argc, char** argv)
     21,
     makeRuntimeResidentQueueReadyLines(
       RuntimeResidentQueueKind::Proof,
-      proofQueuePath,
+      RuntimeResidentProofQueueFile,
       proofQueue));
   resident = validateRuntimeResidentBridgeReadyFile(
     environment,
     bridgePath / RuntimeExecutorBridgeReadyFile);
   assert(resident.valid);
+
+  const std::filesystem::path outsideProofQueuePath =
+    bridgePath.parent_path() / "starcraft-api-outside-proof.queue";
+  writeQueueFile(outsideProofQueuePath, proofQueue);
+  writeReadyFile(
+    environment,
+    21,
+    makeRuntimeResidentQueueReadyLines(
+      RuntimeResidentQueueKind::Proof,
+      outsideProofQueuePath,
+      proofQueue));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  assert(!resident.valid);
+
+  writeReadyFile(
+    environment,
+    21,
+    makeRuntimeResidentQueueReadyLines(
+      RuntimeResidentQueueKind::Proof,
+      std::filesystem::path("..") / outsideProofQueuePath.filename(),
+      proofQueue));
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  assert(!resident.valid);
 
   proofQueue.heartbeat = 25;
   writeQueueFile(proofQueuePath, proofQueue);
@@ -757,7 +808,7 @@ int main(int argc, char** argv)
     22,
     makeRuntimeResidentQueueReadyLines(
       RuntimeResidentQueueKind::Proof,
-      proofQueuePath,
+      RuntimeResidentProofQueueFile,
       proofQueue));
   resident = validateRuntimeResidentBridgeReadyFile(
     environment,
@@ -774,5 +825,6 @@ int main(int argc, char** argv)
   assert(!planRuntimeResidentAdapterLoad(loadRequest).valid);
 
   std::filesystem::remove_all(bridgePath);
+  std::filesystem::remove(outsideProofQueuePath);
   return 0;
 }

@@ -245,6 +245,7 @@ namespace
     ready << "proof.read_bullet_data.address=0x1800\n";
     ready << "proof.read_bullet_data.record_size=128\n";
     ready << "proof.read_bullet_data.active_records=2\n";
+    ready << "proof.read_bullet_data.unit_correlated_records=2\n";
     ready << "proof.read_bullet_data.snapshot=bullets.snapshot.tsv\n";
     ready << "proof.read_region_data.source=live-bwapi-region-graph\n";
     ready << "proof.read_region_data.region_count=3\n";

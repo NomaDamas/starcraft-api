@@ -218,6 +218,10 @@ endif()
 file(READ "${issue_commands_ready_file}" issue_commands_ready)
 foreach(forbidden
     "proof.issue_commands=passed"
+    "proof.issue_commands.command.pauseGame=passed"
+    "proof.issue_commands.command.resumeGame=passed"
+    "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed"
+    "command_surface.live_game_action.1=resumeGame|live-proven|proof.issue_commands.command.resumeGame=passed"
     "command.receiver=active"
     "command.sink=runtime-command-queue-v1"
     "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue"
@@ -225,6 +229,14 @@ foreach(forbidden
   string(FIND "${issue_commands_ready}" "${forbidden}" forbidden_index)
   if(NOT forbidden_index EQUAL -1)
     message(FATAL_ERROR "self issue-commands proof must not claim production command path '${forbidden}'\n${issue_commands_ready}")
+  endif()
+endforeach()
+foreach(forbidden
+    "issue_commands.command.pauseGame.snapshot.success=true"
+    "issue_commands.command.resumeGame.snapshot.success=true")
+  string(FIND "${issue_commands_output}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "self issue-commands output must not emit command-specific proof '${forbidden}'\n${issue_commands_output}")
   endif()
 endforeach()
 
@@ -245,6 +257,13 @@ foreach(needle
   string(FIND "${issue_commands_snapshot_content}" "${needle}" needle_index)
   if(needle_index EQUAL -1)
     message(FATAL_ERROR "self issue-commands snapshot missing '${needle}'\n${issue_commands_snapshot_content}")
+  endif()
+endforeach()
+foreach(forbidden_snapshot
+    "${issue_commands_bridge_dir}/issue_commands.pauseGame.snapshot.tsv"
+    "${issue_commands_bridge_dir}/issue_commands.resumeGame.snapshot.tsv")
+  if(EXISTS "${forbidden_snapshot}")
+    message(FATAL_ERROR "self issue-commands proof must not write command-specific snapshot '${forbidden_snapshot}'")
   endif()
 endforeach()
 
@@ -307,6 +326,10 @@ endif()
 file(READ "${issue_commands_explicit_ready_file}" issue_commands_explicit_ready)
 foreach(forbidden
     "proof.issue_commands=passed"
+    "proof.issue_commands.command.pauseGame=passed"
+    "proof.issue_commands.command.resumeGame=passed"
+    "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed"
+    "command_surface.live_game_action.1=resumeGame|live-proven|proof.issue_commands.command.resumeGame=passed"
     "command.receiver=active"
     "command.sink=runtime-command-queue-v1"
     "contract.binding.BW::BWDATA::sgdwBytesInCmdQueue=command-queue"
@@ -314,6 +337,21 @@ foreach(forbidden
   string(FIND "${issue_commands_explicit_ready}" "${forbidden}" forbidden_index)
   if(NOT forbidden_index EQUAL -1)
     message(FATAL_ERROR "invalid explicit issue-commands proof must not claim production command path '${forbidden}'\n${issue_commands_explicit_ready}")
+  endif()
+endforeach()
+foreach(forbidden
+    "issue_commands.command.pauseGame.snapshot.success=true"
+    "issue_commands.command.resumeGame.snapshot.success=true")
+  string(FIND "${issue_commands_explicit_output}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "invalid explicit issue-commands output must not emit command-specific proof '${forbidden}'\n${issue_commands_explicit_output}")
+  endif()
+endforeach()
+foreach(forbidden_snapshot
+    "${issue_commands_explicit_bridge_dir}/issue_commands.pauseGame.snapshot.tsv"
+    "${issue_commands_explicit_bridge_dir}/issue_commands.resumeGame.snapshot.tsv")
+  if(EXISTS "${forbidden_snapshot}")
+    message(FATAL_ERROR "invalid explicit issue-commands proof must not write command-specific snapshot '${forbidden_snapshot}'")
   endif()
 endforeach()
 

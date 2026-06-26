@@ -593,8 +593,11 @@ int main()
     ready << "proof.issue_commands.command.Attack_Move.snapshot=issue_commands.Attack_Move.snapshot.tsv\n";
     ready << "proof.issue_commands.command.pauseGame=passed\n";
     ready << "proof.issue_commands.command.pauseGame.snapshot=issue_commands.pauseGame.snapshot.tsv\n";
+    ready << "proof.issue_commands.command.resumeGame=passed\n";
+    ready << "proof.issue_commands.command.resumeGame.snapshot=issue_commands.resumeGame.snapshot.tsv\n";
     ready << "command_surface.live_unit_command.0=Attack_Move|live-proven|proof.issue_commands.command.Attack_Move=passed\n";
     ready << "command_surface.live_game_action.0=pauseGame|live-proven|proof.issue_commands.command.pauseGame=passed\n";
+    ready << "command_surface.live_game_action.1=resumeGame|live-proven|proof.issue_commands.command.resumeGame=passed\n";
     writeCommandSpecificProofSnapshot(
       bridgeDir / "issue_commands.Attack_Move.snapshot.tsv",
       "Attack_Move",
@@ -605,6 +608,13 @@ int main()
     writeCommandSpecificProofSnapshot(
       bridgeDir / "issue_commands.pauseGame.snapshot.tsv",
       "pauseGame",
+      "game-action",
+      currentProcessId(),
+      heartbeat,
+      102);
+    writeCommandSpecificProofSnapshot(
+      bridgeDir / "issue_commands.resumeGame.snapshot.tsv",
+      "resumeGame",
       "game-action",
       currentProcessId(),
       heartbeat,
@@ -624,7 +634,7 @@ int main()
     "pauseGame") == RuntimeCommandEvidenceStatus::LiveProven);
   assert(commandEvidenceStatusFor(
     commandSpecificProofProbe.implementedGameActionEvidence,
-    "resumeGame") == RuntimeCommandEvidenceStatus::MockTested);
+    "resumeGame") == RuntimeCommandEvidenceStatus::LiveProven);
 
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);

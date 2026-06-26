@@ -19,6 +19,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -1109,6 +1110,14 @@ namespace
     std::string reason;
   };
 
+  struct ResidentCommandSpecificIssueProof
+  {
+    std::string commandName;
+    std::string commandKind;
+    std::string snapshotName;
+    std::unordered_map<std::string, std::string> fields;
+  };
+
   std::vector<std::string> splitString(const std::string& value, char delimiter)
   {
     std::vector<std::string> parts;
@@ -1119,6 +1128,362 @@ namespace
     if (!value.empty() && value.back() == delimiter)
       parts.emplace_back();
     return parts;
+  }
+
+  bool safeBridgeRelativeFileName(const std::string& value)
+  {
+    if (value.empty())
+      return false;
+    std::filesystem::path path(value);
+    return !path.is_absolute()
+      && path.parent_path().empty()
+      && path.filename().string() == value;
+  }
+
+  bool readCommandSpecificSnapshotTables(
+    const std::filesystem::path& path,
+    std::unordered_map<std::string, std::string>& metadata,
+    std::unordered_map<std::string, std::string>& fields)
+  {
+    metadata.clear();
+    fields.clear();
+
+    std::ifstream input(path);
+    if (!input)
+      return false;
+
+    bool sawFieldHeader = false;
+    std::string line;
+    while (std::getline(input, line))
+    {
+      if (line.empty())
+        continue;
+      if (!sawFieldHeader && startsWith(line, "# "))
+      {
+        const std::size_t separator = line.find('=');
+        if (separator == std::string::npos || separator <= 2)
+          return false;
+        const std::string key = line.substr(2, separator - 2);
+        const std::string value = line.substr(separator + 1);
+        if (key.empty() || !metadata.emplace(key, value).second)
+          return false;
+        continue;
+      }
+      if (!sawFieldHeader)
+      {
+        if (line != "field\tvalue")
+          return false;
+        sawFieldHeader = true;
+        continue;
+      }
+
+      const std::size_t separator = line.find('\t');
+      if (separator == std::string::npos
+          || separator == 0
+          || line.find('\t', separator + 1) != std::string::npos)
+      {
+        return false;
+      }
+      const std::string key = line.substr(0, separator);
+      const std::string value = line.substr(separator + 1);
+      if (!fields.emplace(key, value).second)
+        return false;
+    }
+
+    return sawFieldHeader && !metadata.empty() && !fields.empty();
+  }
+
+  std::string tableValue(
+    const std::unordered_map<std::string, std::string>& table,
+    const std::string& key)
+  {
+    auto it = table.find(key);
+    return it == table.end() ? std::string{} : it->second;
+  }
+
+  bool tableValueIsTrue(
+    const std::unordered_map<std::string, std::string>& table,
+    const std::string& key)
+  {
+    return tableValue(table, key) == "true";
+  }
+
+  bool tableValueIsFalse(
+    const std::unordered_map<std::string, std::string>& table,
+    const std::string& key)
+  {
+    return tableValue(table, key) == "false";
+  }
+
+  bool tableUnsignedValue(
+    const std::unordered_map<std::string, std::string>& table,
+    const std::string& key,
+    std::uint64_t& parsed)
+  {
+    return parseUnsignedValue(tableValue(table, key), parsed);
+  }
+
+  bool commandSpecificSnapshotPayloadValid(
+    const ResidentCommandSpecificIssueProof& proof)
+  {
+    std::uint64_t encodedBytes = 0;
+    std::uint64_t attemptCount = 0;
+    std::uint64_t appendedBytes = 0;
+    std::uint64_t behaviorSampleCount = 0;
+    std::uint64_t vectorAddress = 0;
+    std::uint64_t bytesInQueueAddress = 0;
+    std::uint64_t frameCounterAddress = 0;
+    std::uint64_t unitId = 0;
+
+    return tableValueIsTrue(proof.fields, "passed")
+      && tableValueIsTrue(proof.fields, "delivery_checked")
+      && tableValueIsTrue(proof.fields, "behavior_checked")
+      && tableValueIsTrue(proof.fields, "receiver_active")
+      && tableValueIsTrue(proof.fields, "behavior_observed")
+      && tableValueIsFalse(proof.fields, "self_fixture")
+      && tableValue(proof.fields, "command") == proof.commandName
+      && tableValue(proof.fields, "command_kind") == proof.commandKind
+      && tableValue(proof.fields, "live_behavior_witness")
+        == "starcraft-runtime-adapter-proof-command-behavior-v1"
+      && tableValue(proof.fields, "storage_kind") == "live-sc-r-command-queue-v1"
+      && tableValue(proof.fields, "issue_commands_required_adapter_abi")
+        == BWAPI::Runtime::RuntimeResidentAdapterAbi
+      && tableValue(proof.fields, "issue_commands_required_adapter_location")
+        == "in-process-target-runtime"
+      && tableValue(proof.fields, "issue_commands_required_adapter_thread_policy")
+        == "execute-on-target-runtime-thread"
+      && tableValue(proof.fields, "issue_commands_required_adapter_behavior")
+        == "encoded-bwapi-command-reaches-live-scr-command-path-and-changes-frame-behavior"
+      && tableValue(proof.fields, "issue_commands_required_adapter_promotion_rule")
+        == "promote-only-this-command-name-from-this-snapshot"
+      && tableUnsignedValue(proof.fields, "encoded_bytes", encodedBytes)
+      && encodedBytes > 0
+      && tableUnsignedValue(proof.fields, "attempt_count", attemptCount)
+      && attemptCount > 0
+      && tableUnsignedValue(proof.fields, "appended_bytes", appendedBytes)
+      && appendedBytes > 0
+      && tableUnsignedValue(proof.fields, "behavior_sample_count", behaviorSampleCount)
+      && behaviorSampleCount > 0
+      && tableUnsignedValue(proof.fields, "vector_address", vectorAddress)
+      && vectorAddress > 0
+      && tableUnsignedValue(proof.fields, "bytes_in_queue_address", bytesInQueueAddress)
+      && bytesInQueueAddress > 0
+      && tableUnsignedValue(proof.fields, "frame_counter_address", frameCounterAddress)
+      && frameCounterAddress > 0
+      && (proof.commandKind != "unit-command"
+          || (tableUnsignedValue(proof.fields, "unit_id", unitId) && unitId > 0));
+  }
+
+  bool commandSpecificSnapshotMetadataValid(
+    const std::unordered_map<std::string, std::string>& metadata,
+    const ResidentCommandSpecificIssueProof& proof,
+    const BWAPI::Runtime::RuntimeEnvironment& environment,
+    std::uint64_t currentHeartbeat)
+  {
+    std::uint64_t processId = 0;
+    std::uint64_t heartbeat = 0;
+    std::uint64_t frameId = 0;
+    return tableValue(metadata, "schema") == "starcraft-api.resident-snapshot.v1"
+      && tableValue(metadata, "proof") == "issue_commands.command"
+      && tableValue(metadata, "source_identity") == "resident-adapter"
+      && tableValue(metadata, "active_match_correlated") == "true"
+      && tableValue(metadata, "command") == proof.commandName
+      && tableValue(metadata, "command_kind") == proof.commandKind
+      && tableUnsignedValue(metadata, "process_id", processId)
+      && processId == static_cast<std::uint64_t>(environment.processId)
+      && tableUnsignedValue(metadata, "heartbeat", heartbeat)
+      && heartbeat > 0
+      && heartbeat <= currentHeartbeat
+      && currentHeartbeat - heartbeat <= 5
+      && tableUnsignedValue(metadata, "frame_id", frameId)
+      && frameId > 0;
+  }
+
+  bool loadCommandSpecificIssueProofSnapshot(
+    const std::filesystem::path& bridgePath,
+    const BWAPI::Runtime::RuntimeEnvironment& environment,
+    std::uint64_t currentHeartbeat,
+    const std::string& commandName,
+    const std::string& commandKind,
+    const std::string& snapshotName,
+    ResidentCommandSpecificIssueProof& proof)
+  {
+    if (!safeBridgeRelativeFileName(snapshotName)
+        || commandName.empty()
+        || (commandKind != "unit-command" && commandKind != "game-action"))
+    {
+      return false;
+    }
+
+    proof = {};
+    proof.commandName = commandName;
+    proof.commandKind = commandKind;
+    proof.snapshotName = snapshotName;
+
+    std::unordered_map<std::string, std::string> metadata;
+    if (!readCommandSpecificSnapshotTables(
+          bridgePath / snapshotName,
+          metadata,
+          proof.fields))
+    {
+      return false;
+    }
+
+    return commandSpecificSnapshotMetadataValid(metadata, proof, environment, currentHeartbeat)
+      && commandSpecificSnapshotPayloadValid(proof);
+  }
+
+  std::vector<ResidentCommandSpecificIssueProof> readPendingCommandSpecificIssueProofs(
+    const std::filesystem::path& bridgePath,
+    const BWAPI::Runtime::RuntimeEnvironment& environment,
+    std::uint64_t currentHeartbeat)
+  {
+    std::vector<ResidentCommandSpecificIssueProof> proofs;
+    std::ifstream input(
+      bridgePath / BWAPI::Runtime::RuntimeExecutorBridgeIssueCommandProofPendingFile);
+    if (!input)
+      return proofs;
+
+    std::string line;
+    if (!std::getline(input, line) || line != "command\tcommand_kind\tsnapshot")
+      return {};
+
+    std::unordered_set<std::string> seenCommands;
+    while (std::getline(input, line))
+    {
+      if (line.empty())
+        continue;
+      const std::vector<std::string> parts = splitString(line, '\t');
+      if (parts.size() != 3 || !seenCommands.insert(parts[0]).second)
+        return {};
+
+      ResidentCommandSpecificIssueProof proof;
+      if (!loadCommandSpecificIssueProofSnapshot(
+            bridgePath,
+            environment,
+            currentHeartbeat,
+            parts[0],
+            parts[1],
+            parts[2],
+            proof))
+      {
+        return {};
+      }
+      proofs.push_back(std::move(proof));
+    }
+    return proofs;
+  }
+
+  std::vector<ResidentCommandSpecificIssueProof> readReadyCommandSpecificIssueProofs(
+    const std::filesystem::path& bridgePath,
+    const std::vector<std::string>& existingReadyLines,
+    const BWAPI::Runtime::RuntimeEnvironment& environment,
+    std::uint64_t currentHeartbeat)
+  {
+    std::vector<ResidentCommandSpecificIssueProof> proofs;
+    std::unordered_set<std::string> seenCommands;
+    constexpr const char* prefix = "proof.issue_commands.command.";
+    for (const std::string& line : existingReadyLines)
+    {
+      if (!startsWith(line, prefix))
+        continue;
+      const std::string key = readyLineKey(line);
+      if (key.empty() || !startsWith(key, prefix))
+        continue;
+      const std::string suffix = key.substr(std::strlen(prefix));
+      if (suffix.empty() || suffix.find('.') != std::string::npos)
+        continue;
+      if (readyValue(existingReadyLines, key) != "passed"
+          || !seenCommands.insert(suffix).second)
+      {
+        return {};
+      }
+      const std::string snapshotName =
+        readyValue(existingReadyLines, key + ".snapshot");
+      ResidentCommandSpecificIssueProof proof;
+      if (!loadCommandSpecificIssueProofSnapshot(
+            bridgePath,
+            environment,
+            currentHeartbeat,
+            suffix,
+            "game-action",
+            snapshotName,
+            proof))
+      {
+        if (!loadCommandSpecificIssueProofSnapshot(
+              bridgePath,
+              environment,
+              currentHeartbeat,
+              suffix,
+              "unit-command",
+              snapshotName,
+              proof))
+        {
+          return {};
+        }
+      }
+      proofs.push_back(std::move(proof));
+    }
+    return proofs;
+  }
+
+  bool writeRefreshedCommandSpecificIssueSnapshot(
+    const std::filesystem::path& path,
+    const ResidentCommandSpecificIssueProof& proof,
+    const ResidentSnapshotContext& context)
+  {
+    std::ofstream output(path, std::ios::trunc);
+    if (!output)
+      return false;
+
+    output << "# schema=starcraft-api.resident-snapshot.v1\n";
+    output << "# proof=issue_commands.command\n";
+    output << "# source_identity=resident-adapter\n";
+    output << "# process_id=" << context.processId << '\n';
+    output << "# heartbeat=" << context.heartbeat << '\n';
+    output << "# frame_id=" << context.frameId << '\n';
+    output << "# active_match_correlated="
+           << (context.activeMatchCorrelated ? "true" : "false") << '\n';
+    output << "# command=" << proof.commandName << '\n';
+    output << "# command_kind=" << proof.commandKind << '\n';
+    output << "field\tvalue\n";
+
+    const char* requiredFields[] = {
+      "passed",
+      "delivery_checked",
+      "behavior_checked",
+      "receiver_active",
+      "behavior_observed",
+      "self_fixture",
+      "live_behavior_witness",
+      "command",
+      "command_kind",
+      "encoded_bytes",
+      "attempt_count",
+      "storage_kind",
+      "vector_address",
+      "bytes_in_queue_address",
+      "frame_counter_address",
+      "appended_bytes",
+      "behavior_sample_count",
+      "behavior_observation",
+      "baseline_delta",
+      "paused_delta",
+      "resumed_delta",
+      "issue_commands_required_adapter_abi",
+      "issue_commands_required_adapter_location",
+      "issue_commands_required_adapter_thread_policy",
+      "issue_commands_required_adapter_behavior",
+      "issue_commands_required_adapter_promotion_rule",
+      "unit_id"
+    };
+    for (const char* key : requiredFields)
+    {
+      const std::string value = tableValue(proof.fields, key);
+      if (!value.empty())
+        output << key << '\t' << value << '\n';
+    }
+    return static_cast<bool>(output);
   }
 
   bool parseIntStrict(const std::string& value, int& parsed)
@@ -3962,6 +4327,83 @@ namespace
       appendReadyLine("diagnostic.draw_overlays.required_adapter_behavior=bwapi-overlay-primitives-render-on-visible-game-frame");
       if (!overlayIngressProof.reason.empty())
         appendReadyLine("diagnostic.draw_overlays.reason=" + overlayIngressProof.reason);
+    }
+
+    if (hasResidentFrame && unitSnapshotWritten)
+    {
+      std::vector<ResidentCommandSpecificIssueProof> commandSpecificProofs =
+        readPendingCommandSpecificIssueProofs(
+          bridgePath,
+          environment,
+          proofQueueHeader.heartbeat);
+      std::vector<ResidentCommandSpecificIssueProof> readyCommandSpecificProofs =
+        readReadyCommandSpecificIssueProofs(
+          bridgePath,
+          existingReadyLines,
+          environment,
+          proofQueueHeader.heartbeat);
+      std::unordered_set<std::string> mergedCommandSpecificProofs;
+      for (const ResidentCommandSpecificIssueProof& proof : commandSpecificProofs)
+        mergedCommandSpecificProofs.insert(proof.commandName);
+      for (ResidentCommandSpecificIssueProof& proof : readyCommandSpecificProofs)
+      {
+        if (mergedCommandSpecificProofs.insert(proof.commandName).second)
+          commandSpecificProofs.push_back(std::move(proof));
+      }
+
+      std::size_t liveUnitCommandIndex = 0;
+      std::size_t liveGameActionIndex = 0;
+      std::unordered_set<std::string> emittedCommandSpecificProofs;
+      for (const ResidentCommandSpecificIssueProof& proof : commandSpecificProofs)
+      {
+        if (!emittedCommandSpecificProofs.insert(proof.commandName).second)
+          continue;
+        if (proof.commandKind == "unit-command"
+            && !containsCommandSurfaceEntry(commandSurface.unitCommands, proof.commandName))
+        {
+          continue;
+        }
+        if (proof.commandKind == "game-action"
+            && !containsCommandSurfaceEntry(commandSurface.gameActions, proof.commandName))
+        {
+          continue;
+        }
+        if (!writeRefreshedCommandSpecificIssueSnapshot(
+              bridgePath / proof.snapshotName,
+              proof,
+              activeSnapshotContext))
+        {
+          continue;
+        }
+
+        const std::string proofLine =
+          "proof.issue_commands.command." + proof.commandName + "=passed";
+        appendReadyLine(proofLine);
+        appendReadyLine(
+          "proof.issue_commands.command." + proof.commandName
+          + ".snapshot=" + proof.snapshotName);
+        if (proof.commandKind == "unit-command")
+        {
+          appendReadyLine(
+            "command_surface.live_unit_command."
+            + std::to_string(liveUnitCommandIndex++)
+            + '=' + proof.commandName + "|live-proven|" + proofLine);
+        }
+        else
+        {
+          appendReadyLine(
+            "command_surface.live_game_action."
+            + std::to_string(liveGameActionIndex++)
+            + '=' + proof.commandName + "|live-proven|" + proofLine);
+        }
+      }
+      if (liveUnitCommandIndex != 0 || liveGameActionIndex != 0)
+      {
+        std::error_code removeError;
+        std::filesystem::remove(
+          bridgePath / RuntimeExecutorBridgeIssueCommandProofPendingFile,
+          removeError);
+      }
     }
 
     for (const std::string& line : preservedReadyEvidenceLines(readyPath, environment, ownedKeys))

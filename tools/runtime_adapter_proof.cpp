@@ -11260,6 +11260,45 @@ namespace
     return true;
   }
 
+  bool writeCommandSpecificIssueCommandsPending(
+    const std::filesystem::path& path,
+    const std::vector<IssueCommandSpecificProof>& proofs,
+    std::string& reason)
+  {
+    if (proofs.empty())
+    {
+      reason = "no command-specific issue-command proofs are ready for resident handoff";
+      return false;
+    }
+
+    std::ofstream output(path);
+    if (!output)
+    {
+      reason = "unable to open command-specific issue-command pending handoff";
+      return false;
+    }
+
+    output << "command\tcommand_kind\tsnapshot\n";
+    for (const IssueCommandSpecificProof& proof : proofs)
+    {
+      if (!proof.snapshotWritten)
+      {
+        reason = "command-specific issue-command pending handoff requires written snapshots";
+        return false;
+      }
+      output << proof.commandName << '\t'
+             << proof.commandKind << '\t'
+             << proof.snapshotName << '\n';
+    }
+
+    if (!output)
+    {
+      reason = "unable to write command-specific issue-command pending handoff";
+      return false;
+    }
+    return true;
+  }
+
   std::string lowerAscii(std::string value)
   {
     for (char& ch : value)
@@ -14195,6 +14234,7 @@ int main(int argc, char** argv)
   bool commandQueueDiscoverySnapshotWritten = false;
   bool issueCommandsSnapshotWritten = false;
   std::vector<IssueCommandSpecificProof> issueCommandSpecificProofs;
+  bool issueCommandSpecificPendingWritten = false;
   bool drawOverlaysSnapshotWritten = false;
   bool multiplayerSyncSnapshotWritten = false;
   SelfUnitFixture unitFixture;
@@ -16016,6 +16056,38 @@ int main(int argc, char** argv)
       if (!proof.snapshotWritten)
         proofFailureCode = proofFailureCode == 0 ? 12 : proofFailureCode;
     }
+
+    const bool allCommandSnapshotsWritten =
+      !issueCommandSpecificProofs.empty()
+      && std::all_of(
+        issueCommandSpecificProofs.begin(),
+        issueCommandSpecificProofs.end(),
+        [](const IssueCommandSpecificProof& proof)
+        {
+          return proof.snapshotWritten;
+        });
+    if (allCommandSnapshotsWritten)
+    {
+      std::string pendingReason;
+      const std::filesystem::path pendingPath =
+        std::filesystem::path(environment.executorBridgePath)
+        / RuntimeExecutorBridgeIssueCommandProofPendingFile;
+      issueCommandSpecificPendingWritten = writeCommandSpecificIssueCommandsPending(
+        pendingPath,
+        issueCommandSpecificProofs,
+        pendingReason);
+      std::cout << "issue_commands.command.pending.success="
+                << (issueCommandSpecificPendingWritten ? "true" : "false") << '\n';
+      if (issueCommandSpecificPendingWritten)
+      {
+        std::cout << "issue_commands.command.pending.path="
+                  << pendingPath.string() << '\n';
+      }
+      if (!pendingReason.empty())
+        std::cout << "issue_commands.command.pending.reason=" << pendingReason << '\n';
+      if (!issueCommandSpecificPendingWritten)
+        proofFailureCode = proofFailureCode == 0 ? 12 : proofFailureCode;
+    }
   }
 
   const std::filesystem::path drawOverlaysPath =
@@ -16088,6 +16160,7 @@ int main(int argc, char** argv)
     false;
   const bool willWriteCommandSpecificIssueCommandsProofs =
     !issueCommandSpecificProofs.empty()
+    && issueCommandSpecificPendingWritten
     && std::all_of(
       issueCommandSpecificProofs.begin(),
       issueCommandSpecificProofs.end(),
@@ -16164,8 +16237,6 @@ int main(int argc, char** argv)
   std::vector<std::string> preservedResidentEvidenceLines;
   bool existingReadyMatchesRuntime = false;
   bool existingReadyFromResidentAdapter = false;
-  const bool preserveResidentStateProofsForCommandSpecific =
-    willWriteCommandSpecificIssueCommandsProofs;
   if (runtimeVisibleAtReady)
   {
     existingReadyLines = readReadyFileLines(readyPath);
@@ -16185,23 +16256,15 @@ int main(int argc, char** argv)
         if (preserved.insert(line).second)
           preservedReadyEvidenceLines.push_back(line);
       }
-      if (existingReadyFromResidentAdapter)
+      if (existingReadyFromResidentAdapter && !willWriteCommandSpecificIssueCommandsProofs)
       {
         std::unordered_set<std::string> preservedResident;
         for (const std::string& line : existingReadyLines)
         {
           if (!preservableResidentEvidenceLine(line))
             continue;
-          if (readyLineReferencesAnyProofToken(line, invalidatedProofTokens)
-              && !(preserveResidentStateProofsForCommandSpecific
-                   && (line.find("proof.read_game_state") != std::string::npos
-                       || line.find("proof.active_match_state") != std::string::npos
-                       || line.find("proof.read_units") != std::string::npos
-                       || line.find("resident.proof.read_game_state") != std::string::npos
-                       || line.find("resident.proof.active_match") != std::string::npos)))
-          {
+          if (readyLineReferencesAnyProofToken(line, invalidatedProofTokens))
             continue;
-          }
           if (preservedResident.insert(line).second)
             preservedResidentEvidenceLines.push_back(line);
         }
@@ -16216,19 +16279,10 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  const bool preserveResidentAdapterReadyIdentity =
-    willWriteCommandSpecificIssueCommandsProofs
-    && existingReadyMatchesRuntime
-    && existingReadyFromResidentAdapter;
-
   ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
   ready << "product=" << toString(environment.product) << '\n';
   ready << "version=" << environment.version << '\n';
-  ready << "executor="
-        << (preserveResidentAdapterReadyIdentity
-          ? "starcraft-api-resident-adapter"
-          : "starcraft-api-attach-proof")
-        << '\n';
+  ready << "executor=starcraft-api-attach-proof\n";
   ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
   ready << "process_id=" << environment.processId << '\n';
   ready << "executable=" << environment.executablePath << '\n';
@@ -16244,11 +16298,6 @@ int main(int argc, char** argv)
     ready << "diagnostic.attach.reason=target runtime process exited before ready proof finalization\n";
   }
   ready << RuntimeExecutorBridgeCommandSurfaceLine << '\n';
-  if (preserveResidentAdapterReadyIdentity)
-  {
-    ready << RuntimeExecutorBridgeActiveCommandReceiverLine << '\n';
-    ready << RuntimeExecutorBridgeRuntimeCommandQueueSinkLine << '\n';
-  }
   ready << "command_surface.unit_commands=" << commandSurface.unitCommands.size() << '\n';
   ready << "command_surface.game_actions=" << commandSurface.gameActions.size() << '\n';
   ready << "command_surface.entries=" << commandSurface.totalEntries() << '\n';
@@ -16387,28 +16436,12 @@ int main(int argc, char** argv)
     if (!issueCommandsProof.reason.empty())
       ready << "diagnostic.issue_commands.reason=" << issueCommandsProof.reason << '\n';
   }
-  if (willWriteCommandSpecificIssueCommandsProofs && preserveResidentAdapterReadyIdentity)
+  if (willWriteCommandSpecificIssueCommandsProofs)
   {
-    std::size_t unitCommandIndex = 0;
-    std::size_t gameActionIndex = 0;
-    for (const IssueCommandSpecificProof& proof : issueCommandSpecificProofs)
-    {
-      const std::string proofLine =
-        "proof.issue_commands.command." + proof.commandName + "=passed";
-      ready << proofLine << '\n';
-      ready << "proof.issue_commands.command." << proof.commandName
-            << ".snapshot=" << proof.snapshotName << '\n';
-      if (proof.commandKind == "unit-command")
-      {
-        ready << "command_surface.live_unit_command." << unitCommandIndex++ << '='
-              << proof.commandName << "|live-proven|" << proofLine << '\n';
-      }
-      else if (proof.commandKind == "game-action")
-      {
-        ready << "command_surface.live_game_action." << gameActionIndex++ << '='
-              << proof.commandName << "|live-proven|" << proofLine << '\n';
-      }
-    }
+    ready << "diagnostic.issue_commands.command_specific_pending="
+          << RuntimeExecutorBridgeIssueCommandProofPendingFile << '\n';
+    ready << "diagnostic.issue_commands.command_specific_pending_scope="
+          << "resident-adapter-must-refresh-before-production-proof\n";
   }
   if (proveDrawOverlays && drawOverlaysProof.passed && drawOverlaysSnapshotWritten)
   {
@@ -16709,11 +16742,6 @@ int main(int argc, char** argv)
     std::cout << readUnitsBehaviorProof->readyFileLine << '\n';
   if (willWriteIssueCommandsProof)
     std::cout << issueCommandsBehaviorProof->readyFileLine << '\n';
-  if (willWriteCommandSpecificIssueCommandsProofs && preserveResidentAdapterReadyIdentity)
-  {
-    for (const IssueCommandSpecificProof& proof : issueCommandSpecificProofs)
-      std::cout << "proof.issue_commands.command." << proof.commandName << "=passed\n";
-  }
   if (proveDrawOverlays && drawOverlaysProof.passed && drawOverlaysSnapshotWritten)
     std::cout << drawOverlaysBehaviorProof->readyFileLine << '\n';
   if (proveMultiplayerSync && multiplayerSyncProof.passed && multiplayerSyncSnapshotWritten)

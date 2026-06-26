@@ -220,6 +220,34 @@ int main(int argc, char** argv)
   assert(!hasMissingProof(preflight, "proof.read_game_state=passed"));
   assert(!hasMissingProof(preflight, "proof.active_match_state=passed"));
 
+  std::vector<std::string> duplicateResidentProofLines =
+    residentStateProofLines(environment, 9);
+  duplicateResidentProofLines.push_back("resident.proof.active_match.source=mock");
+  writeReadyFile(environment, 9, duplicateResidentProofLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(!stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
+  std::vector<std::string> duplicateExactStateProofLines =
+    residentStateProofLines(environment, 9);
+  duplicateExactStateProofLines.push_back("proof.active_match_state=failed");
+  writeReadyFile(environment, 9, duplicateExactStateProofLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(!stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+
   std::vector<std::string> replayLines =
     residentStateProofLines(environment, 10, 4, "replay");
   writeReadyFile(environment, 10, replayLines);

@@ -94,6 +94,23 @@ namespace
              << "proof\t" << proof << '\n'
              << "passed\ttrue\n";
   }
+
+  bool residentStateProofAlreadyWritesBehaviorProof(const RuntimeExecutorBehaviorProof& proof)
+  {
+    return std::string(proof.id) == "read-game-state"
+      || std::string(proof.id) == "active-match-state"
+      || std::string(proof.id) == "read-units";
+  }
+
+  void writeBehaviorProofLines(std::ofstream& ready)
+  {
+    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+    {
+      if (residentStateProofAlreadyWritesBehaviorProof(proof))
+        continue;
+      ready << proof.readyFileLine << '\n';
+    }
+  }
 }
 
 int main()
@@ -310,13 +327,10 @@ int main()
     ready << "proof.read_region_data.source=live-bwapi-region-graph\n";
     ready << "proof.read_region_data.region_count=3\n";
     ready << "proof.read_region_data.snapshot=regions.snapshot.tsv\n";
-    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-      ready << proof.readyFileLine << '\n';
+    writeBehaviorProofLines(ready);
     ready << "proof.read_map_data=passed\n";
     ready << "proof.read_player_data=passed\n";
     ready << "proof.read_bullet_data=passed\n";
-    ready << "proof.read_region_data=passed\n";
-    ready << "proof.load_ai_modules=passed\n";
   }
 
   RuntimeProbeResult commandProofRemasteredProbe = proofBackedRemasteredBackend->probe();

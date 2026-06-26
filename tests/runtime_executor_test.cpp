@@ -220,6 +220,26 @@ namespace
     ready << "proof.read_region_data.snapshot=regions.snapshot.tsv\n";
   }
 
+  bool residentStateProofAlreadyWritesBehaviorProof(const RuntimeExecutorBehaviorProof& proof)
+  {
+    return std::string(proof.id) == "read-game-state"
+      || std::string(proof.id) == "active-match-state"
+      || std::string(proof.id) == "read-units";
+  }
+
+  void writeBehaviorProofLines(
+    std::ofstream& ready,
+    const std::string& omittedBehaviorProof = {})
+  {
+    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
+    {
+      if (residentStateProofAlreadyWritesBehaviorProof(proof))
+        continue;
+      if (proof.id != omittedBehaviorProof)
+        ready << proof.readyFileLine << '\n';
+    }
+  }
+
   void writeBootstrapReadyFile(
     const std::filesystem::path& bridgePath,
     int processId,
@@ -247,8 +267,7 @@ namespace
     writeRuntimeCommandQueueSink(ready);
     writeResidentStateProofs(ready, processId, executable);
     writeValidatedProductionProofMetadata(ready);
-    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-      ready << proof.readyFileLine << '\n';
+    writeBehaviorProofLines(ready);
   }
 
   void writePartialValidatedAdapterReadyFile(
@@ -265,11 +284,7 @@ namespace
     writeRuntimeCommandQueueSink(ready);
     writeResidentStateProofs(ready, processId, executable);
     writeValidatedProductionProofMetadata(ready);
-    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-    {
-      if (std::string(proof.id) != "multiplayer-sync")
-        ready << proof.readyFileLine << '\n';
-    }
+    writeBehaviorProofLines(ready, "multiplayer-sync");
   }
 
   void writeDirectValidatedAdapterReadyFile(
@@ -305,8 +320,7 @@ namespace
     ready << "proof.issue_commands.snapshot=issue_commands.snapshot.tsv\n";
     writeResidentStateProofs(ready, processId, executable);
     writeValidatedProductionProofMetadata(ready);
-    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-      ready << proof.readyFileLine << '\n';
+    writeBehaviorProofLines(ready);
   }
 
   void writeMismatchedRuntimeIdentityReadyFile(
@@ -323,8 +337,19 @@ namespace
     writeRuntimeCommandQueueSink(ready);
     writeResidentStateProofs(ready, processId + 100000, executable);
     writeValidatedProductionProofMetadata(ready);
-    for (const RuntimeExecutorBehaviorProof& proof : requiredRuntimeExecutorBehaviorProofs())
-      ready << proof.readyFileLine << '\n';
+    writeBehaviorProofLines(ready);
+  }
+
+  bool hasErrorContaining(
+    const std::vector<std::string>& errors,
+    const std::string& needle)
+  {
+    for (const std::string& error : errors)
+    {
+      if (error.find(needle) != std::string::npos)
+        return true;
+    }
+    return false;
   }
 }
 
@@ -422,7 +447,6 @@ int main(int argc, char** argv)
     ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
     writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
     writeResidentStateProofs(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
-    ready << "proof.read_units=passed\n";
     ready << "contract.structure.BW::CUnit=336|proof.read_units=passed:cunit-layout\n";
     ready << "contract.field.BW::CUnit.position=40|4|proof.read_units=passed:cunit-position\n";
   }
@@ -530,6 +554,91 @@ int main(int argc, char** argv)
   assert(acceptedGameStateLayout != nullptr && acceptedGameStateLayout->size == 256);
   assert(acceptedElapsedFrames != nullptr && acceptedElapsedFrames->resolved);
 
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    writeResidentStateProofs(ready, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+    ready << "proof.read_game_state=failed\n";
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
+    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:bwgame-layout\n";
+    ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
+  }
+  RuntimeContract rejectedDuplicateExactGameStateProof =
+    applyRuntimeExecutorBridgeContractProofs(bridgeEnvironment, makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedDuplicateExactGameStateBinding =
+    findRuntimeBinding(
+      rejectedDuplicateExactGameStateProof,
+      "BW::BWDATA::Game",
+      BindingKind::DataAddress);
+  const StructureLayout* rejectedDuplicateExactGameStateLayout =
+    findStructureLayout(rejectedDuplicateExactGameStateProof, "BW::BWGame");
+  const StructureField* rejectedDuplicateExactElapsedFrames =
+    findStructureField(
+      rejectedDuplicateExactGameStateProof,
+      "BW::BWGame",
+      "elapsedFrames");
+  assert(rejectedDuplicateExactGameStateBinding != nullptr
+    && !rejectedDuplicateExactGameStateBinding->resolved);
+  assert(rejectedDuplicateExactGameStateLayout != nullptr
+    && rejectedDuplicateExactGameStateLayout->size == 0);
+  assert(rejectedDuplicateExactElapsedFrames != nullptr
+    && !rejectedDuplicateExactElapsedFrames->resolved);
+
+  const std::string fixtureExecutable = fixturePath("remastered-complete.manifest");
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile);
+    ready << "protocol=" << RuntimeExecutorBridgeProtocol << '\n';
+    ready << "product=starcraft-remastered\n";
+    ready << "version=test-build\n";
+    ready << "mode=" << RuntimeExecutorBridgeValidatedAdapterMode << '\n';
+    writeRuntimeIdentity(ready, bridgeEnvironment.processId, fixtureExecutable);
+    writeResidentStateProofs(ready, bridgeEnvironment.processId, fixtureExecutable);
+    ready << "contract.binding.BW::BWDATA::Game=data-address|proof.read_game_state=passed:game\n";
+    ready << "contract.structure.BW::BWGame=256|proof.read_game_state=passed:bwgame-layout\n";
+    ready << "contract.field.BW::BWGame.elapsedFrames=8|4|proof.read_game_state=passed\n";
+  }
+  RuntimeEnvironment mismatchedActualExecutableEnvironment = bridgeEnvironment;
+  mismatchedActualExecutableEnvironment.executablePath = fixtureExecutable;
+  RuntimeContract rejectedActualExecutableMismatchProof =
+    applyRuntimeExecutorBridgeContractProofs(
+      mismatchedActualExecutableEnvironment,
+      makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedActualExecutableMismatchBinding =
+    findRuntimeBinding(
+      rejectedActualExecutableMismatchProof,
+      "BW::BWDATA::Game",
+      BindingKind::DataAddress);
+  const StructureLayout* rejectedActualExecutableMismatchLayout =
+    findStructureLayout(rejectedActualExecutableMismatchProof, "BW::BWGame");
+  const StructureField* rejectedActualExecutableMismatchField =
+    findStructureField(rejectedActualExecutableMismatchProof, "BW::BWGame", "elapsedFrames");
+  assert(rejectedActualExecutableMismatchBinding != nullptr
+    && !rejectedActualExecutableMismatchBinding->resolved);
+  assert(rejectedActualExecutableMismatchLayout != nullptr
+    && rejectedActualExecutableMismatchLayout->size == 0);
+  assert(rejectedActualExecutableMismatchField != nullptr
+    && !rejectedActualExecutableMismatchField->resolved);
+
+  RuntimeEnvironment unselectedProcessBridgeEnvironment = bridgeEnvironment;
+  unselectedProcessBridgeEnvironment.processId = 0;
+  RuntimeContract rejectedUnselectedProcessProof =
+    applyRuntimeExecutorBridgeContractProofs(
+      unselectedProcessBridgeEnvironment,
+      makeRemasteredParityContract("test-build"));
+  const RuntimeBinding* rejectedUnselectedGameStateBinding =
+    findRuntimeBinding(rejectedUnselectedProcessProof, "BW::BWDATA::Game", BindingKind::DataAddress);
+  const StructureLayout* rejectedUnselectedGameStateLayout =
+    findStructureLayout(rejectedUnselectedProcessProof, "BW::BWGame");
+  const StructureField* rejectedUnselectedElapsedFrames =
+    findStructureField(rejectedUnselectedProcessProof, "BW::BWGame", "elapsedFrames");
+  assert(rejectedUnselectedGameStateBinding != nullptr && !rejectedUnselectedGameStateBinding->resolved);
+  assert(rejectedUnselectedGameStateLayout != nullptr && rejectedUnselectedGameStateLayout->size == 0);
+  assert(rejectedUnselectedElapsedFrames != nullptr && !rejectedUnselectedElapsedFrames->resolved);
+
   writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult freshResidentPreflight =
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
@@ -547,6 +656,45 @@ int main(int argc, char** argv)
     preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
   assert(!replayedResidentPreflight.executorAvailable);
   assert(!replayedResidentPreflight.errors.empty());
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    ready << "proof.issue_commands.source=mock-command-path\n";
+  }
+  RuntimeExecutorPreflightResult duplicateEvidencePreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(!duplicateEvidencePreflight.executorAvailable);
+  assert(!duplicateEvidencePreflight.errors.empty());
+  assert(hasErrorContaining(
+    duplicateEvidencePreflight.errors,
+    "duplicate evidence key: proof.issue_commands.source"));
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    ready << "proof.issue_commands=failed\n";
+  }
+  RuntimeExecutorPreflightResult duplicateExactStatusPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(!duplicateExactStatusPreflight.executorAvailable);
+  assert(!duplicateExactStatusPreflight.errors.empty());
+  assert(hasErrorContaining(
+    duplicateExactStatusPreflight.errors,
+    "duplicate evidence key: proof.issue_commands"));
+
+  writeValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
+  {
+    std::ofstream ready(bridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    ready << "proof.attach.source=mock-adapter\n";
+  }
+  RuntimeExecutorPreflightResult duplicateAttachMetadataPreflight =
+    preflightRuntimeExecutor(bridgeEnvironment, complete.manifest.contract);
+  assert(!duplicateAttachMetadataPreflight.executorAvailable);
+  assert(!duplicateAttachMetadataPreflight.errors.empty());
+  assert(hasErrorContaining(
+    duplicateAttachMetadataPreflight.errors,
+    "duplicate evidence key: proof.attach.source"));
 
   writePartialValidatedAdapterReadyFile(bridgePath, bridgeEnvironment.processId, bridgeEnvironment.executablePath);
   RuntimeExecutorPreflightResult partialProofPreflight =
@@ -654,6 +802,40 @@ int main(int argc, char** argv)
   assert(directTurnBuffer[0] == 0x10);
   assert(std::filesystem::exists(directBridgePath / "commands.applied.tsv"));
   assert(!std::filesystem::exists(directBridgePath / RuntimeExecutorBridgeCommandFile));
+
+  writeDirectValidatedAdapterReadyFile(
+    directBridgePath,
+    directBridgeEnvironment.processId,
+    directBridgeEnvironment.executablePath,
+    reinterpret_cast<std::uintptr_t>(&directBytesInQueue),
+    reinterpret_cast<std::uintptr_t>(directTurnBuffer.data()));
+  {
+    std::ofstream ready(directBridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    ready << "proof.issue_commands=failed\n";
+  }
+  RuntimeExecutorSubmitResult rejectedDuplicateExactStatusSubmit =
+    submitRuntimeCommands(directBridgeEnvironment, { gameAction });
+  assert(!rejectedDuplicateExactStatusSubmit.submitted);
+  assert(hasErrorContaining(
+    rejectedDuplicateExactStatusSubmit.errors,
+    "duplicate evidence key: proof.issue_commands"));
+
+  writeDirectValidatedAdapterReadyFile(
+    directBridgePath,
+    directBridgeEnvironment.processId,
+    directBridgeEnvironment.executablePath,
+    reinterpret_cast<std::uintptr_t>(&directBytesInQueue),
+    reinterpret_cast<std::uintptr_t>(directTurnBuffer.data()));
+  {
+    std::ofstream ready(directBridgePath / RuntimeExecutorBridgeReadyFile, std::ios::app);
+    ready << "proof.attach.source=mock-adapter\n";
+  }
+  RuntimeExecutorSubmitResult rejectedDuplicateAttachMetadataSubmit =
+    submitRuntimeCommands(directBridgeEnvironment, { gameAction });
+  assert(!rejectedDuplicateAttachMetadataSubmit.submitted);
+  assert(hasErrorContaining(
+    rejectedDuplicateAttachMetadataSubmit.errors,
+    "duplicate evidence key: proof.attach.source"));
 
   std::filesystem::path rejectedDirectBridgePath =
     makeBridgePath("starcraft-api-runtime-executor-rejected-direct-test");

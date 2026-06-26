@@ -220,16 +220,9 @@ int main(int argc, char** argv)
   assert(!hasMissingProof(preflight, "proof.read_game_state=passed"));
   assert(!hasMissingProof(preflight, "proof.active_match_state=passed"));
 
-  std::vector<std::string> adapterProofReplayLines =
+  std::vector<std::string> replayLines =
     residentStateProofLines(environment, 10, 4, "replay");
-  for (std::string& line : adapterProofReplayLines)
-  {
-    if (line == "resident.proof.active_match.source=resident")
-      line = "resident.proof.active_match.source=adapter-proof";
-    else if (line == "resident.proof.active_match.evidence=resident-frame-unit-activity")
-      line = "resident.proof.active_match.evidence=adapter-live-unit-activity";
-  }
-  writeReadyFile(environment, 10, adapterProofReplayLines);
+  writeReadyFile(environment, 10, replayLines);
   resident = validateRuntimeResidentBridgeReadyFile(
     environment,
     bridgePath / RuntimeExecutorBridgeReadyFile);
@@ -238,21 +231,39 @@ int main(int argc, char** argv)
     bridgePath / RuntimeExecutorBridgeReadyFile,
     resident);
   assert(stateProof.readGameStateValid);
-  assert(stateProof.activeMatchValid);
-  assert(stateProof.activeMatchMode == "replay");
+  assert(!stateProof.activeMatchValid);
   preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
   assert(preflight.executorAvailable);
-  assert(!hasMissingProof(preflight, "proof.active_match_state=passed"));
+  assert(hasMissingProof(preflight, "proof.active_match_state=passed"));
 
-  std::vector<std::string> adapterProofRaceLines =
-    residentStateProofLines(environment, 10, 4, "replay");
-  for (std::string& line : adapterProofRaceLines)
+  std::vector<std::string> adapterProofLines =
+    residentStateProofLines(environment, 10, 4, "match");
+  for (std::string& line : adapterProofLines)
   {
     if (line == "resident.proof.active_match.source=resident")
       line = "resident.proof.active_match.source=adapter-proof";
     else if (line == "resident.proof.active_match.evidence=resident-frame-unit-activity")
       line = "resident.proof.active_match.evidence=adapter-live-unit-activity";
-    else if (line == "resident.proof.active_match.heartbeat=10")
+  }
+  writeReadyFile(environment, 10, adapterProofLines);
+  resident = validateRuntimeResidentBridgeReadyFile(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile);
+  stateProof = validateRuntimeResidentStateProofs(
+    environment,
+    bridgePath / RuntimeExecutorBridgeReadyFile,
+    resident);
+  assert(stateProof.readGameStateValid);
+  assert(!stateProof.activeMatchValid);
+  preflight = preflightRuntimeExecutor(environment, manifest.manifest.contract);
+  assert(preflight.executorAvailable);
+  assert(hasMissingProof(preflight, "proof.active_match_state=passed"));
+
+  std::vector<std::string> adapterProofRaceLines =
+    residentStateProofLines(environment, 10, 4, "match");
+  for (std::string& line : adapterProofRaceLines)
+  {
+    if (line == "resident.proof.active_match.heartbeat=10")
       line = "resident.proof.active_match.heartbeat=11";
   }
   writeReadyFile(environment, 10, adapterProofRaceLines);

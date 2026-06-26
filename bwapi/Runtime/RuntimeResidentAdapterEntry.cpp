@@ -457,8 +457,7 @@ namespace
 
   bool residentActiveMatchEvidenceIsSupported(const std::string& evidence)
   {
-    return evidence == "adapter-live-unit-activity"
-      || evidence == "resident-frame-unit-activity";
+    return evidence == "resident-frame-unit-activity";
   }
 
   bool validatePreservedActiveUnitMemory(const PreservedActiveMatchProof& proof)
@@ -489,7 +488,7 @@ namespace
     }
 
     proof.mode = readyValue(lines, "resident.proof.active_match.mode");
-    if (proof.mode != "match" && proof.mode != "replay")
+    if (proof.mode != "match")
       return {};
 
     std::uint64_t unitActivityCount = 0;
@@ -2802,10 +2801,6 @@ namespace
 
     const RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
     const std::vector<std::string> existingReadyLines = readReadyFileLines(readyPath);
-    const PreservedActiveMatchProof activeMatchProof =
-      existingReadyIdentityMatches(existingReadyLines, environment)
-        ? preservedActiveMatchProof(existingReadyLines, environment)
-        : PreservedActiveMatchProof{};
     const ResidentPlayerDataProof playerDataProof =
       unitNodeProof.passed
         ? proveResidentPlayerDataFromUnitSnapshot(unitNodeProof)
@@ -3011,44 +3006,6 @@ namespace
       appendReadyLine(
         "proof.active_match_state.unit_node_record_size="
         + std::to_string(unitNodeProof.recordSize));
-    }
-
-    if (!unitSnapshotWritten && frameCounterProof.passed && activeMatchProof.valid)
-    {
-      appendReadyLine("proof.active_match_state=passed");
-      appendReadyLine("resident.proof.active_match.source=adapter-proof");
-      appendReadyLine(
-        "resident.proof.active_match.process_id="
-        + std::to_string(environment.processId));
-      appendReadyLine(
-        "resident.proof.active_match.heartbeat="
-        + std::to_string(proofQueueHeader.heartbeat));
-      appendReadyLine("resident.proof.active_match.mode=" + activeMatchProof.mode);
-      appendReadyLine(
-        "resident.proof.active_match.unit_activity_count="
-        + std::to_string(activeMatchProof.activeRecords));
-      appendReadyLine("resident.proof.active_match.evidence=adapter-live-unit-activity");
-      appendReadyLine("resident.proof.active_match.validation=resident-preserved-active-unit-memory-v1");
-      appendReadyLine("resident.proof.active_match.address_read=resident-self");
-      appendReadyLine("proof.active_match_state.evidence=" + activeMatchProof.evidence);
-      appendReadyLine(
-        "proof.active_match_state.active_records="
-        + std::to_string(activeMatchProof.activeRecords));
-      if (activeMatchProof.unitNodeSnapshot)
-      {
-        appendReadyLine(
-          "proof.active_match_state.unit_node_address="
-          + hexAddress(activeMatchProof.unitAddress));
-        appendReadyLine(
-          "proof.active_match_state.unit_node_record_size="
-          + std::to_string(activeMatchProof.unitRecordSize));
-      }
-      else
-      {
-        appendReadyLine(
-          "proof.active_match_state.unit_array_address="
-          + hexAddress(activeMatchProof.unitAddress));
-      }
     }
 
     const ResidentDispatchEventsProof dispatchEventsProof =

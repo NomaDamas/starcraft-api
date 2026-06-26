@@ -30,6 +30,26 @@ namespace BWAPI::Runtime
       return std::find(values.begin(), values.end(), value) != values.end();
     }
 
+    void addNonProductionCommandEvidenceGaps(
+      std::vector<RuntimeImplementationGap>& gaps,
+      const std::vector<std::string>& requiredEntries,
+      const std::vector<RuntimeCommandEvidence>& evidenceEntries,
+      const char* label)
+    {
+      for (const std::string& entry : requiredEntries)
+      {
+        const RuntimeCommandEvidenceStatus status = commandEvidenceStatusFor(evidenceEntries, entry);
+        if (isProductionCommandEvidenceStatus(status))
+          continue;
+
+        addGap(
+          gaps,
+          "command-evidence",
+          entry,
+          std::string(label) + " does not have live-proven behavior evidence: " + toString(status));
+      }
+    }
+
     bool requiresCapability(const RuntimeContract& contract, Capability capability)
     {
       return std::find(
@@ -88,6 +108,16 @@ namespace BWAPI::Runtime
       if (!containsCommandSurfaceEntry(probe.implementedGameActions, action))
         addGap(gaps, "game-action", action, "BWAPI game action is not implemented by the runtime adapter");
     }
+    addNonProductionCommandEvidenceGaps(
+      gaps,
+      surface.unitCommands,
+      probe.implementedUnitCommandEvidence,
+      "BWAPI unit command");
+    addNonProductionCommandEvidenceGaps(
+      gaps,
+      surface.gameActions,
+      probe.implementedGameActionEvidence,
+      "BWAPI game action");
 
     for (Capability capability : contract.requiredCapabilities)
     {

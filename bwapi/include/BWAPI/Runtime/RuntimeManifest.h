@@ -1,5 +1,6 @@
 #pragma once
 
+#include <BWAPI/Runtime/RuntimeCommandSurface.h>
 #include <BWAPI/Runtime/RuntimeContract.h>
 
 #include <istream>
@@ -14,6 +15,8 @@ namespace BWAPI::Runtime
     std::vector<Capability> capabilities;
     std::vector<std::string> unitCommands;
     std::vector<std::string> gameActions;
+    std::vector<RuntimeCommandEvidence> unitCommandEvidence;
+    std::vector<RuntimeCommandEvidence> gameActionEvidence;
     int implementedApiSurfaceMethods = 0;
     int implementedCommandSurfaceEntries = 0;
   };

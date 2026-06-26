@@ -3,7 +3,7 @@ version test-build
 api-surface-methods 384
 command-surface-entries 1
 
-unit-command Attack_Move
+unit-command Attack_Move mock-tested runtime-command-encoder-test
 
 capability read-game-state
 

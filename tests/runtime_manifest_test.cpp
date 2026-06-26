@@ -35,6 +35,10 @@ int main()
   assert(complete.manifest.implementedCommandSurfaceEntries == complete.manifest.contract.requiredCommandSurfaceEntries);
   assert(complete.manifest.unitCommands.size() == 44);
   assert(complete.manifest.gameActions.size() == 28);
+  assert(complete.manifest.unitCommandEvidence.size() == complete.manifest.unitCommands.size());
+  assert(complete.manifest.gameActionEvidence.size() == complete.manifest.gameActions.size());
+  assert(commandEvidenceStatusFor(complete.manifest.unitCommandEvidence, "Attack_Move") == RuntimeCommandEvidenceStatus::MockTested);
+  assert(commandEvidenceStatusFor(complete.manifest.gameActionEvidence, "drawBox") == RuntimeCommandEvidenceStatus::AdapterLocal);
 
   ContractValidationResult completeValidation = validateRuntimeContract(complete.manifest.contract);
   assert(completeValidation.valid);
@@ -47,6 +51,8 @@ int main()
   completeProbe.capabilities = complete.manifest.capabilities;
   completeProbe.implementedUnitCommands = complete.manifest.unitCommands;
   completeProbe.implementedGameActions = complete.manifest.gameActions;
+  completeProbe.implementedUnitCommandEvidence = complete.manifest.unitCommandEvidence;
+  completeProbe.implementedGameActionEvidence = complete.manifest.gameActionEvidence;
   completeProbe.implementedApiSurfaceMethods = complete.manifest.implementedApiSurfaceMethods;
   completeProbe.implementedCommandSurfaceEntries = complete.manifest.implementedCommandSurfaceEntries;
   assert(!canClaimProductionSupport(completeProbe, complete.manifest.contract));
@@ -86,6 +92,37 @@ int main()
   RuntimeManifestLoadResult proofBackedResult = loadRuntimeManifest(proofBackedManifest, "proof-backed");
   assert(!proofBackedResult.loaded);
   assert(hasErrorContaining(proofBackedResult, "proof.* is only accepted from a validated ready file"));
+
+  std::istringstream missingCommandEvidence(
+    "product starcraft-remastered\n"
+    "version test-build\n"
+    "api-surface-methods 0\n"
+    "command-surface-entries 1\n"
+    "unit-command Attack_Move\n");
+  RuntimeManifestLoadResult missingEvidenceResult = loadRuntimeManifest(missingCommandEvidence, "missing-command-evidence");
+  assert(!missingEvidenceResult.loaded);
+  assert(hasErrorContaining(missingEvidenceResult, "unit-command directive expects"));
+
+  std::istringstream unknownCommandEvidence(
+    "product starcraft-remastered\n"
+    "version test-build\n"
+    "api-surface-methods 0\n"
+    "command-surface-entries 1\n"
+    "unit-command Attack_Move fixture\n");
+  RuntimeManifestLoadResult unknownEvidenceResult = loadRuntimeManifest(unknownCommandEvidence, "unknown-command-evidence");
+  assert(!unknownEvidenceResult.loaded);
+  assert(hasErrorContaining(unknownEvidenceResult, "unknown unit-command evidence status"));
+
+  std::istringstream duplicateCommand(
+    "product starcraft-remastered\n"
+    "version test-build\n"
+    "api-surface-methods 0\n"
+    "command-surface-entries 2\n"
+    "unit-command Attack_Move mock-tested encoder\n"
+    "unit-command Attack_Move mock-tested encoder\n");
+  RuntimeManifestLoadResult duplicateCommandResult = loadRuntimeManifest(duplicateCommand, "duplicate-command");
+  assert(!duplicateCommandResult.loaded);
+  assert(hasErrorContaining(duplicateCommandResult, "manifest declares duplicate unit command: Attack_Move"));
 
   std::istringstream malformed("product unknown-product\n");
   RuntimeManifestLoadResult malformedResult = loadRuntimeManifest(malformed, "inline");

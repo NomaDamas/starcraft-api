@@ -49,6 +49,8 @@ namespace BWAPI::Runtime
       std::vector<Capability> capabilities;
       std::vector<std::string> unitCommands;
       std::vector<std::string> gameActions;
+      std::vector<RuntimeCommandEvidence> unitCommandEvidence;
+      std::vector<RuntimeCommandEvidence> gameActionEvidence;
       std::vector<BindingDirective> bindings;
       std::vector<StructureDirective> structures;
       std::vector<FieldDirective> fields;
@@ -244,11 +246,16 @@ namespace BWAPI::Runtime
       RuntimeManifestLoadResult& result,
       const std::string& sourceName,
       const std::vector<std::string>& actualEntries,
+      const std::vector<RuntimeCommandEvidence>& evidenceEntries,
       const std::vector<std::string>& requiredEntries,
       const char* label)
     {
+      std::vector<std::string> seen;
       for (const std::string& actual : actualEntries)
       {
+        if (containsCommandSurfaceEntry(seen, actual))
+          addError(result, sourceName, 0, std::string("manifest declares duplicate ") + label + ": " + actual);
+        seen.push_back(actual);
         if (!containsCommandSurfaceEntry(requiredEntries, actual))
           addError(result, sourceName, 0, std::string("manifest declares unknown ") + label + ": " + actual);
       }
@@ -257,6 +264,17 @@ namespace BWAPI::Runtime
       {
         if (!containsCommandSurfaceEntry(actualEntries, required))
           addError(result, sourceName, 0, std::string("manifest is missing required ") + label + ": " + required);
+      }
+
+      if (evidenceEntries.size() != actualEntries.size())
+      {
+        addError(result, sourceName, 0, std::string("manifest ") + label + " evidence count does not match declared entries");
+        return;
+      }
+      for (const std::string& actual : actualEntries)
+      {
+        if (!containsCommandEvidenceEntry(evidenceEntries, actual))
+          addError(result, sourceName, 0, std::string("manifest is missing evidence status for ") + label + ": " + actual);
       }
     }
 
@@ -347,21 +365,41 @@ namespace BWAPI::Runtime
       }
       else if (directive == "unit-command")
       {
-        if (tokens.size() != 2)
+        if (tokens.size() < 3 || tokens.size() > 4)
         {
-          addError(result, sourceName, lineNumber, "unit-command directive expects exactly one value");
+          addError(result, sourceName, lineNumber, "unit-command directive expects: unit-command <name> <evidence-status> [detail]");
           continue;
         }
         accumulator.unitCommands.push_back(tokens[1]);
+        RuntimeCommandEvidence evidence;
+        evidence.name = tokens[1];
+        if (!parseRuntimeCommandEvidenceStatus(tokens[2], evidence.status))
+        {
+          addError(result, sourceName, lineNumber, "unknown unit-command evidence status: " + tokens[2]);
+          continue;
+        }
+        if (tokens.size() == 4)
+          evidence.detail = tokens[3];
+        accumulator.unitCommandEvidence.push_back(std::move(evidence));
       }
       else if (directive == "game-action")
       {
-        if (tokens.size() != 2)
+        if (tokens.size() < 3 || tokens.size() > 4)
         {
-          addError(result, sourceName, lineNumber, "game-action directive expects exactly one value");
+          addError(result, sourceName, lineNumber, "game-action directive expects: game-action <name> <evidence-status> [detail]");
           continue;
         }
         accumulator.gameActions.push_back(tokens[1]);
+        RuntimeCommandEvidence evidence;
+        evidence.name = tokens[1];
+        if (!parseRuntimeCommandEvidenceStatus(tokens[2], evidence.status))
+        {
+          addError(result, sourceName, lineNumber, "unknown game-action evidence status: " + tokens[2]);
+          continue;
+        }
+        if (tokens.size() == 4)
+          evidence.detail = tokens[3];
+        accumulator.gameActionEvidence.push_back(std::move(evidence));
       }
       else if (directive == "binding")
       {
@@ -478,8 +516,20 @@ namespace BWAPI::Runtime
     const bool partialCommandSurface = allowsPartialCommandSurface(accumulator);
     if (!partialCommandSurface)
     {
-      validateCommandEntries(result, sourceName, accumulator.unitCommands, commandSurface.unitCommands, "unit command");
-      validateCommandEntries(result, sourceName, accumulator.gameActions, commandSurface.gameActions, "game action");
+      validateCommandEntries(
+        result,
+        sourceName,
+        accumulator.unitCommands,
+        accumulator.unitCommandEvidence,
+        commandSurface.unitCommands,
+        "unit command");
+      validateCommandEntries(
+        result,
+        sourceName,
+        accumulator.gameActions,
+        accumulator.gameActionEvidence,
+        commandSurface.gameActions,
+        "game action");
     }
     const int declaredCommandEntries = static_cast<int>(accumulator.unitCommands.size() + accumulator.gameActions.size());
     if (declaredCommandEntries != accumulator.implementedCommandSurfaceEntries)
@@ -502,6 +552,8 @@ namespace BWAPI::Runtime
     result.manifest.capabilities = std::move(accumulator.capabilities);
     result.manifest.unitCommands = std::move(accumulator.unitCommands);
     result.manifest.gameActions = std::move(accumulator.gameActions);
+    result.manifest.unitCommandEvidence = std::move(accumulator.unitCommandEvidence);
+    result.manifest.gameActionEvidence = std::move(accumulator.gameActionEvidence);
     result.manifest.implementedApiSurfaceMethods = accumulator.implementedApiSurfaceMethods;
     result.manifest.implementedCommandSurfaceEntries = accumulator.implementedCommandSurfaceEntries;
     result.loaded = result.errors.empty();

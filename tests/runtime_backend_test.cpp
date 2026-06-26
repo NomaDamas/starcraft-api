@@ -59,6 +59,20 @@ namespace
     std::uint64_t frameId,
     bool activeMatchCorrelated);
 
+  void writeStaticLiveCommandEvidenceManifest(const std::filesystem::path& path)
+  {
+    const RuntimeCommandSurface surface = makeBWAPICommandSurface();
+    std::ofstream manifest(path);
+    manifest << "product starcraft-remastered\n";
+    manifest << "version unknown\n";
+    manifest << "api-surface-methods 0\n";
+    manifest << "command-surface-entries " << surface.totalEntries() << '\n';
+    for (const std::string& command : surface.unitCommands)
+      manifest << "unit-command " << command << " live-proven static-manifest-test\n";
+    for (const std::string& action : surface.gameActions)
+      manifest << "game-action " << action << " live-proven static-manifest-test\n";
+  }
+
   std::uint64_t nextResidentProofHeartbeat()
   {
     static std::uint64_t heartbeat = 20;
@@ -324,6 +338,32 @@ int main()
   assert(remasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(remasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
   assert(remasteredProbe.implementedGameActions == remasteredSurface.gameActions);
+  assert(remasteredProbe.implementedUnitCommandEvidence.size() == remasteredSurface.unitCommands.size());
+  assert(remasteredProbe.implementedGameActionEvidence.size() == remasteredSurface.gameActions.size());
+  assert(commandEvidenceStatusFor(
+    remasteredProbe.implementedUnitCommandEvidence,
+    "Attack_Move") == RuntimeCommandEvidenceStatus::MockTested);
+  assert(commandEvidenceStatusFor(
+    remasteredProbe.implementedGameActionEvidence,
+    "drawBox") == RuntimeCommandEvidenceStatus::AdapterLocal);
+
+  const std::filesystem::path staticLiveManifestPath =
+    std::filesystem::temp_directory_path() / "starcraft-api-static-live-command-evidence.manifest";
+  writeStaticLiveCommandEvidenceManifest(staticLiveManifestPath);
+  RuntimeEnvironment staticLiveManifestEnvironment = remastered;
+  staticLiveManifestEnvironment.manifestPath = staticLiveManifestPath.string();
+  std::unique_ptr<RuntimeBackend> staticLiveManifestBackend =
+    createRuntimeBackend(staticLiveManifestEnvironment);
+  RuntimeProbeResult staticLiveManifestProbe = staticLiveManifestBackend->probe();
+  assert(!staticLiveManifestProbe.supported);
+  assert(commandEvidenceStatusFor(
+    staticLiveManifestProbe.implementedUnitCommandEvidence,
+    "Attack_Move") == RuntimeCommandEvidenceStatus::DocumentedScenario);
+  assert(commandEvidenceStatusFor(
+    staticLiveManifestProbe.implementedGameActionEvidence,
+    "pauseGame") == RuntimeCommandEvidenceStatus::DocumentedScenario);
+  std::filesystem::remove(staticLiveManifestPath);
+
   assert(remasteredBackend->state() == RuntimeSessionState::Closed);
   RuntimeOpenResult remasteredOpen = remasteredBackend->open();
   assert(!remasteredOpen.opened);
@@ -371,6 +411,9 @@ int main()
   assert(proofBackedRemasteredProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(proofBackedRemasteredProbe.implementedUnitCommands == remasteredSurface.unitCommands);
   assert(proofBackedRemasteredProbe.implementedGameActions == remasteredSurface.gameActions);
+  assert(commandEvidenceStatusFor(
+    proofBackedRemasteredProbe.implementedUnitCommandEvidence,
+    "Attack_Move") == RuntimeCommandEvidenceStatus::MockTested);
 
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);
@@ -389,6 +432,9 @@ int main()
   assert(commandSurfaceOnlyProbe.implementedCommandSurfaceEntries == remasteredSurface.totalEntries());
   assert(commandSurfaceOnlyProbe.implementedUnitCommands == remasteredSurface.unitCommands);
   assert(commandSurfaceOnlyProbe.implementedGameActions == remasteredSurface.gameActions);
+  assert(commandEvidenceStatusFor(
+    commandSurfaceOnlyProbe.implementedGameActionEvidence,
+    "drawBox") == RuntimeCommandEvidenceStatus::AdapterLocal);
 
   {
     std::ofstream ready(bridgeDir / RuntimeExecutorBridgeReadyFile);

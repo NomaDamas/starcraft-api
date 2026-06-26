@@ -3,11 +3,20 @@
 
 #include <cassert>
 #include <string>
+#include <vector>
 
 using namespace BWAPI::Runtime;
 
 namespace
 {
+  std::vector<RuntimeCommandEvidence> liveCommandEvidence(const std::vector<std::string>& names)
+  {
+    std::vector<RuntimeCommandEvidence> evidence;
+    for (const std::string& name : names)
+      evidence.push_back({ name, RuntimeCommandEvidenceStatus::LiveProven, "unit-test-live-proof" });
+    return evidence;
+  }
+
   std::string productionEvidenceForBinding(const RuntimeBinding& binding)
   {
     if (binding.name == "BW::BWDATA::Game")
@@ -160,6 +169,8 @@ int main()
   RuntimeCommandSurface commandSurface = makeBWAPICommandSurface();
   fullProbe.implementedUnitCommands = commandSurface.unitCommands;
   fullProbe.implementedGameActions = commandSurface.gameActions;
+  fullProbe.implementedUnitCommandEvidence = liveCommandEvidence(commandSurface.unitCommands);
+  fullProbe.implementedGameActionEvidence = liveCommandEvidence(commandSurface.gameActions);
   assert(canClaimProductionSupport(fullProbe, resolved));
   assert(!canClaimProductionSupport(fullProbe, bareUnitTestEvidence));
   assert(!canClaimProductionSupport(fullProbe, arbitraryEvidence));
@@ -178,6 +189,14 @@ int main()
   RuntimeProbeResult missingCommandNameProbe = fullProbe;
   missingCommandNameProbe.implementedUnitCommands.pop_back();
   assert(!canClaimProductionSupport(missingCommandNameProbe, resolved));
+
+  RuntimeProbeResult missingCommandEvidenceProbe = fullProbe;
+  missingCommandEvidenceProbe.implementedUnitCommandEvidence.pop_back();
+  assert(!canClaimProductionSupport(missingCommandEvidenceProbe, resolved));
+
+  RuntimeProbeResult mockCommandEvidenceProbe = fullProbe;
+  mockCommandEvidenceProbe.implementedUnitCommandEvidence.front().status = RuntimeCommandEvidenceStatus::MockTested;
+  assert(!canClaimProductionSupport(mockCommandEvidenceProbe, resolved));
 
   assert(std::string(toString(BindingKind::CommandQueue)) == "command-queue");
   assert(std::string(toString(BindingRequirement::Required)) == "required");

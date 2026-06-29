@@ -2,6 +2,7 @@
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
+#include <BWAPI/UnitType.h>
 
 #include <array>
 #include <atomic>
@@ -101,6 +102,41 @@ namespace
       residentSecondaryFixture[index][0xc0] = static_cast<unsigned char>(index % 2);
       writeU16LE(residentSecondaryFixture[index], 0x10, static_cast<std::uint16_t>(1 + index));
       writeU16LE(residentSecondaryFixture[index], 0xd0, static_cast<std::uint16_t>(1 + index));
+    }
+
+    for (std::size_t index = 0; index < residentUnitNodeFixture.size(); ++index)
+    {
+      CompactUnitNodeFixture& node = residentUnitNodeFixture[index];
+      node.previous = reinterpret_cast<std::uint64_t>(
+        &residentUnitNodeFixture[(index + residentUnitNodeFixture.size() - 1) % residentUnitNodeFixture.size()]);
+      node.next = reinterpret_cast<std::uint64_t>(
+        &residentUnitNodeFixture[(index + 1) % residentUnitNodeFixture.size()]);
+      node.x = static_cast<std::int32_t>(64 + (index * 32));
+      node.y = static_cast<std::int32_t>(80 + (index * 32));
+      node.sprite = reinterpret_cast<std::uint64_t>(residentSpriteFixture[index].data());
+      node.secondary = reinterpret_cast<std::uint64_t>(residentSecondaryFixture[index].data());
+    }
+  }
+
+  void populateResidentStartLocationFixture()
+  {
+    const auto startLocationType =
+      static_cast<std::uint16_t>(BWAPI::UnitTypes::Enum::Special_Start_Location);
+    for (std::size_t index = 0; index < residentUnitNodeFixture.size(); ++index)
+    {
+      residentSpriteFixture[index].fill(0);
+      residentSecondaryFixture[index].fill(0);
+
+      writeU32LE(residentSpriteFixture[index], 0x68, startLocationType);
+      writeU32LE(residentSpriteFixture[index], 0x6c, static_cast<std::uint32_t>(index % 2));
+      writeU32LE(residentSpriteFixture[index], 0x80, static_cast<std::uint32_t>(4096 + index));
+
+      residentSecondaryFixture[index][0x14] = static_cast<unsigned char>(index % 2);
+      residentSecondaryFixture[index][0x1a] = 20;
+      residentSecondaryFixture[index][0x1b] = 40;
+      residentSecondaryFixture[index][0xc0] = static_cast<unsigned char>(index % 2);
+      writeU16LE(residentSecondaryFixture[index], 0x10, startLocationType);
+      writeU16LE(residentSecondaryFixture[index], 0xd0, startLocationType);
     }
 
     for (std::size_t index = 0; index < residentUnitNodeFixture.size(); ++index)
@@ -309,7 +345,12 @@ namespace
 int main(int argc, char** argv)
 {
   assert(argc > 0);
-  populateResidentUnitFixture();
+  const bool startLocationOnlyFixture =
+    argc > 1 && std::string(argv[1]) == "--start-location-only";
+  if (startLocationOnlyFixture)
+    populateResidentStartLocationFixture();
+  else
+    populateResidentUnitFixture();
   ResidentFrameCounterFixtureTicker frameTicker;
 
   const std::filesystem::path bridgePath =
@@ -370,6 +411,33 @@ int main(int argc, char** argv)
   assert(fileContainsLine(readyPath, "resident.projection.bwgame.size=256"));
   assert(fileContainsLine(readyPath, "resident.projection.bwgame.elapsedFrames_offset=8"));
   assert(fileContainsLine(readyPath, "resident.projection.bwgame.elapsedFrames_bytes=4"));
+
+  if (startLocationOnlyFixture)
+  {
+    const std::uint64_t heartbeat =
+      requireUnsignedValue(fileValue(readyPath, "resident.adapter.heartbeat"), "resident.adapter.heartbeat");
+    require(
+      waitForReadyUnsignedGreater(readyPath, "resident.adapter.heartbeat", heartbeat + 4, 90),
+      "resident adapter heartbeat did not advance far enough for start-location-only scan");
+    require(
+      !fileContainsLine(readyPath, "proof.read_units=passed"),
+      "resident adapter promoted start-location-only records to read_units proof");
+    require(
+      !fileContainsLine(readyPath, "proof.active_match_state=passed"),
+      "resident adapter promoted start-location-only records to active-match proof");
+    require(
+      !fileContainsPrefix(readyPath, "contract.binding.BW::BWDATA::UnitNodeTable="),
+      "resident adapter emitted UnitNodeTable contract for start-location-only records");
+    require(
+      !std::filesystem::exists(bridgePath / "units.snapshot.tsv"),
+      "resident adapter wrote units snapshot for start-location-only records");
+
+    assert(stop() == 0);
+    dlclose(handle);
+    std::filesystem::remove_all(bridgePath);
+    return 0;
+  }
+
   require(
     waitForLine(readyPath, "proof.read_units.snapshot=units.snapshot.tsv"),
     "resident adapter did not write live read-units snapshot proof");

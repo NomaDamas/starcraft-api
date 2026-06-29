@@ -182,8 +182,16 @@ if(APPLE AND TARGET starcraft-api-resident)
 
   add_test(NAME runtime_resident_adapter_load_test COMMAND runtime_resident_adapter_load_test)
   add_test(
+    NAME runtime_resident_adapter_rejects_start_location_units_test
+    COMMAND runtime_resident_adapter_load_test --start-location-only
+  )
+  add_test(
     NAME runtime_resident_adapter_load_x86_64_test
     COMMAND /usr/bin/arch -x86_64 $<TARGET_FILE:runtime_resident_adapter_load_test>
+  )
+  add_test(
+    NAME runtime_resident_adapter_rejects_start_location_units_x86_64_test
+    COMMAND /usr/bin/arch -x86_64 $<TARGET_FILE:runtime_resident_adapter_load_test> --start-location-only
   )
 endif()
 
@@ -238,6 +246,10 @@ if(TARGET starcraft-runtime-launch)
   add_test(NAME runtime_launch_help COMMAND starcraft-runtime-launch --help)
 endif()
 
+if(TARGET starcraft-runtime-legacy1161-setup)
+  add_test(NAME runtime_legacy1161_setup_help COMMAND starcraft-runtime-legacy1161-setup --help)
+endif()
+
 if(TARGET starcraft-runtime-memory-probe)
   add_test(NAME runtime_memory_probe_help COMMAND starcraft-runtime-memory-probe --help)
   add_test(NAME runtime_memory_probe_self_open COMMAND starcraft-runtime-memory-probe --self --require-open --require-access)
@@ -249,6 +261,19 @@ if(TARGET starcraft-runtime-memory-probe)
       "${CMAKE_COMMAND}"
       -DSTARCRAFT_RUNTIME_MEMORY_PROBE=$<TARGET_FILE:starcraft-runtime-memory-probe>
       -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_memory_probe_cli_test.cmake
+  )
+endif()
+
+if(TARGET starcraft-runtime-inject-resident AND TARGET starcraft-api-resident)
+  add_test(NAME runtime_inject_resident_help COMMAND starcraft-runtime-inject-resident --help)
+  add_test(
+    NAME runtime_inject_resident_cli_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_RUNTIME_INJECT_RESIDENT=$<TARGET_FILE:starcraft-runtime-inject-resident>
+      -DSTARCRAFT_API_RESIDENT_DYLIB=$<TARGET_FILE:starcraft-api-resident>
+      -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_inject_resident_cli_test.cmake
   )
 endif()
 
@@ -303,6 +328,27 @@ if(TARGET bwapi-api-surface-audit)
 endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(TARGET starcraft-runtime-legacy1161-setup)
+  add_test(
+    NAME runtime_legacy1161_setup_cli_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_RUNTIME_LEGACY1161_SETUP=$<TARGET_FILE:starcraft-runtime-legacy1161-setup>
+      -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_legacy1161_setup_cli_test.cmake
+  )
+  add_test(
+    NAME runtime_legacy1161_setup_script_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_API_LEGACY1161_SETUP_SCRIPT=${CMAKE_SOURCE_DIR}/scripts/setup_legacy1161_runtime.sh
+      -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_legacy1161_setup_script_test.cmake
+  )
+endif()
+
 add_test(
   NAME guarded_parallel_cli_test
   COMMAND

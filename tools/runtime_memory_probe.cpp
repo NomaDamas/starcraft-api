@@ -131,6 +131,7 @@ namespace
       << "  --diff-delay-ms <ms>     delay between diff snapshots (default: 3000)\n"
       << "  --diff-max-scan-mb <mb>  maximum diff snapshot bytes (default: --find-max-scan-mb)\n"
       << "  --diff-result-limit <n>  maximum changed ranges printed (default: 128)\n"
+      << "  --diff-out <path>        write all changed ranges to a TSV file\n"
       << "  --diff-compact          omit repeated region detail from diff ranges\n"
       << "  --scan-u32-counters      scan readable memory for increasing u32 counters\n"
       << "  --counter-sample-delay-ms <ms>\n"
@@ -546,6 +547,7 @@ int main(int argc, char** argv)
   std::string versionOverride;
   std::string executableOverride;
   std::string dumpOut;
+  std::string diffOutPath;
   std::string regionPathContains;
   std::vector<FindNeedle> findNeedles;
   std::vector<RipXrefNeedle> ripXrefNeedles;
@@ -855,6 +857,16 @@ int main(int argc, char** argv)
         std::cerr << "--diff-result-limit requires a positive integer count\n";
         return 64;
       }
+      diffMemoryRequested = true;
+    }
+    else if (arg == "--diff-out")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--diff-out requires a path\n";
+        return 64;
+      }
+      diffOutPath = argv[++i];
       diffMemoryRequested = true;
     }
     else if (arg == "--diff-compact")
@@ -1651,6 +1663,19 @@ int main(int argc, char** argv)
               << (findNonExecutableOnly ? "true" : "false") << '\n';
     std::cout << "memory.diff.filter.target_executable_only="
               << (findTargetExecutableOnly ? "true" : "false") << '\n';
+    std::ofstream diffOut;
+    if (!diffOutPath.empty())
+    {
+      diffOut.open(diffOutPath);
+      std::cout << "memory.diff.out.path=" << diffOutPath << '\n';
+      std::cout << "memory.diff.out.opened=" << (diffOut ? "true" : "false") << '\n';
+      if (diffOut)
+      {
+        diffOut << "address\tsize\tbefore\tafter\tregion_address\tregion_size\t"
+                << "region_writable\tregion_executable\tregion_target_executable\t"
+                << "region_user_tag\tregion_share_mode\tregion_share_mode_name\tregion_mapped_path\n";
+      }
+    }
     if (regions.success)
     {
       constexpr std::size_t maxRegionReadBytes = 4 * 1024 * 1024;
@@ -1745,6 +1770,9 @@ int main(int argc, char** argv)
         }
       }
 
+      std::cout << "memory.diff.baseline_ready=true\n";
+      std::cout << "memory.diff.snapshot_count=" << snapshots.size() << '\n';
+      std::cout.flush();
       std::this_thread::sleep_for(std::chrono::milliseconds(diffDelayMs));
 
       std::size_t changedRangeCount = 0;
@@ -1777,7 +1805,7 @@ int main(int argc, char** argv)
           ++changedRangeCount;
           changedByteCount += rangeSize;
 
-          if (printedRanges.size() < diffResultLimit)
+          if (printedRanges.size() < diffResultLimit || diffOut)
           {
             DiffRange range;
             range.address = snapshot.address + rangeStart;
@@ -1792,7 +1820,24 @@ int main(int argc, char** argv)
               after.bytes.begin() + static_cast<std::ptrdiff_t>(rangeStart),
               after.bytes.begin() + static_cast<std::ptrdiff_t>(rangeStart + previewSize));
             range.region = snapshot.region;
-            printedRanges.push_back(std::move(range));
+            if (diffOut)
+            {
+              diffOut << "0x" << std::hex << range.address << std::dec << '\t'
+                      << range.size << '\t'
+                      << hexBytes(range.before) << '\t'
+                      << hexBytes(range.after) << '\t'
+                      << "0x" << std::hex << range.region.address << std::dec << '\t'
+                      << range.region.size << '\t'
+                      << (range.region.writable ? "true" : "false") << '\t'
+                      << (range.region.executable ? "true" : "false") << '\t'
+                      << (sameMappedFile(range.region.mappedPath, environment.executablePath) ? "true" : "false") << '\t'
+                      << range.region.userTag << '\t'
+                      << range.region.shareMode << '\t'
+                      << regionShareModeName(range.region.shareMode) << '\t'
+                      << range.region.mappedPath << '\n';
+            }
+            if (printedRanges.size() < diffResultLimit)
+              printedRanges.push_back(std::move(range));
           }
         }
       }
@@ -1808,6 +1853,8 @@ int main(int argc, char** argv)
                 << skippedTargetExecutableFilter << '\n';
       std::cout << "memory.diff.changed_range_count=" << changedRangeCount << '\n';
       std::cout << "memory.diff.changed_byte_count=" << changedByteCount << '\n';
+      if (!diffOutPath.empty())
+        std::cout << "memory.diff.out.written=" << (diffOut ? "true" : "false") << '\n';
       std::cout << "memory.diff.printed_count=" << printedRanges.size() << '\n';
       for (std::size_t i = 0; i < printedRanges.size(); ++i)
       {

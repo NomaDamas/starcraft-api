@@ -45,4 +45,8 @@ bwapi/packages/
 apps/cygwin/
 apps/http*
 BWAPI.7z
+runtime/bw1161/
+runtime/downloads/
+runtime/*.env
+runtime/*.manifest
 

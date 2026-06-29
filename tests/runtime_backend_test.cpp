@@ -1083,6 +1083,10 @@ int main()
   assert(std::string(legacyBackend->name()) == "legacy-bwapi-1.16.1-runtime");
   assert(!legacyProbe.supported);
   assert(!legacyProbe.reason.empty());
+  assert(legacyProbe.implementedApiSurfaceMethods == makeBroodWar1161ParityContract().requiredApiSurfaceMethods);
+  assert(legacyProbe.implementedCommandSurfaceEntries == makeBWAPICommandSurface().totalEntries());
+  assert(legacyProbe.implementedUnitCommands == makeBWAPICommandSurface().unitCommands);
+  assert(legacyProbe.implementedGameActions == makeBWAPICommandSurface().gameActions);
   assert(std::string(toString(RuntimeSessionState::Closed)) == "closed");
 
   return 0;

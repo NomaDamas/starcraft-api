@@ -6,9 +6,11 @@
 #include <BWAPI/Runtime/RuntimeProcess.h>
 #include <BWAPI/Runtime/RuntimeProcessMemory.h>
 #include <BWAPI/Runtime/RuntimeResidentBridge.h>
+#include <BWAPI/UnitType.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <chrono>
 #include <cctype>
@@ -16,6 +18,7 @@
 #include <cstring>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -59,6 +62,18 @@ namespace
       << "  --self-unit-node-fixture allocate a self-test SC:R unit-node graph before --prove-read-units\n"
       << "  --self-compact-unit-node-fixture\n"
       << "                           allocate a non-contiguous self-test SC:R compact unit-node graph\n"
+      << "  --self-compact-shared-secondary-fixture\n"
+      << "                           allocate a negative self-test compact graph with shared secondary metadata\n"
+      << "  --self-compact-shared-secondary-sprite-fixture\n"
+      << "                           allocate a compact graph with shared secondary handles but sprite-derived metadata\n"
+      << "  --self-dynamic-unit-projection-fixture\n"
+      << "                           allocate changing unit-like records to test automatic SC:R projection discovery\n"
+      << "  --self-dynamic-unit-projection-static-fixture\n"
+      << "                           allocate stable unit-like records to test idle SC:R projection discovery\n"
+      << "  --self-dynamic-unit-projection-negative-fixture\n"
+      << "                           allocate changing records that must not be promoted to read-units proof\n"
+      << "  --dynamic-unit-projection-seed-address <address>\n"
+      << "                           seed SC:R dynamic unit projection scans around a live changed address\n"
       << "  --prove-dispatch-events  prove BWAPI event dispatch from live frame/unit snapshots\n"
       << "  --prove-read-map-data    prove live map metadata by matching the active map to an installed map file\n"
       << "  --prove-read-player-data prove live player ids from unit snapshots\n"
@@ -99,6 +114,16 @@ namespace
       << "                           explicit raw turn-buffer start paired with --command-queue-vector-address byte count\n"
       << "  --append-game-action <name>\n"
       << "                           append one encoded game action to the explicit command queue vector, then exit\n"
+      << "  --append-unit-command <name>\n"
+      << "                           append one encoded unit command to the explicit command queue vector, then exit\n"
+      << "  --append-select-unit-target-id <id>\n"
+      << "                           prepend a selection command for one raw 16-bit unit target id; repeatable\n"
+      << "  --append-unit-target-id <id>\n"
+      << "                           raw 16-bit target unit id used by target-taking unit commands\n"
+      << "  --append-command-arg <int>\n"
+      << "                           append one integer argument for --append-unit-command; repeatable\n"
+      << "  --clear-command-queue\n"
+      << "                           clear the explicit raw turn-buffer byte count and queued bytes, then exit\n"
       << "  --state-sample-delay-ms <ms>\n"
       << "                           delay between live state samples (default: 250)\n"
       << "  --state-counter-address <address>\n"
@@ -211,10 +236,12 @@ namespace
     std::uintptr_t address = 0;
     std::size_t recordSize = 0;
     std::size_t idOffset = 0;
+    std::size_t spriteOffset = 0;
     std::size_t positionOffset = 0;
     std::size_t hitPointsOffset = 0;
     std::size_t orderOffset = 0;
     std::size_t playerOffset = 0;
+    std::size_t unitTypeOffset = 0;
     std::size_t sampledRecords = 0;
     std::size_t activeRecords = 0;
     bool pointerArray = false;
@@ -248,6 +275,7 @@ namespace
     bool hitPointsResolved = false;
     std::string hitPointsSource;
     bool metadataDerived = false;
+    std::string metadataSource;
     bool taggedHandleDerived = false;
   };
 
@@ -611,6 +639,22 @@ namespace
     std::string reason;
   };
 
+  struct UnitCandidateRecordSample
+  {
+    std::uintptr_t address = 0;
+    std::size_t index = 0;
+    std::uint32_t id = 0;
+    std::uint32_t hitPoints = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    int player = -1;
+    std::uint16_t order = 0;
+    std::uint16_t typeHint = 0;
+    std::uintptr_t sprite = 0;
+    bool spriteReadable = false;
+    std::string prefixHex;
+  };
+
   struct UnitCandidateDiagnostic
   {
     std::string source;
@@ -620,6 +664,7 @@ namespace
     std::size_t sampledRecords = 0;
     std::size_t activeRecords = 0;
     bool pointerArray = false;
+    std::vector<UnitCandidateRecordSample> recordSamples;
   };
 
   struct UnitNodeFieldCandidateDiagnostic
@@ -733,6 +778,40 @@ namespace
     bool readablePrecheck = false;
   };
 
+  struct ExplicitUnitNodeCandidateDiagnostic
+  {
+    std::uintptr_t address = 0;
+    bool compactRegionFound = false;
+    std::size_t compactBytesRead = 0;
+    bool compactReadSuccess = false;
+    std::string compactReadReason;
+    bool compactFieldsPlausible = false;
+    bool compactRecordReadable = false;
+    std::size_t compactPrefixNonZeroBytes = 0;
+    std::string compactPrefixHex;
+    std::size_t compactArraySampledRecords = 0;
+    std::size_t compactArrayActiveRecords = 0;
+    std::string compactArrayReason;
+    std::size_t compactGraphSampledRecords = 0;
+    std::size_t compactGraphActiveRecords = 0;
+    std::string compactGraphReason;
+    bool wideRegionFound = false;
+    std::size_t wideBytesRead = 0;
+    bool wideReadSuccess = false;
+    std::string wideReadReason;
+    bool wideFieldsPlausible = false;
+    bool wideRecordReadable = false;
+    std::size_t widePrefixNonZeroBytes = 0;
+    std::string widePrefixHex;
+    std::size_t wideGraphSampledRecords = 0;
+    std::size_t wideGraphActiveRecords = 0;
+    std::string wideGraphReason;
+    std::size_t wideArraySampledRecords = 0;
+    std::size_t wideArrayActiveRecords = 0;
+    std::string wideArrayReason;
+    std::string finalReason;
+  };
+
   struct SgUnitsMemDiagnostic
   {
     bool attempted = false;
@@ -801,8 +880,11 @@ namespace
     std::uintptr_t unitNodeBestAddress = 0;
     std::uintptr_t unitNodeBestVectorAddress = 0;
     std::string unitNodeBestReason;
+    std::string unitNodeBestMetadataReason;
+    std::vector<RemasteredUnitSnapshotRecord> unitNodeBestRecords;
     std::vector<UnitNodeFieldCandidateDiagnostic> unitNodeFieldSamples;
     std::vector<UnitNodeVectorCandidateDiagnostic> unitNodeVectorSamples;
+    std::vector<ExplicitUnitNodeCandidateDiagnostic> explicitUnitNodeCandidates;
     std::vector<UnitPointerArrayCandidateDiagnostic> pointerArraySamples;
     std::vector<UnitScanRegionDiagnostic> regionSamples;
     std::size_t dynamicSampledRegions = 0;
@@ -813,6 +895,12 @@ namespace
     std::string dynamicScanReason;
     std::vector<UnitDynamicRegionDiagnostic> dynamicRegionSamples;
     std::vector<UnitDynamicFieldCandidateDiagnostic> dynamicFieldCandidates;
+    bool dynamicProjectionAttempted = false;
+    bool dynamicProjectionPassed = false;
+    std::string dynamicProjectionReason;
+    std::uintptr_t dynamicProjectionAddress = 0;
+    std::size_t dynamicProjectionRecordSize = 0;
+    std::size_t dynamicProjectionActiveRecords = 0;
     SgUnitsMemDiagnostic sgUnitsMem;
     bool timedOut = false;
     bool byteLimitReached = false;
@@ -886,7 +974,7 @@ namespace
   };
 
   constexpr std::size_t minActiveUnitRecords = 4;
-  constexpr std::size_t minRemasteredSnapshotUnitRecords = 3;
+  constexpr std::size_t minRemasteredSnapshotUnitRecords = minActiveUnitRecords;
   constexpr std::size_t minActiveBulletRecords = 1;
 
   bool plausibleRemasteredUnitTypeHint(std::uint16_t typeHint)
@@ -896,6 +984,12 @@ namespace
     // reject pointer fragments and flags, but do not reject live units whose
     // internal hint is above 255.
     return typeHint != 0 && typeHint < 1024;
+  }
+
+  bool remasteredTypeHintCanProveActiveUnit(std::uint16_t typeHint)
+  {
+    return plausibleRemasteredUnitTypeHint(typeHint)
+      && typeHint < static_cast<std::uint16_t>(BWAPI::UnitTypes::Enum::Special_Start_Location);
   }
 
   struct BattleNetPolicyProof
@@ -920,6 +1014,16 @@ namespace
     LiveUnitsProof proof;
     proof.reason = std::move(reason);
     return proof;
+  }
+
+  const char* readUnitsActiveMatchEvidenceName(const LiveUnitsProof& proof)
+  {
+    if (!proof.passed)
+      return "none";
+    if (proof.layoutName == "scr-dynamic-field-projection-v1"
+        || proof.layoutName == "scr-sparse-dynamic-field-projection-v1")
+      return "active-dynamic-unit-field-projection";
+    return proof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records";
   }
 
   LiveUnitNodeProof failedUnitNodeProof(std::string reason)
@@ -3061,6 +3165,17 @@ namespace
       || regionsIntersect(region.address, region.size, hints.bssAddress, hints.bssSize);
   }
 
+  bool likelyTargetTextMapping(
+    const RuntimeMemoryRegion& region,
+    const std::string& executablePath,
+    std::uintptr_t targetImageBase)
+  {
+    return sameMappedFile(region.mappedPath, executablePath)
+      && targetImageBase != 0
+      && region.address == targetImageBase
+      && region.size >= 8 * 1024 * 1024;
+  }
+
   bool usableUnitStorageRegion(
     const RuntimeMemoryRegion& region,
     const std::string& executablePath,
@@ -3074,17 +3189,21 @@ namespace
 
     const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
     const StarCraftImageSectionHints hints = starCraftImageSectionHints(targetImageBase);
-    if (targetImageRegion
-        && !includeTargetImageMappedRegions
-        && !regionIntersectsStarCraftRuntimeData(region, hints))
-      return false;
+    const bool targetTextMapping =
+      likelyTargetTextMapping(region, executablePath, targetImageBase);
+    if (targetTextMapping)
+      return includeTargetImageMappedRegions;
 
-    const bool likelyTargetTextMapping =
-      targetImageRegion
-      && targetImageBase != 0
-      && region.address == targetImageBase
-      && region.size >= 8 * 1024 * 1024;
-    return includeTargetImageMappedRegions || !likelyTargetTextMapping;
+    if (targetImageRegion)
+    {
+      // SC:R may expose duplicate translated/file-backed writable data mappings
+      // for the same executable. They do not all intersect the lowest-image-base
+      // static hints, but they can contain the live mirrored game-state tables.
+      return true;
+    }
+
+    return includeTargetImageMappedRegions
+      || !regionIntersectsStarCraftRuntimeData(region, hints);
   }
 
   const RuntimeMemoryRegion* findUsableUnitStorageRegion(
@@ -3138,12 +3257,9 @@ namespace
       return 0;
 
     const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
-    const bool likelyTargetTextMapping =
-      targetImageRegion
-      && targetImageBase != 0
-      && region.address == targetImageBase
-      && region.size >= 8 * 1024 * 1024;
-    if (targetImageRegion && !likelyTargetTextMapping)
+    const bool targetTextMapping =
+      likelyTargetTextMapping(region, executablePath, targetImageBase);
+    if (targetImageRegion && !targetTextMapping)
       return 2;
     if (region.mappedPath.empty())
       return 1;
@@ -3158,14 +3274,11 @@ namespace
     std::uintptr_t targetImageBase)
   {
     const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
-    const bool likelyTargetTextMapping =
-      targetImageRegion
-      && targetImageBase != 0
-      && region.address == targetImageBase
-      && region.size >= 8 * 1024 * 1024;
+    const bool targetTextMapping =
+      likelyTargetTextMapping(region, executablePath, targetImageBase);
     if (!targetImageRegion && !fileBackedNonTargetRegion(region, executablePath))
       return 0;
-    if (targetImageRegion && !likelyTargetTextMapping)
+    if (targetImageRegion && !targetTextMapping)
       return 2;
     if (targetImageRegion)
       return 3;
@@ -3185,12 +3298,9 @@ namespace
       return 1;
 
     const bool targetImageRegion = sameMappedFile(region.mappedPath, executablePath);
-    const bool likelyTargetTextMapping =
-      targetImageRegion
-      && targetImageBase != 0
-      && region.address == targetImageBase
-      && region.size >= 8 * 1024 * 1024;
-    if (targetImageRegion && !likelyTargetTextMapping)
+    const bool targetTextMapping =
+      likelyTargetTextMapping(region, executablePath, targetImageBase);
+    if (targetImageRegion && !targetTextMapping)
       return 2;
     if (!fileBackedNonTargetRegion(region, executablePath))
       return 2;
@@ -3335,6 +3445,48 @@ namespace
     return count;
   }
 
+  std::size_t countReadableDynamicPointerWordsAt(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t size,
+    const std::vector<RuntimeMemoryRegion>& regions)
+  {
+    if (offset >= bytes.size())
+      return 0;
+    const std::size_t limit = std::min(size, bytes.size() - offset);
+    std::size_t count = 0;
+    for (std::size_t cursor = 0; cursor + sizeof(std::uint64_t) <= limit; cursor += sizeof(std::uint64_t))
+    {
+      if (readableDynamicPointerValue(regions, readU64(bytes, offset + cursor), 8))
+        ++count;
+    }
+    return count;
+  }
+
+  std::vector<std::uintptr_t> readableDynamicPointerValuesAt(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t size,
+    const std::vector<RuntimeMemoryRegion>& regions)
+  {
+    std::vector<std::uintptr_t> values;
+    if (offset >= bytes.size())
+      return values;
+    const std::size_t limit = std::min(size, bytes.size() - offset);
+    for (std::size_t cursor = 0; cursor + sizeof(std::uint64_t) <= limit; cursor += sizeof(std::uint64_t))
+    {
+      const std::uint64_t value = readU64(bytes, offset + cursor);
+      if (readableDynamicPointerValue(regions, value, 8))
+        values.push_back(static_cast<std::uintptr_t>(value));
+    }
+    return values;
+  }
+
+  bool pointerOutsideRange(std::uintptr_t value, std::uintptr_t start, std::uintptr_t end)
+  {
+    return value < start || value >= end;
+  }
+
   std::size_t countTaggedHandleWordsAt(
     const std::vector<unsigned char>& bytes,
     std::size_t offset,
@@ -3351,6 +3503,12 @@ namespace
     }
     return count;
   }
+
+  bool offsetRangeOverlaps(
+    std::size_t lhsOffset,
+    std::size_t lhsSize,
+    std::size_t rhsOffset,
+    std::size_t rhsSize);
 
   bool findCoordinatePairInCandidate(
     const std::vector<unsigned char>& bytes,
@@ -3447,6 +3605,13 @@ namespace
     }
     for (std::size_t cursor = 0; cursor + sizeof(std::uint16_t) <= limit; cursor += 2)
     {
+      if (foundPlayer
+          && offsetRangeOverlaps(cursor, sizeof(std::uint16_t), playerOffset, 1))
+      {
+        continue;
+      }
+      if (foundPlayer && playerOffset >= cursor)
+        continue;
       const std::uint16_t candidate = readU16(bytes, offset + cursor);
       if (plausibleRemasteredUnitTypeHint(candidate))
       {
@@ -3571,6 +3736,1067 @@ namespace
       sample.prefixHex = unitBytesHexPrefix(prefix, prefix.size());
       diagnostics->dynamicFieldCandidates.push_back(std::move(sample));
     }
+  }
+
+  bool offsetRangeOverlaps(
+    std::size_t lhsOffset,
+    std::size_t lhsSize,
+    std::size_t rhsOffset,
+    std::size_t rhsSize)
+  {
+    return lhsOffset < rhsOffset + rhsSize && rhsOffset < lhsOffset + lhsSize;
+  }
+
+  bool plausibleDynamicProjectedUnitTypeHint(std::uint16_t typeHint)
+  {
+    return remasteredTypeHintCanProveActiveUnit(typeHint);
+  }
+
+  constexpr std::size_t minDynamicProjectionRecordSize = 0x80;
+  constexpr std::size_t minDynamicProjectionReadableHandleWords = 2;
+
+  bool containsLongPrintableAsciiRun(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t size);
+
+  struct DynamicProjectedUnitRecordParse
+  {
+    RemasteredUnitSnapshotRecord record;
+    std::size_t coordinateOffset = 0;
+    std::size_t hitPointsOffset = 0;
+    std::size_t playerOffset = 0;
+    std::size_t typeOffset = 0;
+  };
+
+  bool parseDynamicProjectedUnitRecord(
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t recordSize,
+    std::uintptr_t recordAddress,
+    DynamicProjectedUnitRecordParse& parsed)
+  {
+    if ((recordAddress & 0x7u) != 0)
+      return false;
+    if (offset >= bytes.size() || recordSize < minDynamicProjectionRecordSize)
+      return false;
+    const std::size_t available = std::min(recordSize, bytes.size() - offset);
+    if (available < minDynamicProjectionRecordSize)
+      return false;
+    if (containsLongPrintableAsciiRun(bytes, offset, available))
+      return false;
+
+    std::size_t coordinateOffset = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    if (!findCoordinatePairInCandidate(bytes, offset, available, coordinateOffset, x, y))
+      return false;
+    if (x > 8192 || y > 8192)
+      return false;
+
+    std::size_t hitPointsOffset = 0;
+    std::uint32_t hitPoints = 0;
+    if (!findHitPointsCandidateInRecord(bytes, offset, available, hitPointsOffset, hitPoints))
+      return false;
+
+    std::size_t playerOffset = 0;
+    int player = -1;
+    std::size_t typeOffset = 0;
+    std::uint16_t typeHint = 0;
+    bool foundPlayerType = false;
+    const std::size_t playerTypeLimit = std::min<std::size_t>(available, 0x40);
+    for (std::size_t playerCursor = 0; playerCursor < playerTypeLimit; ++playerCursor)
+    {
+      if (offsetRangeOverlaps(playerCursor, 1, coordinateOffset, sizeof(std::int16_t) * 2)
+          || offsetRangeOverlaps(playerCursor, 1, hitPointsOffset, sizeof(std::uint32_t)))
+      {
+        continue;
+      }
+      const unsigned char candidatePlayer = bytes[offset + playerCursor];
+      if (candidatePlayer >= 12)
+        continue;
+
+      for (std::size_t typeCursor = 0;
+           typeCursor + sizeof(std::uint16_t) <= playerTypeLimit;
+           typeCursor += 2)
+      {
+        if (offsetRangeOverlaps(typeCursor, sizeof(std::uint16_t), coordinateOffset, sizeof(std::int16_t) * 2)
+            || offsetRangeOverlaps(typeCursor, sizeof(std::uint16_t), hitPointsOffset, sizeof(std::uint32_t)))
+        {
+          continue;
+        }
+        const std::size_t distance =
+          playerCursor > typeCursor ? playerCursor - typeCursor : typeCursor - playerCursor;
+        if (distance > 4)
+          continue;
+        if (playerCursor >= typeCursor)
+          continue;
+        if (offsetRangeOverlaps(typeCursor, sizeof(std::uint16_t), playerCursor, 1))
+          continue;
+
+        const std::uint16_t candidateType = readU16(bytes, offset + typeCursor);
+        if (!plausibleDynamicProjectedUnitTypeHint(candidateType))
+          continue;
+
+        playerOffset = playerCursor;
+        player = static_cast<int>(candidatePlayer);
+        typeOffset = typeCursor;
+        typeHint = candidateType;
+        foundPlayerType = true;
+        break;
+      }
+      if (foundPlayerType)
+        break;
+    }
+    if (!foundPlayerType)
+      return false;
+
+    constexpr std::size_t maxDynamicProjectionFieldOffset = 0x20;
+    if (coordinateOffset >= maxDynamicProjectionFieldOffset
+        || hitPointsOffset >= maxDynamicProjectionFieldOffset
+        || playerOffset >= maxDynamicProjectionFieldOffset
+        || typeOffset >= maxDynamicProjectionFieldOffset)
+    {
+      return false;
+    }
+
+    if (player < 0 || player >= 12 || !plausibleDynamicProjectedUnitTypeHint(typeHint))
+      return false;
+    if (hitPoints == 0 || hitPoints > 1000000)
+      return false;
+
+    const bool coordinateOverlapsHitPoints =
+      offsetRangeOverlaps(coordinateOffset, sizeof(std::int16_t) * 2, hitPointsOffset, sizeof(std::uint32_t));
+    const bool coordinateOverlapsPlayer =
+      offsetRangeOverlaps(coordinateOffset, sizeof(std::int16_t) * 2, playerOffset, 1);
+    const bool coordinateOverlapsType =
+      offsetRangeOverlaps(coordinateOffset, sizeof(std::int16_t) * 2, typeOffset, sizeof(std::uint16_t));
+    const bool hitPointsOverlapsPlayer =
+      offsetRangeOverlaps(hitPointsOffset, sizeof(std::uint32_t), playerOffset, 1);
+    const bool hitPointsOverlapsType =
+      offsetRangeOverlaps(hitPointsOffset, sizeof(std::uint32_t), typeOffset, sizeof(std::uint16_t));
+    if (coordinateOverlapsHitPoints
+        || coordinateOverlapsPlayer
+        || coordinateOverlapsType
+        || hitPointsOverlapsPlayer
+        || hitPointsOverlapsType)
+    {
+      return false;
+    }
+
+    if (coordinateOffset + sizeof(std::int16_t) * 2 > hitPointsOffset
+        || hitPointsOffset + sizeof(std::uint32_t) > std::min(playerOffset, typeOffset))
+    {
+      return false;
+    }
+
+    const std::size_t prefixSize = std::min<std::size_t>(available, 64);
+    std::size_t nonZero = 0;
+    for (std::size_t cursor = 0; cursor < prefixSize; ++cursor)
+    {
+      if (bytes[offset + cursor] != 0)
+        ++nonZero;
+    }
+    if (nonZero < 6)
+      return false;
+
+    RemasteredUnitSnapshotRecord record;
+    record.nodeAddress = recordAddress;
+    record.id = static_cast<std::uint32_t>((recordAddress >> 4) & 0xffffffffu);
+    record.x = x;
+    record.y = y;
+    record.targetX = x;
+    record.targetY = y;
+    record.order = 0;
+    record.state = 0;
+    record.player = player;
+    record.typeHint = typeHint;
+    record.hitPoints = hitPoints;
+    record.hitPointsResolved = true;
+    record.hitPointsSource = "dynamic-record+" + std::to_string(hitPointsOffset) + " hp";
+    record.metadataDerived = true;
+    record.metadataSource = "dynamic-record player/type fields";
+    if (record.id == 0)
+      return false;
+
+    parsed.record = std::move(record);
+    parsed.coordinateOffset = coordinateOffset;
+    parsed.hitPointsOffset = hitPointsOffset;
+    parsed.playerOffset = playerOffset;
+    parsed.typeOffset = typeOffset;
+    return true;
+  }
+
+  bool dynamicProjectionRecordsHaveBwapiMetadata(
+    const std::vector<DynamicProjectedUnitRecordParse>& records)
+  {
+    if (records.size() < minRemasteredSnapshotUnitRecords)
+      return false;
+
+    std::unordered_set<std::uintptr_t> nodeHandles;
+    std::unordered_set<std::uint64_t> positions;
+    std::uint32_t maxHitPoints = 0;
+    const DynamicProjectedUnitRecordParse& first = records.front();
+    for (const DynamicProjectedUnitRecordParse& parsed : records)
+    {
+      const RemasteredUnitSnapshotRecord& record = parsed.record;
+      if (record.nodeAddress == 0
+          || (record.spriteAddress == 0 && record.secondaryAddress == 0)
+          || record.player < 0
+          || record.player >= 12
+          || !plausibleDynamicProjectedUnitTypeHint(record.typeHint)
+          || !record.hitPointsResolved
+          || record.hitPoints == 0)
+      {
+        return false;
+      }
+      if (parsed.coordinateOffset != first.coordinateOffset
+          || parsed.hitPointsOffset != first.hitPointsOffset
+          || parsed.playerOffset != first.playerOffset
+          || parsed.typeOffset != first.typeOffset)
+      {
+        return false;
+      }
+      nodeHandles.insert(record.nodeAddress);
+      maxHitPoints = std::max(maxHitPoints, record.hitPoints);
+      const std::uint64_t packedPosition =
+        (static_cast<std::uint64_t>(static_cast<std::uint16_t>(record.x)) << 16)
+        | static_cast<std::uint16_t>(record.y);
+      positions.insert(packedPosition);
+    }
+
+    return nodeHandles.size() >= minRemasteredSnapshotUnitRecords
+      && positions.size() >= 2
+      && maxHitPoints >= 256u * 20u;
+  }
+
+  struct DynamicProjectionCandidate
+  {
+    DynamicProjectedUnitRecordParse parsed;
+    std::size_t recordSize = 0;
+    std::size_t changedBytes = 0;
+    std::size_t readableHandleWords = 0;
+    std::size_t dynamicPointerWords = 0;
+    std::vector<std::uintptr_t> dynamicPointerValues;
+  };
+
+  bool assignDynamicProjectionExternalHandles(
+    std::vector<DynamicProjectedUnitRecordParse>& records,
+    const std::vector<unsigned char>& bytes,
+    std::size_t start,
+    std::size_t recordSize,
+    std::uintptr_t baseAddress,
+    const std::vector<RuntimeMemoryRegion>& regions)
+  {
+    if (records.size() < minRemasteredSnapshotUnitRecords)
+      return false;
+    const std::uintptr_t excludedStart = baseAddress + start;
+    const std::uintptr_t excludedEnd = excludedStart + records.size() * recordSize;
+    std::size_t recordsWithExternalPointer = 0;
+    for (std::size_t index = 0; index < records.size(); ++index)
+    {
+      const std::size_t recordOffset = start + index * recordSize;
+      std::vector<std::uintptr_t> externalPointers;
+      for (std::uintptr_t value : readableDynamicPointerValuesAt(bytes, recordOffset, recordSize, regions))
+      {
+        if (pointerOutsideRange(value, excludedStart, excludedEnd))
+          externalPointers.push_back(value);
+      }
+      if (externalPointers.empty())
+        continue;
+
+      ++recordsWithExternalPointer;
+      records[index].record.spriteAddress = externalPointers.front();
+      records[index].record.secondaryAddress =
+        externalPointers.size() > 1 ? externalPointers[1] : 0;
+    }
+    return recordsWithExternalPointer >= minRemasteredSnapshotUnitRecords;
+  }
+
+  bool dynamicProjectionCandidatesHaveSameLayout(
+    const DynamicProjectionCandidate& lhs,
+    const DynamicProjectionCandidate& rhs)
+  {
+    return lhs.recordSize == rhs.recordSize
+      && lhs.parsed.coordinateOffset == rhs.parsed.coordinateOffset
+      && lhs.parsed.hitPointsOffset == rhs.parsed.hitPointsOffset
+      && lhs.parsed.playerOffset == rhs.parsed.playerOffset
+      && lhs.parsed.typeOffset == rhs.parsed.typeOffset;
+  }
+
+  std::vector<DynamicProjectedUnitRecordParse> collectNonOverlappingDynamicProjectionRecords(
+    std::vector<DynamicProjectionCandidate> candidates,
+    std::size_t& changedBytes,
+    bool requireChangedRecords)
+  {
+    changedBytes = 0;
+    std::size_t changedRecords = 0;
+    std::size_t readableHandleRecords = 0;
+    std::size_t dynamicPointerRecords = 0;
+    std::sort(
+      candidates.begin(),
+      candidates.end(),
+      [](const DynamicProjectionCandidate& lhs, const DynamicProjectionCandidate& rhs)
+      {
+        if (lhs.parsed.record.nodeAddress != rhs.parsed.record.nodeAddress)
+          return lhs.parsed.record.nodeAddress < rhs.parsed.record.nodeAddress;
+        return lhs.recordSize < rhs.recordSize;
+      });
+
+    std::vector<DynamicProjectionCandidate> selected;
+    std::uintptr_t lastEnd = 0;
+    for (const DynamicProjectionCandidate& candidate : candidates)
+    {
+      const std::uintptr_t address = candidate.parsed.record.nodeAddress;
+      if (!selected.empty() && address < lastEnd)
+        continue;
+      selected.push_back(candidate);
+      changedBytes += candidate.changedBytes;
+      if (candidate.changedBytes > 0)
+        ++changedRecords;
+      if (candidate.readableHandleWords >= minDynamicProjectionReadableHandleWords)
+        ++readableHandleRecords;
+      if (candidate.dynamicPointerWords > 0)
+        ++dynamicPointerRecords;
+      lastEnd = address + candidate.recordSize;
+    }
+
+    std::vector<DynamicProjectedUnitRecordParse> records;
+    if (!selected.empty())
+    {
+      std::uintptr_t selectedStart = selected.front().parsed.record.nodeAddress;
+      std::uintptr_t selectedEnd = selectedStart;
+      for (const DynamicProjectionCandidate& candidate : selected)
+      {
+        selectedStart = std::min(selectedStart, candidate.parsed.record.nodeAddress);
+        selectedEnd = std::max(
+          selectedEnd,
+          candidate.parsed.record.nodeAddress + candidate.recordSize);
+      }
+
+      std::size_t externalPointerRecords = 0;
+      records.reserve(selected.size());
+      for (const DynamicProjectionCandidate& candidate : selected)
+      {
+        DynamicProjectedUnitRecordParse parsed = candidate.parsed;
+        std::vector<std::uintptr_t> externalPointers;
+        for (std::uintptr_t value : candidate.dynamicPointerValues)
+        {
+          if (pointerOutsideRange(value, selectedStart, selectedEnd))
+            externalPointers.push_back(value);
+        }
+        if (!externalPointers.empty())
+        {
+          ++externalPointerRecords;
+          parsed.record.spriteAddress = externalPointers.front();
+          parsed.record.secondaryAddress =
+            externalPointers.size() > 1 ? externalPointers[1] : 0;
+        }
+        records.push_back(std::move(parsed));
+      }
+      if (externalPointerRecords < minRemasteredSnapshotUnitRecords)
+        records.clear();
+    }
+
+    if ((requireChangedRecords && changedRecords < minRemasteredSnapshotUnitRecords)
+        || readableHandleRecords < minRemasteredSnapshotUnitRecords
+        || dynamicPointerRecords < minRemasteredSnapshotUnitRecords
+        || records.size() < minRemasteredSnapshotUnitRecords)
+    {
+      records.clear();
+      changedBytes = 0;
+    }
+    return records;
+  }
+
+  LiveUnitsProof proveSparseDynamicUnitFieldProjection(
+    const std::vector<DynamicProjectionCandidate>& candidates,
+    bool requireChangedRecords,
+    LiveUnitNodeProof* activeUnitNodeProof)
+  {
+    std::vector<DynamicProjectedUnitRecordParse> bestParsedRecords;
+    std::uintptr_t bestAddress = 0;
+    std::size_t bestRecordSize = 0;
+    std::size_t bestChangedBytes = 0;
+
+    for (std::size_t i = 0; i < candidates.size(); ++i)
+    {
+      std::vector<DynamicProjectionCandidate> sameLayout;
+      for (std::size_t j = i; j < candidates.size(); ++j)
+      {
+        if (dynamicProjectionCandidatesHaveSameLayout(candidates[i], candidates[j]))
+          sameLayout.push_back(candidates[j]);
+      }
+
+      std::size_t changedBytes = 0;
+      std::vector<DynamicProjectedUnitRecordParse> records =
+        collectNonOverlappingDynamicProjectionRecords(
+          std::move(sameLayout),
+          changedBytes,
+          requireChangedRecords);
+      if (records.size() < minRemasteredSnapshotUnitRecords
+          || (requireChangedRecords && changedBytes < minRemasteredSnapshotUnitRecords)
+          || !dynamicProjectionRecordsHaveBwapiMetadata(records))
+      {
+        continue;
+      }
+
+      const std::uintptr_t address = records.front().record.nodeAddress;
+      const std::size_t recordSize = candidates[i].recordSize;
+      if (records.size() > bestParsedRecords.size()
+          || (records.size() == bestParsedRecords.size()
+              && changedBytes > bestChangedBytes)
+          || (records.size() == bestParsedRecords.size()
+              && changedBytes == bestChangedBytes
+              && recordSize > bestRecordSize))
+      {
+        bestParsedRecords = std::move(records);
+        bestAddress = address;
+        bestRecordSize = recordSize;
+        bestChangedBytes = changedBytes;
+      }
+    }
+
+    if (bestParsedRecords.size() < minRemasteredSnapshotUnitRecords)
+      return failedUnitsProof("sparse dynamic projection did not find enough non-overlapping BWAPI-facing records");
+
+    std::vector<RemasteredUnitSnapshotRecord> bestRecords;
+    bestRecords.reserve(bestParsedRecords.size());
+    for (const DynamicProjectedUnitRecordParse& parsed : bestParsedRecords)
+      bestRecords.push_back(parsed.record);
+
+    LiveUnitNodeProof nodeProof;
+    nodeProof.passed = true;
+    nodeProof.address = bestAddress;
+    nodeProof.recordSize = bestRecordSize;
+    nodeProof.sampledRecords = bestRecords.size();
+    nodeProof.activeRecords = bestRecords.size();
+    nodeProof.records = bestRecords;
+    nodeProof.reason = "sparse dynamic field projection snapshot";
+    if (activeUnitNodeProof != nullptr)
+      *activeUnitNodeProof = nodeProof;
+
+    LiveUnitsProof proof;
+    proof.passed = true;
+    proof.address = bestAddress;
+    proof.recordSize = bestRecordSize;
+    proof.sampledRecords = bestRecords.size();
+    proof.activeRecords = bestRecords.size();
+    proof.derivedSnapshot = true;
+    proof.hitPointsResolved = true;
+    proof.layoutName = "scr-sparse-dynamic-field-projection-v1";
+    proof.idSource = "stable-record-address";
+    proof.positionSource = "sparse dynamic-record coordinate fields";
+    proof.hitPointsSource = "sparse dynamic-record hp field";
+    proof.orderSource = "sparse dynamic-record:adapter-default-order";
+    proof.playerSource = "sparse dynamic-record player/type fields";
+    proof.hitPointsOffset = 12;
+    proof.reason = std::string(requireChangedRecords
+        ? "sparse dynamic field projection matched "
+        : "static sparse dynamic field projection matched ")
+      + std::to_string(bestRecords.size())
+      + " non-overlapping records";
+    if (requireChangedRecords)
+    {
+      proof.reason += " with "
+        + std::to_string(bestChangedBytes)
+        + " changed bytes in candidate records";
+    }
+    else
+    {
+      proof.reason += " with stable readable handles and BWAPI-facing metadata";
+    }
+    return proof;
+  }
+
+  LiveUnitsProof proveDynamicUnitFieldProjectionInWindow(
+    const std::vector<unsigned char>& before,
+    const std::vector<unsigned char>& after,
+    std::uintptr_t baseAddress,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    const std::chrono::steady_clock::time_point& deadline,
+    bool& scanTimedOut,
+    bool requireChangedBytes,
+    bool allowStaticSparseProjection,
+    LiveUnitNodeProof* activeUnitNodeProof)
+  {
+    if (before.size() != after.size()
+        || after.size() < minDynamicProjectionRecordSize * minRemasteredSnapshotUnitRecords)
+      return failedUnitsProof("dynamic projection window is too small");
+
+    constexpr std::array<std::size_t, 19> candidateRecordSizes = {
+      0x20, 0x28, 0x30, 0x40, 0x50, 0x58, 0x60, 0x80, 0xc0, 0x100,
+      0x120, 0x140, 0x150, 0x180, 0x1c0, 0x200, 0x280, 0x300, 0x400
+    };
+    constexpr std::size_t maxProjectedRecords = 64;
+
+    std::vector<DynamicProjectedUnitRecordParse> bestParsedRecords;
+    std::uintptr_t bestAddress = 0;
+    std::size_t bestRecordSize = 0;
+    std::size_t bestChangedBytes = 0;
+    std::vector<DynamicProjectionCandidate> sparseCandidates;
+    std::unordered_set<std::uint64_t> sparseCandidateKeys;
+
+    for (std::size_t recordSize : candidateRecordSizes)
+    {
+      if (recordSize < minDynamicProjectionRecordSize)
+        continue;
+      if (recordSize * minRemasteredSnapshotUnitRecords > after.size())
+        continue;
+
+      for (std::size_t start = 0; start + recordSize * minRemasteredSnapshotUnitRecords <= after.size(); start += 8)
+      {
+        if (timedOut(deadline))
+        {
+          scanTimedOut = true;
+          return failedUnitsProof("dynamic unit projection scan timed out before proof");
+        }
+
+        std::vector<DynamicProjectedUnitRecordParse> records;
+        records.reserve(minRemasteredSnapshotUnitRecords);
+        const std::size_t maxRecords =
+          std::min(maxProjectedRecords, (after.size() - start) / recordSize);
+        for (std::size_t index = 0; index < maxRecords; ++index)
+        {
+          DynamicProjectedUnitRecordParse parsed;
+          const std::size_t offset = start + index * recordSize;
+          if (!parseDynamicProjectedUnitRecord(
+                after,
+                offset,
+                recordSize,
+                baseAddress + offset,
+                parsed))
+          {
+            break;
+          }
+          const std::size_t readableHandleWords =
+            countReadablePointerWordsAt(after, offset, recordSize, regions)
+            + countTaggedHandleWordsAt(after, offset, recordSize);
+          if (readableHandleWords < minDynamicProjectionReadableHandleWords)
+            break;
+          std::vector<std::uintptr_t> dynamicPointerValues =
+            readableDynamicPointerValuesAt(after, offset, recordSize, regions);
+          const std::size_t dynamicPointerWords = dynamicPointerValues.size();
+          if (!requireChangedBytes && dynamicPointerWords == 0)
+            break;
+          parsed.record.index = index;
+          const std::uint64_t sparseKey =
+            (static_cast<std::uint64_t>(recordSize) << 48)
+            ^ (parsed.record.nodeAddress & 0x0000ffffffffffffULL);
+          if (sparseCandidateKeys.insert(sparseKey).second)
+          {
+            sparseCandidates.push_back(DynamicProjectionCandidate {
+              parsed,
+              recordSize,
+              countChangedBytesInRange(before, after, offset, recordSize),
+              readableHandleWords,
+              dynamicPointerWords,
+              std::move(dynamicPointerValues)
+            });
+          }
+          records.push_back(std::move(parsed));
+        }
+
+        if (records.size() < minRemasteredSnapshotUnitRecords
+            || !assignDynamicProjectionExternalHandles(
+              records,
+              after,
+              start,
+              recordSize,
+              baseAddress,
+              regions)
+            || !dynamicProjectionRecordsHaveBwapiMetadata(records))
+        {
+          continue;
+        }
+
+        const std::size_t changedBytes =
+          countChangedBytesInRange(before, after, start, records.size() * recordSize);
+        if (requireChangedBytes && changedBytes < records.size())
+          continue;
+
+        if (records.size() > bestParsedRecords.size()
+            || (records.size() == bestParsedRecords.size() && changedBytes > bestChangedBytes))
+        {
+          bestParsedRecords = std::move(records);
+          bestAddress = baseAddress + start;
+          bestRecordSize = recordSize;
+          bestChangedBytes = changedBytes;
+        }
+      }
+    }
+
+    if (bestParsedRecords.size() < minRemasteredSnapshotUnitRecords)
+    {
+      if (!requireChangedBytes && !allowStaticSparseProjection)
+      {
+        return failedUnitsProof(
+          "static sparse dynamic projection is not accepted without mutation-correlated unit evidence");
+      }
+      LiveUnitsProof sparseProof =
+        proveSparseDynamicUnitFieldProjection(
+          sparseCandidates,
+          requireChangedBytes,
+          activeUnitNodeProof);
+      if (sparseProof.passed)
+        return sparseProof;
+      return failedUnitsProof(std::string("dynamic projection did not find enough consecutive BWAPI-facing records; ")
+        + sparseProof.reason);
+    }
+
+    std::vector<RemasteredUnitSnapshotRecord> bestRecords;
+    bestRecords.reserve(bestParsedRecords.size());
+    for (const DynamicProjectedUnitRecordParse& parsed : bestParsedRecords)
+      bestRecords.push_back(parsed.record);
+
+    LiveUnitNodeProof nodeProof;
+    nodeProof.passed = true;
+    nodeProof.address = bestAddress;
+    nodeProof.recordSize = bestRecordSize;
+    nodeProof.sampledRecords = bestRecords.size();
+    nodeProof.activeRecords = bestRecords.size();
+    nodeProof.records = bestRecords;
+    nodeProof.reason = "dynamic field projection snapshot";
+    if (activeUnitNodeProof != nullptr)
+      *activeUnitNodeProof = nodeProof;
+
+    LiveUnitsProof proof;
+    proof.passed = true;
+    proof.address = bestAddress;
+    proof.recordSize = bestRecordSize;
+    proof.sampledRecords = bestRecords.size();
+    proof.activeRecords = bestRecords.size();
+    proof.derivedSnapshot = true;
+    proof.hitPointsResolved = true;
+    proof.layoutName = "scr-dynamic-field-projection-v1";
+    proof.idSource = "stable-record-address";
+    proof.positionSource = "dynamic-record coordinate fields";
+    proof.hitPointsSource = "dynamic-record hp field";
+    proof.orderSource = "dynamic-record:adapter-default-order";
+    proof.playerSource = "dynamic-record player/type fields";
+    proof.hitPointsOffset = 12;
+    proof.reason = std::string(requireChangedBytes
+        ? "dynamic field projection matched "
+        : "static dynamic field projection matched ")
+      + std::to_string(bestRecords.size())
+      + " records";
+    if (requireChangedBytes)
+    {
+      proof.reason += " with "
+        + std::to_string(bestChangedBytes)
+        + " changed bytes in candidate span";
+    }
+    else
+    {
+      proof.reason += " with stable readable handles and BWAPI-facing metadata";
+    }
+    return proof;
+  }
+
+  LiveUnitsProof proveDynamicUnitFieldProjection(
+    int processId,
+    const std::string& executablePath,
+    std::size_t maxScanBytes,
+    int scanTimeoutMs,
+    bool includeTargetImageMappedRegions,
+    const std::vector<std::uintptr_t>& seedAddresses,
+    bool enableStaticProjection,
+    bool allowStaticSparseProjection,
+    LiveUnitNodeProof* activeUnitNodeProof,
+    UnitScanDiagnostics* diagnostics)
+  {
+    if (diagnostics != nullptr)
+    {
+      diagnostics->dynamicProjectionAttempted = true;
+      diagnostics->dynamicProjectionPassed = false;
+      diagnostics->dynamicProjectionReason.clear();
+      diagnostics->dynamicProjectionAddress = 0;
+      diagnostics->dynamicProjectionRecordSize = 0;
+      diagnostics->dynamicProjectionActiveRecords = 0;
+    }
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(processId);
+    if (!regions.success)
+    {
+      if (diagnostics != nullptr)
+        diagnostics->dynamicProjectionReason = regions.reason;
+      return failedUnitsProof(regions.reason);
+    }
+
+    std::uintptr_t targetImageBase = 0;
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!sameMappedFile(region.mappedPath, executablePath))
+        continue;
+      if (targetImageBase == 0 || region.address < targetImageBase)
+        targetImageBase = region.address;
+    }
+
+    std::vector<RuntimeMemoryRegion> candidateRegions;
+    candidateRegions.reserve(regions.regions.size());
+    for (const RuntimeMemoryRegion& region : regions.regions)
+    {
+      if (!usableUnitStorageRegion(
+            region,
+            executablePath,
+            targetImageBase,
+            includeTargetImageMappedRegions))
+      {
+        continue;
+      }
+      if (region.size < 0x20 * minRemasteredSnapshotUnitRecords)
+        continue;
+      candidateRegions.push_back(region);
+    }
+
+    std::stable_sort(
+      candidateRegions.begin(),
+      candidateRegions.end(),
+      [&](const RuntimeMemoryRegion& lhs, const RuntimeMemoryRegion& rhs)
+      {
+        const int lhsPriority = dynamicUnitScanRegionPriority(lhs, executablePath, targetImageBase);
+        const int rhsPriority = dynamicUnitScanRegionPriority(rhs, executablePath, targetImageBase);
+        if (lhsPriority != rhsPriority)
+          return lhsPriority < rhsPriority;
+        if (lhs.size != rhs.size)
+          return lhs.size < rhs.size;
+        return lhs.address < rhs.address;
+      });
+
+    struct RegionSnapshot
+    {
+      RuntimeMemoryRegion region;
+      std::vector<unsigned char> before;
+    };
+
+    constexpr std::size_t maxRegionBytes = 8 * 1024 * 1024;
+    constexpr std::size_t dynamicProjectionMaxBytes = 96 * 1024 * 1024;
+    const std::size_t scanBudget = std::min(maxScanBytes, dynamicProjectionMaxBytes);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scanTimeoutMs);
+    std::vector<RegionSnapshot> snapshots;
+    std::size_t sampledBytes = 0;
+    constexpr std::size_t seedReadBytes = 512 * 1024;
+    constexpr std::size_t seedReadRadius = seedReadBytes / 2;
+    std::unordered_set<std::uintptr_t> sampledSeedStarts;
+    for (std::uintptr_t seedAddress : seedAddresses)
+    {
+      if (seedAddress == 0 || timedOut(deadline))
+        continue;
+
+      const RuntimeMemoryRegion* containingRegion = nullptr;
+      for (const RuntimeMemoryRegion& region : regions.regions)
+      {
+        if (!region.readable || region.executable)
+          continue;
+        const std::uintptr_t regionEnd = region.address + region.size;
+        if (seedAddress >= region.address && seedAddress < regionEnd)
+        {
+          containingRegion = &region;
+          break;
+        }
+      }
+      if (containingRegion == nullptr)
+        continue;
+
+      const std::uintptr_t regionEnd = containingRegion->address + containingRegion->size;
+      std::uintptr_t windowStart = seedAddress > seedReadRadius
+        ? seedAddress - seedReadRadius
+        : containingRegion->address;
+      if (windowStart < containingRegion->address)
+        windowStart = containingRegion->address;
+      windowStart &= ~static_cast<std::uintptr_t>(0x7u);
+      if (windowStart < containingRegion->address)
+        windowStart = containingRegion->address;
+      std::uintptr_t windowEnd = std::min(regionEnd, windowStart + seedReadBytes);
+      if (seedAddress >= windowEnd)
+      {
+        windowStart = seedAddress & ~static_cast<std::uintptr_t>(0x7u);
+        windowEnd = std::min(regionEnd, windowStart + seedReadBytes);
+      }
+      if (windowEnd <= windowStart)
+        continue;
+      if (!sampledSeedStarts.insert(windowStart).second)
+        continue;
+
+      RuntimeMemoryReadResult read = readProcessMemory(processId, windowStart, windowEnd - windowStart);
+      if (!read.success || read.bytesRead < 0x20 * minRemasteredSnapshotUnitRecords)
+        continue;
+
+      RuntimeMemoryRegion seedRegion = *containingRegion;
+      seedRegion.address = windowStart;
+      seedRegion.size = read.bytesRead;
+      if (diagnostics != nullptr)
+      {
+        ++diagnostics->dynamicSampledRegions;
+        diagnostics->dynamicSampledBytes += read.bytesRead;
+      }
+      sampledBytes += read.bytesRead;
+      snapshots.push_back(RegionSnapshot { seedRegion, std::move(read.bytes) });
+    }
+
+    for (const RuntimeMemoryRegion& region : candidateRegions)
+    {
+      if (sampledBytes >= scanBudget || timedOut(deadline))
+        break;
+      const std::size_t bytesToRead =
+        std::min(region.size, std::min(maxRegionBytes, scanBudget - sampledBytes));
+      RuntimeMemoryReadResult read = readProcessMemory(processId, region.address, bytesToRead);
+      if (!read.success || read.bytesRead < 0x20 * minRemasteredSnapshotUnitRecords)
+        continue;
+
+      if (diagnostics != nullptr)
+      {
+        ++diagnostics->dynamicSampledRegions;
+        diagnostics->dynamicSampledBytes += read.bytesRead;
+      }
+      sampledBytes += read.bytesRead;
+      snapshots.push_back(RegionSnapshot { region, std::move(read.bytes) });
+    }
+
+    if (snapshots.empty())
+    {
+      const std::string reason = "no readable writable StarCraft live-memory regions were sampled for dynamic projection";
+      if (diagnostics != nullptr)
+        diagnostics->dynamicProjectionReason = reason;
+      return failedUnitsProof(reason);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    constexpr std::size_t maxChangedRangesPerRegion = 64;
+    constexpr std::size_t maxDynamicProjectionWindows = 96;
+    constexpr std::size_t maxStaticProjectionWindows = 96;
+    constexpr std::size_t windowRadius = 64 * 1024;
+    constexpr std::size_t staticProjectionWindowBytes = 512 * 1024;
+    std::size_t windowsScored = 0;
+    std::size_t staticWindowsScored = 0;
+    std::unordered_set<std::uintptr_t> scoredWindowStarts;
+    std::unordered_set<std::uintptr_t> scoredStaticWindowStarts;
+    LiveUnitsProof bestFailure = failedUnitsProof(
+      "changing live-memory regions did not contain a dynamic BWAPI-facing unit projection");
+
+    for (const RegionSnapshot& snapshot : snapshots)
+    {
+      if (timedOut(deadline))
+      {
+        if (diagnostics != nullptr)
+        {
+          diagnostics->timedOut = true;
+          diagnostics->dynamicProjectionReason = "dynamic projection scan timed out before proof";
+        }
+        return failedUnitsProof("dynamic projection scan timed out before proof");
+      }
+
+      RuntimeMemoryReadResult afterRead =
+        readProcessMemory(processId, snapshot.region.address, snapshot.before.size());
+      if (!afterRead.success || afterRead.bytesRead != snapshot.before.size())
+        continue;
+
+      std::size_t changedBytes = 0;
+      const std::vector<std::pair<std::size_t, std::size_t>> changedRanges =
+        collectChangedRanges(snapshot.before, afterRead.bytes, changedBytes, maxChangedRangesPerRegion);
+      rememberDynamicRegionSample(
+        diagnostics,
+        snapshot.region,
+        executablePath,
+        targetImageBase,
+        afterRead.bytesRead,
+        changedBytes,
+        changedRanges);
+      if (changedBytes > 0 && diagnostics != nullptr)
+      {
+        ++diagnostics->dynamicChangedRegions;
+        diagnostics->dynamicChangedBytes += changedBytes;
+      }
+
+      if (changedBytes > 0)
+      {
+        for (const auto& range : changedRanges)
+        {
+          if (windowsScored >= maxDynamicProjectionWindows || timedOut(deadline))
+            break;
+
+          const std::size_t windowStart =
+            range.first > windowRadius ? range.first - windowRadius : 0;
+          const std::size_t windowEnd = std::min(
+            afterRead.bytes.size(),
+            range.first + range.second + windowRadius);
+          if (windowEnd <= windowStart
+              || windowEnd - windowStart < 0x20 * minRemasteredSnapshotUnitRecords)
+          {
+            continue;
+          }
+
+          const std::uintptr_t windowAddress = snapshot.region.address + windowStart;
+          if (!scoredWindowStarts.insert(windowAddress).second)
+            continue;
+
+          std::vector<unsigned char> beforeWindow(
+            snapshot.before.begin() + static_cast<std::vector<unsigned char>::difference_type>(windowStart),
+            snapshot.before.begin() + static_cast<std::vector<unsigned char>::difference_type>(windowEnd));
+          std::vector<unsigned char> afterWindow(
+            afterRead.bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>(windowStart),
+            afterRead.bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>(windowEnd));
+          collectDynamicFieldCandidateSamples(
+            diagnostics,
+            beforeWindow,
+            afterWindow,
+            windowAddress,
+            regions.regions);
+
+          ++windowsScored;
+          if (diagnostics != nullptr)
+            ++diagnostics->dynamicWindowsScored;
+
+          bool scanTimedOut = false;
+          LiveUnitsProof projectionProof = proveDynamicUnitFieldProjectionInWindow(
+            beforeWindow,
+            afterWindow,
+            windowAddress,
+            regions.regions,
+            deadline,
+            scanTimedOut,
+            true,
+            true,
+            activeUnitNodeProof);
+          if (scanTimedOut)
+          {
+            if (diagnostics != nullptr)
+            {
+              diagnostics->timedOut = true;
+              diagnostics->dynamicProjectionReason = projectionProof.reason;
+            }
+            return projectionProof;
+          }
+          if (projectionProof.passed)
+          {
+            if (diagnostics != nullptr)
+            {
+              diagnostics->dynamicProjectionPassed = true;
+              diagnostics->dynamicProjectionReason = projectionProof.reason;
+              diagnostics->dynamicProjectionAddress = projectionProof.address;
+              diagnostics->dynamicProjectionRecordSize = projectionProof.recordSize;
+              diagnostics->dynamicProjectionActiveRecords = projectionProof.activeRecords;
+            }
+            return projectionProof;
+          }
+          bestFailure = std::move(projectionProof);
+
+          if (enableStaticProjection
+              && staticWindowsScored < maxStaticProjectionWindows
+              && !timedOut(deadline))
+          {
+            const std::size_t staticWindowStart = windowStart;
+            const std::size_t staticWindowEnd = windowEnd;
+            if (staticWindowEnd > staticWindowStart
+                && staticWindowEnd - staticWindowStart
+                  >= minDynamicProjectionRecordSize * minRemasteredSnapshotUnitRecords
+                && scoredStaticWindowStarts.insert(windowAddress).second)
+            {
+              ++staticWindowsScored;
+              bool staticScanTimedOut = false;
+              LiveUnitsProof staticProof = proveDynamicUnitFieldProjectionInWindow(
+                afterWindow,
+                afterWindow,
+                windowAddress,
+                regions.regions,
+                deadline,
+                staticScanTimedOut,
+                false,
+                allowStaticSparseProjection,
+                activeUnitNodeProof);
+              if (staticScanTimedOut)
+              {
+                if (diagnostics != nullptr)
+                {
+                  diagnostics->timedOut = true;
+                  diagnostics->dynamicProjectionReason = staticProof.reason;
+                }
+                return staticProof;
+              }
+              if (staticProof.passed)
+              {
+                if (diagnostics != nullptr)
+                {
+                  diagnostics->dynamicProjectionPassed = true;
+                  diagnostics->dynamicProjectionReason = staticProof.reason;
+                  diagnostics->dynamicProjectionAddress = staticProof.address;
+                  diagnostics->dynamicProjectionRecordSize = staticProof.recordSize;
+                  diagnostics->dynamicProjectionActiveRecords = staticProof.activeRecords;
+                }
+                return staticProof;
+              }
+              bestFailure = std::move(staticProof);
+            }
+          }
+        }
+      }
+
+      for (std::size_t staticWindowStart = 0;
+           enableStaticProjection
+             && staticWindowsScored < maxStaticProjectionWindows
+             && staticWindowStart < afterRead.bytes.size()
+             && !timedOut(deadline);
+           staticWindowStart += staticProjectionWindowBytes)
+      {
+        const std::size_t staticWindowEnd = std::min(
+          afterRead.bytes.size(),
+          staticWindowStart + staticProjectionWindowBytes);
+        if (staticWindowEnd <= staticWindowStart
+            || staticWindowEnd - staticWindowStart
+              < minDynamicProjectionRecordSize * minRemasteredSnapshotUnitRecords)
+        {
+          continue;
+        }
+
+        const std::uintptr_t staticWindowAddress = snapshot.region.address + staticWindowStart;
+        if (!scoredStaticWindowStarts.insert(staticWindowAddress).second)
+          continue;
+
+        std::vector<unsigned char> staticWindow(
+          afterRead.bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>(staticWindowStart),
+          afterRead.bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>(staticWindowEnd));
+
+        ++staticWindowsScored;
+        bool staticScanTimedOut = false;
+        LiveUnitsProof staticProof = proveDynamicUnitFieldProjectionInWindow(
+          staticWindow,
+          staticWindow,
+          staticWindowAddress,
+          regions.regions,
+          deadline,
+          staticScanTimedOut,
+          false,
+          allowStaticSparseProjection,
+          activeUnitNodeProof);
+        if (staticScanTimedOut)
+        {
+          if (diagnostics != nullptr)
+          {
+            diagnostics->timedOut = true;
+            diagnostics->dynamicProjectionReason = staticProof.reason;
+          }
+          return staticProof;
+        }
+        if (staticProof.passed)
+        {
+          if (diagnostics != nullptr)
+          {
+            diagnostics->dynamicProjectionPassed = true;
+            diagnostics->dynamicProjectionReason = staticProof.reason;
+            diagnostics->dynamicProjectionAddress = staticProof.address;
+            diagnostics->dynamicProjectionRecordSize = staticProof.recordSize;
+            diagnostics->dynamicProjectionActiveRecords = staticProof.activeRecords;
+          }
+          return staticProof;
+        }
+        bestFailure = std::move(staticProof);
+      }
+    }
+
+    if (diagnostics != nullptr)
+      diagnostics->dynamicProjectionReason = bestFailure.reason;
+    return bestFailure;
   }
 
   bool containsLongPrintableAsciiRun(
@@ -3900,10 +5126,8 @@ namespace
     record.targetY = record.y;
     record.order = 0;
     record.state = 0;
-    record.player = 0;
-    record.typeHint = 1;
-    record.metadataDerived = true;
     record.taggedHandleDerived = taggedSprite || taggedSecondary;
+    bool metadataResolved = false;
 
     constexpr std::size_t spriteSnapshotBytes = 0xd0;
     if (!taggedSprite && readableRuntimeObjectPointerValue(regions, spriteAddress64, spriteSnapshotBytes))
@@ -3914,14 +5138,18 @@ namespace
       {
         const std::uint32_t primaryPlayer = readU32(spriteRead.bytes, 0x6c);
         const unsigned char secondaryPlayer = spriteRead.bytes[0xc0];
-        if (primaryPlayer < 12)
-          record.player = static_cast<int>(primaryPlayer);
-        else if (secondaryPlayer < 12)
-          record.player = static_cast<int>(secondaryPlayer);
-
         const std::uint16_t typeHint = static_cast<std::uint16_t>(readU32(spriteRead.bytes, 0x68) & 0xffffu);
-        if (plausibleRemasteredUnitTypeHint(typeHint))
+        if (plausibleRemasteredUnitTypeHint(typeHint)
+            && (primaryPlayer < 12 || secondaryPlayer < 12))
+        {
+          record.player = primaryPlayer < 12
+            ? static_cast<int>(primaryPlayer)
+            : static_cast<int>(secondaryPlayer);
           record.typeHint = typeHint;
+          record.metadataDerived = true;
+          record.metadataSource = "sprite+0x68|0x6c-or-0xc0";
+          metadataResolved = true;
+        }
 
         const std::uint32_t hitPoints = readU32(spriteRead.bytes, 0x80);
         if (hitPoints > 0 && hitPoints <= 1000000)
@@ -3949,6 +5177,9 @@ namespace
         {
           record.player = rawPlayer == 255 ? 11 : static_cast<int>(rawPlayer);
           record.typeHint = typeHint;
+          record.metadataDerived = true;
+          record.metadataSource = "secondary+0x10|0x14";
+          metadataResolved = true;
           const unsigned char currentHitPoints = secondaryRead.bytes[0x1a];
           const unsigned char maxHitPoints = secondaryRead.bytes[0x1b];
           if (currentHitPoints != 0 && maxHitPoints != 0 && currentHitPoints <= maxHitPoints)
@@ -3965,6 +5196,9 @@ namespace
         {
           record.player = static_cast<int>(metadataPlayer);
           record.typeHint = metadataType;
+          record.metadataDerived = true;
+          record.metadataSource = "secondary+0xd0|0xc0";
+          metadataResolved = true;
           if (!record.hitPointsResolved)
           {
             const unsigned char currentHitPoints = secondaryRead.bytes[0x1a];
@@ -3980,19 +5214,164 @@ namespace
       }
     }
 
-    return record.id != 0 && record.player >= 0 && record.player < 12;
+    return record.id != 0
+      && metadataResolved
+      && record.player >= 0
+      && record.player < 12
+      && plausibleRemasteredUnitTypeHint(record.typeHint)
+      && record.hitPointsResolved
+      && record.hitPoints > 0;
+  }
+
+  bool stringStartsWith(const std::string& value, const char* prefix)
+  {
+    return value.rfind(prefix, 0) == 0;
+  }
+
+  bool remasteredCompactRecordHasValidBwapiMetadata(
+    const RemasteredUnitSnapshotRecord& record)
+  {
+    return record.player >= 0
+      && record.player < 12
+      && plausibleRemasteredUnitTypeHint(record.typeHint)
+      && record.hitPointsResolved
+      && record.hitPoints > 0
+      && (record.metadataDerived || record.taggedHandleDerived);
+  }
+
+  bool remasteredCompactRecordsUseSpriteDerivedBwapiMetadata(
+    const std::vector<RemasteredUnitSnapshotRecord>& records)
+  {
+    return std::all_of(
+      records.begin(),
+      records.end(),
+      [](const RemasteredUnitSnapshotRecord& record)
+      {
+        return remasteredCompactRecordHasValidBwapiMetadata(record)
+          && stringStartsWith(record.metadataSource, "sprite+")
+          && stringStartsWith(record.hitPointsSource, "sprite+");
+      });
   }
 
   bool remasteredCompactRecordsHaveBwapiMetadata(
     const std::vector<RemasteredUnitSnapshotRecord>& records)
   {
-    return std::any_of(
+    if (records.size() < minRemasteredSnapshotUnitRecords)
+      return false;
+
+    std::unordered_set<std::uintptr_t> nodeHandles;
+    std::unordered_set<std::uintptr_t> spriteHandles;
+    std::unordered_set<std::uintptr_t> secondaryHandles;
+    for (const RemasteredUnitSnapshotRecord& record : records)
+    {
+      if (record.nodeAddress != 0)
+        nodeHandles.insert(record.nodeAddress);
+      if (record.spriteAddress != 0)
+        spriteHandles.insert(record.spriteAddress);
+      if (record.secondaryAddress != 0)
+        secondaryHandles.insert(record.secondaryAddress);
+    }
+
+    if (nodeHandles.size() < minRemasteredSnapshotUnitRecords
+        || spriteHandles.size() < minRemasteredSnapshotUnitRecords)
+      return false;
+
+    const bool validRecords = std::all_of(
       records.begin(),
       records.end(),
       [](const RemasteredUnitSnapshotRecord& record)
       {
-        return !record.taggedHandleDerived || record.hitPointsResolved;
+        return remasteredCompactRecordHasValidBwapiMetadata(record);
       });
+    if (!validRecords)
+      return false;
+
+    const std::size_t activeTypeRecords = static_cast<std::size_t>(std::count_if(
+      records.begin(),
+      records.end(),
+      [](const RemasteredUnitSnapshotRecord& record)
+      {
+        return remasteredTypeHintCanProveActiveUnit(record.typeHint);
+      }));
+    if (activeTypeRecords < minRemasteredSnapshotUnitRecords)
+      return false;
+
+    if (secondaryHandles.size() >= minRemasteredSnapshotUnitRecords)
+      return true;
+
+    return remasteredCompactRecordsUseSpriteDerivedBwapiMetadata(records);
+  }
+
+  std::string remasteredCompactRecordsMetadataFailureReason(
+    const std::vector<RemasteredUnitSnapshotRecord>& records)
+  {
+    std::unordered_set<std::uintptr_t> nodeHandles;
+    std::unordered_set<std::uintptr_t> spriteHandles;
+    std::unordered_set<std::uintptr_t> secondaryHandles;
+    std::size_t validMetadataRecords = 0;
+    std::size_t resolvedHitPointRecords = 0;
+    std::size_t validPlayerRecords = 0;
+    std::size_t validTypeRecords = 0;
+    std::size_t activeTypeRecords = 0;
+    std::size_t spriteMetadataRecords = 0;
+    std::size_t spriteHitPointRecords = 0;
+    for (const RemasteredUnitSnapshotRecord& record : records)
+    {
+      if (record.nodeAddress != 0)
+        nodeHandles.insert(record.nodeAddress);
+      if (record.spriteAddress != 0)
+        spriteHandles.insert(record.spriteAddress);
+      if (record.secondaryAddress != 0)
+        secondaryHandles.insert(record.secondaryAddress);
+      if (record.metadataDerived || record.taggedHandleDerived)
+        ++validMetadataRecords;
+      if (record.hitPointsResolved && record.hitPoints > 0)
+        ++resolvedHitPointRecords;
+      if (record.player >= 0 && record.player < 12)
+        ++validPlayerRecords;
+      if (plausibleRemasteredUnitTypeHint(record.typeHint))
+        ++validTypeRecords;
+      if (remasteredTypeHintCanProveActiveUnit(record.typeHint))
+        ++activeTypeRecords;
+      if (stringStartsWith(record.metadataSource, "sprite+"))
+        ++spriteMetadataRecords;
+      if (stringStartsWith(record.hitPointsSource, "sprite+"))
+        ++spriteHitPointRecords;
+    }
+
+    std::ostringstream reason;
+    reason << "records=" << records.size()
+           << ", required=" << minRemasteredSnapshotUnitRecords
+           << ", unique_nodes=" << nodeHandles.size()
+           << ", unique_sprites=" << spriteHandles.size()
+           << ", unique_secondary=" << secondaryHandles.size()
+           << ", metadata_records=" << validMetadataRecords
+           << ", hp_records=" << resolvedHitPointRecords
+           << ", player_records=" << validPlayerRecords
+           << ", type_records=" << validTypeRecords
+           << ", active_type_records=" << activeTypeRecords
+           << ", sprite_metadata_records=" << spriteMetadataRecords
+           << ", sprite_hp_records=" << spriteHitPointRecords;
+    if (records.size() >= minRemasteredSnapshotUnitRecords
+        && activeTypeRecords < minRemasteredSnapshotUnitRecords)
+    {
+      reason << "; rejected_start_location_only_or_non_active_unit_snapshot";
+    }
+    else if (records.size() >= minRemasteredSnapshotUnitRecords
+        && nodeHandles.size() >= minRemasteredSnapshotUnitRecords
+        && spriteHandles.size() >= minRemasteredSnapshotUnitRecords
+        && secondaryHandles.size() < minRemasteredSnapshotUnitRecords
+        && !remasteredCompactRecordsUseSpriteDerivedBwapiMetadata(records))
+    {
+      reason << "; rejected_shared_or_unstable_secondary_metadata_without_sprite_backing";
+    }
+    else if (records.size() >= minRemasteredSnapshotUnitRecords
+        && nodeHandles.size() >= minRemasteredSnapshotUnitRecords
+        && spriteHandles.size() < minRemasteredSnapshotUnitRecords)
+    {
+      reason << "; rejected_shared_or_unstable_sprite_handles";
+    }
+    return reason.str();
   }
 
   void rememberUnitNodeFieldSample(
@@ -4251,6 +5630,11 @@ namespace
     diagnostics->unitNodeBestAddress = proof.address;
     diagnostics->unitNodeBestVectorAddress = proof.vectorAddress;
     diagnostics->unitNodeBestReason = proof.reason;
+    diagnostics->unitNodeBestRecords = proof.records;
+    diagnostics->unitNodeBestMetadataReason =
+      proof.records.empty()
+        ? std::string()
+        : remasteredCompactRecordsMetadataFailureReason(proof.records);
   }
 
   LiveUnitNodeProof scoreUnitNodeAnchorArray(
@@ -4365,13 +5749,15 @@ namespace
           {
             proof.address = firstConsecutiveAddress;
             proof.passed = true;
-            proof.records = std::move(consecutiveRecords);
-            return proof;
+            proof.reason.clear();
+            proof.records = consecutiveRecords;
+            continue;
           }
           proof.address = firstConsecutiveAddress;
           proof.records = consecutiveRecords;
           proof.reason =
-            "candidate compact SC:R tagged-handle records did not resolve BWAPI metadata/hit-points";
+            "candidate compact SC:R records failed BWAPI metadata validation: "
+            + remasteredCompactRecordsMetadataFailureReason(consecutiveRecords);
         }
       }
       else
@@ -4381,8 +5767,27 @@ namespace
       }
     }
 
+    if (proof.activeRecords >= minRemasteredSnapshotUnitRecords
+        && remasteredCompactRecordsHaveBwapiMetadata(proof.records))
+    {
+      proof.passed = true;
+      proof.reason.clear();
+      return proof;
+    }
+
     if (proof.reason.empty())
-      proof.reason = "candidate compact SC:R unit-node anchor array did not contain enough active records";
+    {
+      if (proof.activeRecords >= minRemasteredSnapshotUnitRecords)
+      {
+        proof.reason =
+          "candidate compact SC:R unit-node anchor array failed BWAPI metadata validation: "
+          + remasteredCompactRecordsMetadataFailureReason(proof.records);
+      }
+      else
+      {
+        proof.reason = "candidate compact SC:R unit-node anchor array did not contain enough active records";
+      }
+    }
     rememberBestUnitNodeCandidate(diagnostics, proof);
     return proof;
   }
@@ -4467,11 +5872,24 @@ namespace
           && remasteredCompactRecordsHaveBwapiMetadata(proof.records))
       {
         proof.passed = true;
-        return proof;
+        proof.reason.clear();
       }
     }
 
-    if (proof.activeRecords > 0)
+    if (proof.activeRecords >= minRemasteredSnapshotUnitRecords
+        && remasteredCompactRecordsHaveBwapiMetadata(proof.records))
+    {
+      proof.passed = true;
+      proof.reason.clear();
+      return proof;
+    }
+
+    if (proof.activeRecords >= minRemasteredSnapshotUnitRecords)
+    {
+      proof.reason = "compact SC:R unit-node graph failed BWAPI metadata validation: "
+        + remasteredCompactRecordsMetadataFailureReason(proof.records);
+    }
+    else if (proof.activeRecords > 0)
     {
       proof.reason = "compact SC:R unit-node graph found "
         + std::to_string(proof.activeRecords)
@@ -5001,7 +6419,83 @@ namespace
     const std::vector<unsigned char>* bytes,
     std::size_t offset,
     std::size_t recordSize,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    bool requireReadableSprite,
     const std::string& source);
+
+  std::vector<UnitCandidateRecordSample> collectUnitCandidateRecordSamples(
+    const LiveUnitsProof& proof,
+    const std::vector<unsigned char>& bytes,
+    std::size_t offset,
+    std::size_t recordSize,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    bool requireReadableSprite)
+  {
+    std::vector<UnitCandidateRecordSample> samples;
+    if (recordSize == 0 || offset >= bytes.size())
+      return samples;
+
+    const std::size_t requiredSize = std::max({
+      proof.hitPointsOffset + sizeof(std::uint32_t),
+      proof.spriteOffset + sizeof(std::uint64_t),
+      proof.positionOffset + sizeof(std::uint32_t),
+      proof.playerOffset + sizeof(unsigned char),
+      proof.orderOffset + sizeof(unsigned char),
+      proof.unitTypeOffset + sizeof(std::uint16_t),
+      proof.idOffset + sizeof(std::uint16_t)
+    });
+    if (recordSize < requiredSize)
+      return samples;
+
+    const std::size_t availableRecords = (bytes.size() - offset) / recordSize;
+    const std::size_t recordsToInspect = std::min<std::size_t>(availableRecords, proof.sampledRecords);
+    constexpr std::size_t maxSamples = 4;
+    for (std::size_t index = 0; index < recordsToInspect && samples.size() < maxSamples; ++index)
+    {
+      const std::size_t recordOffset = offset + index * recordSize;
+      UnitRecordLayout layout;
+      layout.name = proof.layoutName.c_str();
+      layout.hitPointsOffset = proof.hitPointsOffset;
+      layout.spriteOffset = proof.spriteOffset;
+      layout.positionOffset = proof.positionOffset;
+      layout.playerOffset = proof.playerOffset;
+      layout.orderOffset = proof.orderOffset;
+      layout.unitTypeOffset = proof.unitTypeOffset;
+      layout.idOffset = proof.idOffset;
+      if (!plausibleUnitRecord(
+            bytes,
+            recordOffset,
+            recordSize,
+            layout,
+            regions,
+            requireReadableSprite))
+      {
+        continue;
+      }
+
+      UnitCandidateRecordSample sample;
+      sample.address = proof.address + index * recordSize;
+      sample.index = index;
+      sample.id = readU16(bytes, recordOffset + proof.idOffset);
+      sample.hitPoints = readU32(bytes, recordOffset + proof.hitPointsOffset);
+      sample.x = readS16(bytes, recordOffset + proof.positionOffset);
+      sample.y = readS16(bytes, recordOffset + proof.positionOffset + sizeof(std::int16_t));
+      sample.player = static_cast<int>(bytes[recordOffset + proof.playerOffset]);
+      sample.order = bytes[recordOffset + proof.orderOffset];
+      sample.typeHint = readU16(bytes, recordOffset + proof.unitTypeOffset);
+      sample.sprite = static_cast<std::uintptr_t>(readU64(bytes, recordOffset + proof.spriteOffset));
+      sample.spriteReadable = readablePointerValue(regions, sample.sprite, 16);
+
+      const std::size_t prefixSize = std::min<std::size_t>(recordSize, 64);
+      std::vector<unsigned char> prefix(
+        bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>(recordOffset),
+        bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>(recordOffset + prefixSize));
+      sample.prefixHex = unitBytesHexPrefix(prefix, prefix.size());
+      samples.push_back(std::move(sample));
+    }
+
+    return samples;
+  }
 
   LiveUnitsProof scoreClassicCUnitArray(
     const std::vector<unsigned char>& bytes,
@@ -5020,10 +6514,12 @@ namespace
     proof.address = baseAddress + offset;
     proof.recordSize = recordSize;
     proof.idOffset = layout.idOffset;
+    proof.spriteOffset = layout.spriteOffset;
     proof.positionOffset = layout.positionOffset;
     proof.hitPointsOffset = layout.hitPointsOffset;
     proof.orderOffset = layout.orderOffset;
     proof.playerOffset = layout.playerOffset;
+    proof.unitTypeOffset = layout.unitTypeOffset;
     proof.layoutName = layout.name;
 
     const std::size_t availableRecords = (bytes.size() - offset) / recordSize;
@@ -5071,10 +6567,12 @@ namespace
     proof.address = baseAddress;
     proof.recordSize = recordSize;
     proof.idOffset = layout.idOffset;
+    proof.spriteOffset = layout.spriteOffset;
     proof.positionOffset = layout.positionOffset;
     proof.hitPointsOffset = layout.hitPointsOffset;
     proof.orderOffset = layout.orderOffset;
     proof.playerOffset = layout.playerOffset;
+    proof.unitTypeOffset = layout.unitTypeOffset;
     proof.layoutName = std::string(layout.name) + "-scr-sgUnitsMem-native";
 
     const std::size_t availableRecords = bytes.size() / recordSize;
@@ -5326,7 +6824,15 @@ namespace
       }
       if (proof.passed)
         return proof;
-      rememberBestCandidate(diagnostics, proof, &read.bytes, 0, nativeRecordSize, "scr-sgUnitsMem-anchor");
+      rememberBestCandidate(
+        diagnostics,
+        proof,
+        &read.bytes,
+        0,
+        nativeRecordSize,
+        regions.regions,
+        false,
+        "scr-sgUnitsMem-anchor");
     }
 
     if (diagnostics != nullptr)
@@ -5352,10 +6858,12 @@ namespace
     proof.address = pointerArrayAddress;
     proof.recordSize = recordSize;
     proof.idOffset = layout.idOffset;
+    proof.spriteOffset = layout.spriteOffset;
     proof.positionOffset = layout.positionOffset;
     proof.hitPointsOffset = layout.hitPointsOffset;
     proof.orderOffset = layout.orderOffset;
     proof.playerOffset = layout.playerOffset;
+    proof.unitTypeOffset = layout.unitTypeOffset;
     proof.pointerArray = true;
     proof.layoutName = std::string(layout.name) + "-pointer-array";
 
@@ -5396,10 +6904,12 @@ namespace
   void rememberBestCandidate(
     UnitScanDiagnostics* diagnostics,
     const LiveUnitsProof& proof,
-    const std::vector<unsigned char>* bytes = nullptr,
-    std::size_t offset = 0,
-    std::size_t recordSize = 0,
-    const std::string& source = "strided")
+    const std::vector<unsigned char>* bytes,
+    std::size_t offset,
+    std::size_t recordSize,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    bool requireReadableSprite,
+    const std::string& source)
   {
     if (diagnostics == nullptr)
       return;
@@ -5426,12 +6936,32 @@ namespace
         candidate.sampledRecords = proof.sampledRecords;
         candidate.activeRecords = proof.activeRecords;
         candidate.pointerArray = proof.pointerArray;
+        if (bytes != nullptr && recordSize > 0)
+        {
+          candidate.recordSamples = collectUnitCandidateRecordSamples(
+            proof,
+            *bytes,
+            offset,
+            recordSize,
+            regions,
+            requireReadableSprite);
+        }
         diagnostics->topCandidates.push_back(std::move(candidate));
       }
       else if (proof.activeRecords > duplicate->activeRecords)
       {
         duplicate->activeRecords = proof.activeRecords;
         duplicate->sampledRecords = proof.sampledRecords;
+        if (bytes != nullptr && recordSize > 0)
+        {
+          duplicate->recordSamples = collectUnitCandidateRecordSamples(
+            proof,
+            *bytes,
+            offset,
+            recordSize,
+            regions,
+            requireReadableSprite);
+        }
       }
 
       std::sort(
@@ -5552,7 +7082,15 @@ namespace
           }
           if (proof.passed)
             return proof;
-          rememberBestCandidate(diagnostics, proof, &bytes, baseOffset, recordSize, "strided-region");
+          rememberBestCandidate(
+            diagnostics,
+            proof,
+            &bytes,
+            baseOffset,
+            recordSize,
+            regions,
+            requireReadableSprite,
+            "strided-region");
         }
       }
     }
@@ -5723,7 +7261,15 @@ namespace
                   }
                   if (proof.passed)
                     return proof;
-                  rememberBestCandidate(diagnostics, proof, nullptr, 0, 0, "pointer-vector");
+                  rememberBestCandidate(
+                    diagnostics,
+                    proof,
+                    nullptr,
+                    0,
+                    0,
+                    regions,
+                    true,
+                    "pointer-vector");
                   if (pointerArrayScores >= maxPointerArrayScores)
                     break;
                 }
@@ -5767,7 +7313,15 @@ namespace
             ++diagnostics->candidateArraysScored;
           if (proof.passed)
             return proof;
-          rememberBestCandidate(diagnostics, proof, &read.bytes, 0, recordSize, "record-vector");
+          rememberBestCandidate(
+            diagnostics,
+            proof,
+            &read.bytes,
+            0,
+            recordSize,
+            regions,
+            true,
+            "record-vector");
         }
       }
     }
@@ -6043,6 +7597,8 @@ namespace
     const std::vector<unsigned char>* bytes,
     std::size_t offset,
     std::size_t recordSize,
+    const std::vector<RuntimeMemoryRegion>& regions,
+    bool requireReadableSprite,
     const std::string& source);
 
   bool parseRemasteredUnitSnapshotRecord(
@@ -6713,16 +8269,36 @@ namespace
     constexpr std::size_t recordSize = 0x58;
     constexpr std::size_t compactRecordSize = 0x28;
     constexpr std::size_t maxSnapshotRecords = 256;
+    auto rememberExplicitDiagnostic =
+      [&](const ExplicitUnitNodeCandidateDiagnostic& candidate)
+      {
+        if (diagnostics == nullptr || diagnostics->explicitUnitNodeCandidates.size() >= 32)
+          return;
+        const auto duplicate = std::find_if(
+          diagnostics->explicitUnitNodeCandidates.begin(),
+          diagnostics->explicitUnitNodeCandidates.end(),
+          [&](const ExplicitUnitNodeCandidateDiagnostic& existing)
+          {
+            return existing.address == candidate.address;
+          });
+        if (duplicate == diagnostics->explicitUnitNodeCandidates.end())
+          diagnostics->explicitUnitNodeCandidates.push_back(candidate);
+      };
+
     for (std::uintptr_t candidateAddress : candidateAddresses)
     {
       if (timedOut(deadline))
         return failedUnitNodeProof("explicit SC:R unit-node candidate scan timed out before proof");
+
+      ExplicitUnitNodeCandidateDiagnostic candidateDiagnostic;
+      candidateDiagnostic.address = candidateAddress;
 
       const RuntimeMemoryRegion* compactContainingRegion =
         findReadableRegion(
           regions.regions,
           candidateAddress,
           compactRecordSize * minRemasteredSnapshotUnitRecords);
+      candidateDiagnostic.compactRegionFound = compactContainingRegion != nullptr;
       if (compactContainingRegion != nullptr)
       {
         const std::uintptr_t regionEnd =
@@ -6736,9 +8312,23 @@ namespace
         if (bytesToRead >= compactRecordSize * minRemasteredSnapshotUnitRecords)
         {
           RuntimeMemoryReadResult read = readProcessMemory(processId, candidateAddress, bytesToRead);
-          if (read.success
-              && read.bytesRead >= compactRecordSize * minRemasteredSnapshotUnitRecords)
+          candidateDiagnostic.compactReadSuccess =
+            read.success && read.bytesRead >= compactRecordSize * minRemasteredSnapshotUnitRecords;
+          candidateDiagnostic.compactBytesRead = read.bytesRead;
+          candidateDiagnostic.compactReadReason = read.reason;
+          if (read.success && read.bytesRead > 0)
           {
+            candidateDiagnostic.compactPrefixNonZeroBytes =
+              countNonZeroBytesAt(read.bytes, 0, std::min<std::size_t>(64, read.bytesRead));
+            candidateDiagnostic.compactPrefixHex =
+              bytesHexPrefixAt(read.bytes, 0, std::min<std::size_t>(64, read.bytesRead));
+          }
+          if (candidateDiagnostic.compactReadSuccess)
+          {
+            candidateDiagnostic.compactFieldsPlausible =
+              plausibleCompactUnitNodeAnchorFields(read.bytes, 0);
+            candidateDiagnostic.compactRecordReadable =
+              plausibleCompactUnitNodeAnchorRecord(read.bytes, 0, regions.regions);
             bool scanTimedOut = false;
             LiveUnitNodeProof compactProof = scoreCompactUnitNodeAnchorArray(
               processId,
@@ -6749,10 +8339,21 @@ namespace
               deadline,
               scanTimedOut,
               diagnostics);
+            candidateDiagnostic.compactArraySampledRecords = compactProof.sampledRecords;
+            candidateDiagnostic.compactArrayActiveRecords = compactProof.activeRecords;
+            candidateDiagnostic.compactArrayReason = compactProof.reason;
             if (scanTimedOut)
+            {
+              candidateDiagnostic.finalReason =
+                "explicit compact SC:R unit-node candidate scan timed out before proof";
+              rememberExplicitDiagnostic(candidateDiagnostic);
               return failedUnitNodeProof("explicit compact SC:R unit-node candidate scan timed out before proof");
+            }
             if (compactProof.passed)
+            {
+              rememberExplicitDiagnostic(candidateDiagnostic);
               return compactProof;
+            }
             rememberBestUnitNodeCandidate(diagnostics, compactProof);
 
             LiveUnitNodeProof compactGraphProof = scoreCompactLinkedUnitNodeGraph(
@@ -6762,10 +8363,21 @@ namespace
               deadline,
               scanTimedOut,
               diagnostics);
+            candidateDiagnostic.compactGraphSampledRecords = compactGraphProof.sampledRecords;
+            candidateDiagnostic.compactGraphActiveRecords = compactGraphProof.activeRecords;
+            candidateDiagnostic.compactGraphReason = compactGraphProof.reason;
             if (scanTimedOut)
+            {
+              candidateDiagnostic.finalReason =
+                "explicit compact SC:R unit-node graph candidate scan timed out before proof";
+              rememberExplicitDiagnostic(candidateDiagnostic);
               return failedUnitNodeProof("explicit compact SC:R unit-node graph candidate scan timed out before proof");
+            }
             if (compactGraphProof.passed)
+            {
+              rememberExplicitDiagnostic(candidateDiagnostic);
               return compactGraphProof;
+            }
             rememberBestUnitNodeCandidate(diagnostics, compactGraphProof);
           }
         }
@@ -6773,8 +8385,16 @@ namespace
 
       const RuntimeMemoryRegion* containingRegion =
         findReadableRegion(regions.regions, candidateAddress, recordSize * minActiveUnitRecords);
+      candidateDiagnostic.wideRegionFound = containingRegion != nullptr;
       if (containingRegion == nullptr)
+      {
+        candidateDiagnostic.finalReason =
+          candidateDiagnostic.compactRegionFound
+            ? "explicit candidate did not pass compact validation and is too small/unreadable for 0x58 node validation"
+            : "explicit candidate is not in a readable unit-node region";
+        rememberExplicitDiagnostic(candidateDiagnostic);
         continue;
+      }
 
       const std::uintptr_t regionEnd = containingRegion->address + containingRegion->size;
       const std::size_t regionBytes =
@@ -6783,11 +8403,35 @@ namespace
           : 0;
       const std::size_t bytesToRead = std::min(regionBytes, recordSize * maxSnapshotRecords);
       if (bytesToRead < recordSize * minActiveUnitRecords)
+      {
+        candidateDiagnostic.finalReason = "explicit candidate readable region is too small for 0x58 validation";
+        rememberExplicitDiagnostic(candidateDiagnostic);
         continue;
+      }
 
       RuntimeMemoryReadResult read = readProcessMemory(processId, candidateAddress, bytesToRead);
-      if (!read.success || read.bytesRead < recordSize * minActiveUnitRecords)
+      candidateDiagnostic.wideReadSuccess =
+        read.success && read.bytesRead >= recordSize * minActiveUnitRecords;
+      candidateDiagnostic.wideBytesRead = read.bytesRead;
+      candidateDiagnostic.wideReadReason = read.reason;
+      if (read.success && read.bytesRead > 0)
+      {
+        candidateDiagnostic.widePrefixNonZeroBytes =
+          countNonZeroBytesAt(read.bytes, 0, std::min<std::size_t>(64, read.bytesRead));
+        candidateDiagnostic.widePrefixHex =
+          bytesHexPrefixAt(read.bytes, 0, std::min<std::size_t>(64, read.bytesRead));
+      }
+      if (!candidateDiagnostic.wideReadSuccess)
+      {
+        candidateDiagnostic.finalReason =
+          read.reason.empty() ? "explicit candidate read failed" : read.reason;
+        rememberExplicitDiagnostic(candidateDiagnostic);
         continue;
+      }
+
+      candidateDiagnostic.wideFieldsPlausible = plausibleUnitNodeAnchorFields(read.bytes, 0);
+      candidateDiagnostic.wideRecordReadable =
+        plausibleUnitNodeAnchorRecord(read.bytes, 0, regions.regions);
 
       bool scanTimedOut = false;
       LiveUnitNodeProof graphProof = scoreLinkedUnitNodeGraph(
@@ -6797,10 +8441,21 @@ namespace
         deadline,
         scanTimedOut,
         diagnostics);
+      candidateDiagnostic.wideGraphSampledRecords = graphProof.sampledRecords;
+      candidateDiagnostic.wideGraphActiveRecords = graphProof.activeRecords;
+      candidateDiagnostic.wideGraphReason = graphProof.reason;
       if (scanTimedOut)
+      {
+        candidateDiagnostic.finalReason =
+          "explicit SC:R unit-node graph candidate scan timed out before proof";
+        rememberExplicitDiagnostic(candidateDiagnostic);
         return failedUnitNodeProof("explicit SC:R unit-node graph candidate scan timed out before proof");
+      }
       if (graphProof.passed)
+      {
+        rememberExplicitDiagnostic(candidateDiagnostic);
         return graphProof;
+      }
       rememberBestUnitNodeCandidate(diagnostics, graphProof);
 
       LiveUnitNodeProof proof = scoreUnitNodeAnchorArray(
@@ -6811,8 +8466,16 @@ namespace
         deadline,
         scanTimedOut,
         diagnostics);
+      candidateDiagnostic.wideArraySampledRecords = proof.sampledRecords;
+      candidateDiagnostic.wideArrayActiveRecords = proof.activeRecords;
+      candidateDiagnostic.wideArrayReason = proof.reason;
       if (scanTimedOut)
+      {
+        candidateDiagnostic.finalReason =
+          "explicit SC:R unit-node candidate scan timed out before proof";
+        rememberExplicitDiagnostic(candidateDiagnostic);
         return failedUnitNodeProof("explicit SC:R unit-node candidate scan timed out before proof");
+      }
       if (proof.passed)
       {
         if (!graphProof.passed
@@ -6823,11 +8486,16 @@ namespace
           graphProof.recordSize = proof.recordSize;
           graphProof.sampledRecords = std::max(graphProof.sampledRecords, proof.sampledRecords);
           graphProof.activeRecords = graphProof.records.size();
+          rememberExplicitDiagnostic(candidateDiagnostic);
           return graphProof;
         }
+        rememberExplicitDiagnostic(candidateDiagnostic);
         return proof;
       }
       rememberBestUnitNodeCandidate(diagnostics, proof);
+      candidateDiagnostic.finalReason =
+        "explicit candidate did not contain enough BWAPI-facing active records";
+      rememberExplicitDiagnostic(candidateDiagnostic);
     }
 
     return failedUnitNodeProof("no explicit SC:R unit-node candidate address contained enough active records");
@@ -6895,9 +8563,10 @@ namespace
             record.id = static_cast<std::uint32_t>((nodeAddress >> 4) & 0xffffffffu);
             record.player = rawPlayer == 255 ? 11 : static_cast<int>(rawPlayer);
             record.typeHint = typeHint;
+            record.metadataSource = "secondary+0x10|0x14";
             record.hitPointsResolved =
               parseScrCompactHitPoints(secondaryRead.bytes, record.hitPoints, record.hitPointsSource);
-            return true;
+            return record.hitPointsResolved && record.hitPoints > 0;
           }
         }
       }
@@ -6930,7 +8599,8 @@ namespace
     if (record.hitPointsResolved && record.hitPointsSource.rfind("secondary+", 0) == 0)
       record.hitPointsSource.replace(0, 10, "metadata+");
     record.metadataDerived = true;
-    return record.id != 0;
+    record.metadataSource = "metadata+0xd0|0xc0";
+    return record.id != 0 && record.hitPointsResolved && record.hitPoints > 0;
   }
 
   LiveUnitNodeProof collectBucketVerifiedUnitNodesInBytes(
@@ -7304,6 +8974,27 @@ namespace
     }
     if (nodeHandles.size() < minRemasteredSnapshotUnitRecords)
       return failedUnitsProof("SC:R unit-node graph reused too few stable unit handles for BWAPI-facing units");
+
+    if (nodeProof.recordSize == 0x28)
+    {
+      if (!remasteredCompactRecordsHaveBwapiMetadata(records))
+      {
+        return failedUnitsProof(
+          "compact SC:R unit-node graph failed BWAPI metadata validation: "
+          + remasteredCompactRecordsMetadataFailureReason(records));
+      }
+    }
+    else
+    {
+      std::unordered_set<std::uintptr_t> secondaryHandles;
+      for (const RemasteredUnitSnapshotRecord& record : records)
+      {
+        if (record.secondaryAddress != 0)
+          secondaryHandles.insert(record.secondaryAddress);
+      }
+      if (secondaryHandles.size() < minRemasteredSnapshotUnitRecords)
+        return failedUnitsProof("SC:R unit-node graph reused too few metadata handles for BWAPI-facing units");
+    }
 
     nodeProof.records = records;
     nodeProof.activeRecords = records.size();
@@ -11881,7 +13572,7 @@ namespace
       return false;
     }
 
-    output << "index\tnode\tsecondary\tsprite\tid\tx\ty\ttarget_x\ttarget_y\torder\tstate\tplayer\ttype_hint\thit_points\n";
+    output << "index\tnode\tsecondary\tsprite\tid\tx\ty\ttarget_x\ttarget_y\torder\tstate\tplayer\ttype_hint\thit_points\tmetadata_source\thit_points_source\n";
     for (const RemasteredUnitSnapshotRecord& record : records)
     {
       output << record.index << '\t'
@@ -11898,6 +13589,10 @@ namespace
              << record.player << '\t'
              << record.typeHint << '\t'
              << (record.hitPointsResolved ? std::to_string(record.hitPoints) : "unresolved")
+             << '\t'
+             << record.metadataSource
+             << '\t'
+             << record.hitPointsSource
              << '\n';
     }
 
@@ -11936,6 +13631,82 @@ namespace
     output << "unit_node_vector_address\t" << hexAddress(nodeProof.vectorAddress) << '\n';
     output << "unit_node_record_size\t" << nodeProof.recordSize << '\n';
     output << "unit_node_active_records\t" << nodeProof.activeRecords << '\n';
+    output << "explicit_unit_node_candidate_count\t"
+           << diagnostics.explicitUnitNodeCandidates.size() << '\n';
+    for (std::size_t index = 0; index < diagnostics.explicitUnitNodeCandidates.size(); ++index)
+    {
+      const ExplicitUnitNodeCandidateDiagnostic& candidate =
+        diagnostics.explicitUnitNodeCandidates[index];
+      output << "explicit_unit_node_candidate_" << index << "_address\t"
+             << hexAddress(candidate.address) << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_region_found\t"
+             << (candidate.compactRegionFound ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_read_success\t"
+             << (candidate.compactReadSuccess ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_bytes_read\t"
+             << candidate.compactBytesRead << '\n';
+      if (!candidate.compactReadReason.empty())
+        output << "explicit_unit_node_candidate_" << index << "_compact_read_reason\t"
+               << candidate.compactReadReason << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_fields_plausible\t"
+             << (candidate.compactFieldsPlausible ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_record_readable\t"
+             << (candidate.compactRecordReadable ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_prefix_nonzero_bytes\t"
+             << candidate.compactPrefixNonZeroBytes << '\n';
+      if (!candidate.compactPrefixHex.empty())
+        output << "explicit_unit_node_candidate_" << index << "_compact_prefix_hex\t"
+               << candidate.compactPrefixHex << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_array_sampled_records\t"
+             << candidate.compactArraySampledRecords << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_array_active_records\t"
+             << candidate.compactArrayActiveRecords << '\n';
+      if (!candidate.compactArrayReason.empty())
+        output << "explicit_unit_node_candidate_" << index << "_compact_array_reason\t"
+               << candidate.compactArrayReason << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_graph_sampled_records\t"
+             << candidate.compactGraphSampledRecords << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_compact_graph_active_records\t"
+             << candidate.compactGraphActiveRecords << '\n';
+      if (!candidate.compactGraphReason.empty())
+        output << "explicit_unit_node_candidate_" << index << "_compact_graph_reason\t"
+               << candidate.compactGraphReason << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_region_found\t"
+             << (candidate.wideRegionFound ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_read_success\t"
+             << (candidate.wideReadSuccess ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_bytes_read\t"
+             << candidate.wideBytesRead << '\n';
+      if (!candidate.wideReadReason.empty())
+        output << "explicit_unit_node_candidate_" << index << "_wide_read_reason\t"
+               << candidate.wideReadReason << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_fields_plausible\t"
+             << (candidate.wideFieldsPlausible ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_record_readable\t"
+             << (candidate.wideRecordReadable ? "true" : "false") << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_prefix_nonzero_bytes\t"
+             << candidate.widePrefixNonZeroBytes << '\n';
+      if (!candidate.widePrefixHex.empty())
+        output << "explicit_unit_node_candidate_" << index << "_wide_prefix_hex\t"
+               << candidate.widePrefixHex << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_graph_sampled_records\t"
+             << candidate.wideGraphSampledRecords << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_graph_active_records\t"
+             << candidate.wideGraphActiveRecords << '\n';
+      if (!candidate.wideGraphReason.empty())
+        output << "explicit_unit_node_candidate_" << index << "_wide_graph_reason\t"
+               << candidate.wideGraphReason << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_array_sampled_records\t"
+             << candidate.wideArraySampledRecords << '\n';
+      output << "explicit_unit_node_candidate_" << index << "_wide_array_active_records\t"
+             << candidate.wideArrayActiveRecords << '\n';
+      if (!candidate.wideArrayReason.empty())
+        output << "explicit_unit_node_candidate_" << index << "_wide_array_reason\t"
+               << candidate.wideArrayReason << '\n';
+      if (!candidate.finalReason.empty())
+        output << "explicit_unit_node_candidate_" << index << "_final_reason\t"
+               << candidate.finalReason << '\n';
+    }
     output << "sg_units_mem_attempted\t" << (diagnostics.sgUnitsMem.attempted ? "true" : "false") << '\n';
     output << "sg_units_mem_descriptor_address\t"
            << hexAddress(diagnostics.sgUnitsMem.descriptorAddress) << '\n';
@@ -12016,6 +13787,17 @@ namespace
     output << "dynamic_scan_changed_bytes\t" << diagnostics.dynamicChangedBytes << '\n';
     output << "dynamic_scan_windows_scored\t" << diagnostics.dynamicWindowsScored << '\n';
     output << "dynamic_scan_reason\t" << diagnostics.dynamicScanReason << '\n';
+    output << "dynamic_projection_attempted\t"
+           << (diagnostics.dynamicProjectionAttempted ? "true" : "false") << '\n';
+    output << "dynamic_projection_passed\t"
+           << (diagnostics.dynamicProjectionPassed ? "true" : "false") << '\n';
+    output << "dynamic_projection_reason\t" << diagnostics.dynamicProjectionReason << '\n';
+    output << "dynamic_projection_address\t"
+           << hexAddress(diagnostics.dynamicProjectionAddress) << '\n';
+    output << "dynamic_projection_record_size\t"
+           << diagnostics.dynamicProjectionRecordSize << '\n';
+    output << "dynamic_projection_active_records\t"
+           << diagnostics.dynamicProjectionActiveRecords << '\n';
     output << "dynamic_region_sample_count\t" << diagnostics.dynamicRegionSamples.size() << '\n';
     for (std::size_t index = 0; index < diagnostics.dynamicRegionSamples.size(); ++index)
     {
@@ -12107,6 +13889,39 @@ namespace
       output << "scan_top_candidate_" << index << "_active_records\t" << candidate.activeRecords << '\n';
       output << "scan_top_candidate_" << index << "_pointer_array\t"
              << (candidate.pointerArray ? "true" : "false") << '\n';
+      output << "scan_top_candidate_" << index << "_record_sample_count\t"
+             << candidate.recordSamples.size() << '\n';
+      for (std::size_t sampleIndex = 0;
+           sampleIndex < candidate.recordSamples.size();
+           ++sampleIndex)
+      {
+        const UnitCandidateRecordSample& sample = candidate.recordSamples[sampleIndex];
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_address\t" << hexAddress(sample.address) << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_index\t" << sample.index << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_id\t" << sample.id << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_type_hint\t" << sample.typeHint << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_player\t" << sample.player << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_order\t" << sample.order << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_hit_points\t" << sample.hitPoints << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_x\t" << sample.x << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_y\t" << sample.y << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_sprite\t" << hexAddress(sample.sprite) << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_sprite_readable\t"
+               << (sample.spriteReadable ? "true" : "false") << '\n';
+        output << "scan_top_candidate_" << index << "_record_sample_"
+               << sampleIndex << "_prefix_hex\t" << sample.prefixHex << '\n';
+      }
     }
     output << "pointer_array_sample_count\t" << diagnostics.pointerArraySamples.size() << '\n';
     for (std::size_t index = 0; index < diagnostics.pointerArraySamples.size(); ++index)
@@ -12148,6 +13963,37 @@ namespace
     output << "unit_node_best_vector_address\t"
            << hexAddress(diagnostics.unitNodeBestVectorAddress) << '\n';
     output << "unit_node_best_reason\t" << diagnostics.unitNodeBestReason << '\n';
+    output << "unit_node_best_metadata_reason\t"
+           << diagnostics.unitNodeBestMetadataReason << '\n';
+    output << "unit_node_best_record_count\t"
+           << diagnostics.unitNodeBestRecords.size() << '\n';
+    const std::size_t unitNodeBestRecordsToWrite =
+      std::min<std::size_t>(diagnostics.unitNodeBestRecords.size(), 8);
+    for (std::size_t index = 0; index < unitNodeBestRecordsToWrite; ++index)
+    {
+      const RemasteredUnitSnapshotRecord& record = diagnostics.unitNodeBestRecords[index];
+      output << "unit_node_best_record_" << index << "_node\t"
+             << hexAddress(record.nodeAddress) << '\n';
+      output << "unit_node_best_record_" << index << "_sprite\t"
+             << hexAddress(record.spriteAddress) << '\n';
+      output << "unit_node_best_record_" << index << "_secondary\t"
+             << hexAddress(record.secondaryAddress) << '\n';
+      output << "unit_node_best_record_" << index << "_x\t" << record.x << '\n';
+      output << "unit_node_best_record_" << index << "_y\t" << record.y << '\n';
+      output << "unit_node_best_record_" << index << "_player\t" << record.player << '\n';
+      output << "unit_node_best_record_" << index << "_type_hint\t"
+             << record.typeHint << '\n';
+      output << "unit_node_best_record_" << index << "_hit_points\t"
+             << record.hitPoints << '\n';
+      output << "unit_node_best_record_" << index << "_metadata_derived\t"
+             << (record.metadataDerived ? "true" : "false") << '\n';
+      output << "unit_node_best_record_" << index << "_metadata_source\t"
+             << record.metadataSource << '\n';
+      output << "unit_node_best_record_" << index << "_tagged_handle_derived\t"
+             << (record.taggedHandleDerived ? "true" : "false") << '\n';
+      output << "unit_node_best_record_" << index << "_hit_points_source\t"
+             << record.hitPointsSource << '\n';
+    }
     output << "unit_node_vector_sample_count\t" << diagnostics.unitNodeVectorSamples.size() << '\n';
     for (std::size_t index = 0; index < diagnostics.unitNodeVectorSamples.size(); ++index)
     {
@@ -12689,7 +14535,15 @@ namespace
           }
           if (proof.passed)
             return proof;
-          rememberBestCandidate(diagnostics, proof, &read.bytes, 0, recordSize, "explicit-address");
+          rememberBestCandidate(
+            diagnostics,
+            proof,
+            &read.bytes,
+            0,
+            recordSize,
+            regions.regions,
+            true,
+            "explicit-address");
         }
       }
     }
@@ -13242,6 +15096,12 @@ namespace
     alignas(8) std::array<std::array<unsigned char, 0xd0>, 8> sprites;
   };
 
+  struct SelfDynamicUnitProjectionFixture
+  {
+    alignas(8) std::array<std::array<unsigned char, 0x150>, 8> records;
+    alignas(8) std::array<std::array<unsigned char, 0x40>, 8> handles;
+  };
+
   struct SelfBulletFixture
   {
     std::array<std::array<unsigned char, 0x90>, 4> records;
@@ -13346,7 +15206,10 @@ namespace
     }
   }
 
-  void initializeSelfCompactUnitNodeFixture(SelfCompactUnitNodeFixture& fixture)
+  void initializeSelfCompactUnitNodeFixture(
+    SelfCompactUnitNodeFixture& fixture,
+    bool shareSecondaryObject,
+    bool sharedSecondaryUsesSpriteMetadata)
   {
     for (std::size_t i = 0; i < fixture.nodes.size(); ++i)
     {
@@ -13374,19 +15237,101 @@ namespace
       writeU64(
         node,
         0x20,
-        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(secondary.data())));
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(
+          shareSecondaryObject ? fixture.secondaryObjects.front().data() : secondary.data())));
 
-      writeU32(sprite, 0x68, static_cast<std::uint32_t>((i % 228) + 1));
-      writeU32(sprite, 0x6c, static_cast<std::uint32_t>(i % 4));
-      writeU32(sprite, 0x80, 256u * static_cast<std::uint32_t>(55 + i));
+      const bool writeSpriteMetadata =
+        !shareSecondaryObject || sharedSecondaryUsesSpriteMetadata;
+      if (writeSpriteMetadata)
+      {
+        writeU32(sprite, 0x68, static_cast<std::uint32_t>((i % 228) + 1));
+        writeU32(sprite, 0x6c, static_cast<std::uint32_t>(i % 4));
+        writeU32(sprite, 0x80, 256u * static_cast<std::uint32_t>(55 + i));
+      }
+      else
+      {
+        writeU32(sprite, 0x68, 0);
+        writeU32(sprite, 0x6c, 255);
+        writeU32(sprite, 0x80, 0);
+      }
 
-      writeU16(secondary, 0x10, static_cast<std::uint16_t>((i % 228) + 1));
-      secondary[0x14] = static_cast<unsigned char>(i % 4);
-      secondary[0x1a] = static_cast<unsigned char>(55 + i);
-      secondary[0x1b] = static_cast<unsigned char>(64 + i);
-      writeU16(secondary, 0x20, static_cast<std::uint16_t>((i % 228) + 1));
-      secondary[0xc0] = static_cast<unsigned char>(i % 4);
-      writeU16(secondary, 0xd0, static_cast<std::uint16_t>((i % 228) + 1));
+      const bool writeSecondaryMetadata =
+        !shareSecondaryObject || !sharedSecondaryUsesSpriteMetadata;
+      if (writeSecondaryMetadata)
+      {
+        writeU16(secondary, 0x10, static_cast<std::uint16_t>((i % 228) + 1));
+        secondary[0x14] = static_cast<unsigned char>(i % 4);
+        secondary[0x1a] = static_cast<unsigned char>(55 + i);
+        secondary[0x1b] = static_cast<unsigned char>(64 + i);
+        writeU16(secondary, 0x20, static_cast<std::uint16_t>((i % 228) + 1));
+        secondary[0xc0] = static_cast<unsigned char>(i % 4);
+        writeU16(secondary, 0xd0, static_cast<std::uint16_t>((i % 228) + 1));
+      }
+      else
+      {
+        writeU16(secondary, 0x10, 0);
+        secondary[0x14] = 255;
+        secondary[0x1a] = 0;
+        secondary[0x1b] = 0;
+        writeU16(secondary, 0x20, 0);
+        secondary[0xc0] = 255;
+        writeU16(secondary, 0xd0, 0);
+      }
+    }
+  }
+
+  void initializeSelfDynamicUnitProjectionFixture(
+    SelfDynamicUnitProjectionFixture& fixture,
+    bool negative)
+  {
+    for (std::size_t i = 0; i < fixture.records.size(); ++i)
+    {
+      auto& record = fixture.records[i];
+      auto& handle = fixture.handles[i];
+      record.fill(0);
+      handle.fill(static_cast<unsigned char>(0x40 + i));
+      writeU16(record, 0x00, static_cast<std::uint16_t>(192 + i * 24));
+      writeU16(record, 0x02, static_cast<std::uint16_t>(160 + i * 16));
+      writeU32(record, 0x08, 256u * static_cast<std::uint32_t>(45 + i));
+      if (negative)
+      {
+        // Regression fixture for live false positives where a single small
+        // scalar is misread as both player id and unit type.
+        writeU32(record, 0x0c, static_cast<std::uint32_t>((i % 4) + 1));
+      }
+      else
+      {
+        record[0x0c] = static_cast<unsigned char>(i % 4);
+        writeU16(record, 0x0e, static_cast<std::uint16_t>((i % 228) + 1));
+      }
+      writeU64(
+        record,
+        0x10,
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(
+          negative ? record.data() : handle.data())));
+      writeU64(
+        record,
+        0x18,
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(
+          fixture.records[(i + 1) % fixture.records.size()].data())));
+    }
+  }
+
+  void mutateSelfDynamicUnitProjectionFixture(
+    SelfDynamicUnitProjectionFixture& fixture,
+    const std::atomic_bool& stop)
+  {
+    std::uint16_t tick = 0;
+    while (!stop.load())
+    {
+      for (std::size_t i = 0; i < fixture.records.size(); ++i)
+      {
+        auto& record = fixture.records[i];
+        writeU16(record, 0x00, static_cast<std::uint16_t>(192 + i * 24 + (tick % 127)));
+        writeU16(record, 0x02, static_cast<std::uint16_t>(160 + i * 16 + ((tick + i * 7) % 127)));
+      }
+      ++tick;
+      std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
   }
 
@@ -13515,6 +15460,11 @@ int main(int argc, char** argv)
   bool selfUnitFixture = false;
   bool selfUnitNodeFixture = false;
   bool selfCompactUnitNodeFixture = false;
+  bool selfCompactSharedSecondaryFixture = false;
+  bool selfCompactSharedSecondarySpriteFixture = false;
+  bool selfDynamicUnitProjectionFixture = false;
+  bool selfDynamicUnitProjectionStaticFixture = false;
+  bool selfDynamicUnitProjectionNegativeFixture = false;
   bool proveDispatchEvents = false;
   bool proveReadMapData = false;
   bool proveReadPlayerData = false;
@@ -13540,12 +15490,18 @@ int main(int argc, char** argv)
   std::string unitBestDumpOut;
   std::vector<std::uintptr_t> unitCandidateAddresses;
   std::vector<std::uintptr_t> unitNodeCandidateAddresses;
+  std::vector<std::uintptr_t> dynamicUnitProjectionSeedAddresses;
   std::vector<std::uintptr_t> bulletCandidateAddresses;
   std::uintptr_t stateCounterAddress = 0;
   std::uintptr_t commandQueueVectorAddress = 0;
   std::uintptr_t commandQueueBufferAddress = 0;
   std::size_t issueCommandCandidateScanLimit = 0;
   std::string appendGameAction;
+  std::string appendUnitCommand;
+  int appendUnitTargetId = 0;
+  std::vector<int> appendSelectUnitTargetIds;
+  std::vector<int> appendCommandArgs;
+  bool clearCommandQueue = false;
   std::string aiModulePath;
   int stateSampleDelayMs = 250;
   std::size_t stateMaxScanBytes = 256 * 1024 * 1024;
@@ -13600,6 +15556,47 @@ int main(int argc, char** argv)
     if (arg == "--self-compact-unit-node-fixture")
     {
       selfCompactUnitNodeFixture = true;
+      continue;
+    }
+    if (arg == "--self-compact-shared-secondary-fixture")
+    {
+      selfCompactUnitNodeFixture = true;
+      selfCompactSharedSecondaryFixture = true;
+      continue;
+    }
+    if (arg == "--self-compact-shared-secondary-sprite-fixture")
+    {
+      selfCompactUnitNodeFixture = true;
+      selfCompactSharedSecondaryFixture = true;
+      selfCompactSharedSecondarySpriteFixture = true;
+      continue;
+    }
+    if (arg == "--self-dynamic-unit-projection-fixture")
+    {
+      selfDynamicUnitProjectionFixture = true;
+      continue;
+    }
+    if (arg == "--self-dynamic-unit-projection-static-fixture")
+    {
+      selfDynamicUnitProjectionFixture = true;
+      selfDynamicUnitProjectionStaticFixture = true;
+      continue;
+    }
+    if (arg == "--self-dynamic-unit-projection-negative-fixture")
+    {
+      selfDynamicUnitProjectionFixture = true;
+      selfDynamicUnitProjectionNegativeFixture = true;
+      continue;
+    }
+    if (arg == "--dynamic-unit-projection-seed-address")
+    {
+      std::uintptr_t address = 0;
+      if (i + 1 >= argc || !parseAddress(argv[++i], address))
+      {
+        std::cerr << "--dynamic-unit-projection-seed-address requires a positive integer address\n";
+        return 64;
+      }
+      dynamicUnitProjectionSeedAddresses.push_back(address);
       continue;
     }
     if (arg == "--prove-dispatch-events")
@@ -13831,6 +15828,52 @@ int main(int argc, char** argv)
         return 64;
       }
       appendGameAction = argv[++i];
+      continue;
+    }
+    if (arg == "--append-unit-command")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--append-unit-command requires a name\n";
+        return 64;
+      }
+      appendUnitCommand = argv[++i];
+      continue;
+    }
+    if (arg == "--append-select-unit-target-id")
+    {
+      int unitTargetId = 0;
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], unitTargetId))
+      {
+        std::cerr << "--append-select-unit-target-id requires a positive integer\n";
+        return 64;
+      }
+      appendSelectUnitTargetIds.push_back(unitTargetId);
+      continue;
+    }
+    if (arg == "--append-unit-target-id")
+    {
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], appendUnitTargetId))
+      {
+        std::cerr << "--append-unit-target-id requires a positive integer\n";
+        return 64;
+      }
+      continue;
+    }
+    if (arg == "--append-command-arg")
+    {
+      int commandArg = 0;
+      if (i + 1 >= argc || !parseIntStrict(argv[++i], commandArg))
+      {
+        std::cerr << "--append-command-arg requires an integer\n";
+        return 64;
+      }
+      appendCommandArgs.push_back(commandArg);
+      continue;
+    }
+    if (arg == "--clear-command-queue")
+    {
+      clearCommandQueue = true;
       continue;
     }
     if (arg == "--state-sample-delay-ms")
@@ -14106,6 +16149,85 @@ int main(int argc, char** argv)
     std::cout << '\n';
   }
 
+  if (clearCommandQueue)
+  {
+    if (commandQueueVectorAddress == 0 || commandQueueBufferAddress == 0)
+    {
+      std::cerr << "--clear-command-queue requires --command-queue-vector-address and --command-queue-buffer-address\n";
+      return 64;
+    }
+
+    RuntimeMemoryRegionListResult regions = listProcessMemoryRegions(environment.processId);
+    if (!regions.success)
+    {
+      std::cout << "manual_command_queue_clear.success=false\n";
+      std::cout << "manual_command_queue_clear.reason=" << regions.reason << '\n';
+      return 12;
+    }
+
+    CommandQueueCandidate candidate;
+    std::string reason;
+    if (!readExplicitRawTurnBufferCandidate(
+          environment.processId,
+          regions.regions,
+          commandQueueVectorAddress,
+          commandQueueBufferAddress,
+          candidate,
+          reason))
+    {
+      std::cout << "manual_command_queue_clear.success=false\n";
+      std::cout << "manual_command_queue_clear.reason=" << reason << '\n';
+      return 12;
+    }
+
+    std::vector<std::uint8_t> zeroBytes(candidate.usedBytes, 0);
+    RuntimeMemoryWriteResult clearBytes;
+    if (!zeroBytes.empty())
+    {
+      clearBytes = writeProcessMemory(
+        environment.processId,
+        candidate.bufferBegin,
+        zeroBytes.data(),
+        zeroBytes.size());
+      if (!clearBytes.success || clearBytes.bytesWritten != zeroBytes.size())
+      {
+        std::cout << "manual_command_queue_clear.success=false\n";
+        std::cout << "manual_command_queue_clear.reason="
+                  << (clearBytes.reason.empty()
+                    ? "unable to clear queued command bytes"
+                    : clearBytes.reason)
+                  << '\n';
+        return 12;
+      }
+    }
+
+    const std::uint32_t zeroUsedBytes = 0;
+    RuntimeMemoryWriteResult clearCount = writeProcessMemory(
+      environment.processId,
+      candidate.bytesInQueueAddress,
+      &zeroUsedBytes,
+      sizeof(zeroUsedBytes));
+    if (!clearCount.success || clearCount.bytesWritten != sizeof(zeroUsedBytes))
+    {
+      std::cout << "manual_command_queue_clear.success=false\n";
+      std::cout << "manual_command_queue_clear.reason="
+                << (clearCount.reason.empty()
+                  ? "unable to clear raw turn-buffer byte count"
+                  : clearCount.reason)
+                << '\n';
+      return 12;
+    }
+
+    std::cout << "manual_command_queue_clear.success=true\n";
+    std::cout << "manual_command_queue_clear.bytes_in_queue_address="
+              << hexAddress(candidate.bytesInQueueAddress) << '\n';
+    std::cout << "manual_command_queue_clear.buffer_begin="
+              << hexAddress(candidate.bufferBegin) << '\n';
+    std::cout << "manual_command_queue_clear.cleared_bytes="
+              << candidate.usedBytes << '\n';
+    return 0;
+  }
+
   if (!appendGameAction.empty())
   {
     if (commandQueueVectorAddress == 0)
@@ -14205,6 +16327,142 @@ int main(int argc, char** argv)
     return 12;
   }
 
+  if (!appendUnitCommand.empty())
+  {
+    if (commandQueueVectorAddress == 0)
+    {
+      std::cerr << "--append-unit-command requires --command-queue-vector-address\n";
+      return 64;
+    }
+
+    RuntimeCommandRequest command;
+    command.kind = RuntimeCommandKind::UnitCommand;
+    command.name = appendUnitCommand;
+    command.targetUnitId = appendUnitTargetId;
+    command.arguments = appendCommandArgs;
+
+    std::vector<std::uint8_t> encodedBytes;
+    RuntimeEncodedCommand selection;
+    if (!appendSelectUnitTargetIds.empty())
+    {
+      selection = encodeRuntimeSelectCommand(appendSelectUnitTargetIds);
+      std::cout << "manual_unit_command_append.selection_requested=true\n";
+      std::cout << "manual_unit_command_append.selection_count="
+                << appendSelectUnitTargetIds.size() << '\n';
+      if (!selection.encoded)
+      {
+        std::cout << "manual_unit_command_append.encoded=false\n";
+        std::cout << "manual_unit_command_append.reason=" << selection.reason << '\n';
+        return 12;
+      }
+      encodedBytes.insert(encodedBytes.end(), selection.bytes.begin(), selection.bytes.end());
+    }
+    else
+    {
+      std::cout << "manual_unit_command_append.selection_requested=false\n";
+    }
+
+    RuntimeEncodedCommand encoded = encodeRuntimeCommandRequest(command);
+    std::cout << "manual_unit_command_append.requested=true\n";
+    std::cout << "manual_unit_command_append.unit_command=" << appendUnitCommand << '\n';
+    std::cout << "manual_unit_command_append.target_unit_id=" << appendUnitTargetId << '\n';
+    if (!encoded.encoded)
+    {
+      std::cout << "manual_unit_command_append.encoded=false\n";
+      std::cout << "manual_unit_command_append.reason=" << encoded.reason << '\n';
+      return 12;
+    }
+    encodedBytes.insert(encodedBytes.end(), encoded.bytes.begin(), encoded.bytes.end());
+
+    CommandQueueCandidate candidate;
+    if (commandQueueBufferAddress != 0)
+    {
+      candidate.storageKind = "raw-turn-buffer";
+      candidate.vectorAddress = commandQueueVectorAddress;
+      candidate.bytesInQueueAddress = commandQueueVectorAddress;
+      candidate.bufferBegin = commandQueueBufferAddress;
+      candidate.bufferCapacity = commandQueueBufferAddress + rawTurnBufferCapacity;
+      candidate.capacityBytes = rawTurnBufferCapacity;
+      candidate.counterOffset =
+        commandQueueVectorAddress >= commandQueueBufferAddress
+          ? commandQueueVectorAddress - commandQueueBufferAddress
+          : commandQueueBufferAddress - commandQueueVectorAddress;
+    }
+    else
+    {
+      candidate.vectorAddress = commandQueueVectorAddress;
+    }
+
+    CommandQueueAppendResult append = appendEncodedCommandToQueueCandidate(
+      environment.processId,
+      candidate,
+      encodedBytes,
+      false);
+    std::cout << "manual_unit_command_append.encoded=true\n";
+    if (selection.encoded)
+    {
+      std::cout << "manual_unit_command_append.selection_bytes="
+                << formatCommandBytesHex(selection.bytes) << '\n';
+    }
+    std::cout << "manual_unit_command_append.command_bytes="
+              << formatCommandBytesHex(encoded.bytes) << '\n';
+    std::cout << "manual_unit_command_append.encoded_bytes="
+              << formatCommandBytesHex(encodedBytes) << '\n';
+    std::cout << "manual_unit_command_append.vector_address="
+              << hexAddress(commandQueueVectorAddress) << '\n';
+    if (commandQueueBufferAddress != 0)
+    {
+      std::cout << "manual_unit_command_append.storage_kind=raw-turn-buffer\n";
+      std::cout << "manual_unit_command_append.bytes_in_queue_address="
+                << hexAddress(commandQueueVectorAddress) << '\n';
+      std::cout << "manual_unit_command_append.requested_buffer_address="
+                << hexAddress(commandQueueBufferAddress) << '\n';
+    }
+    std::cout << "manual_unit_command_append.written="
+              << (append.passed ? "true" : "false") << '\n';
+    if (append.passed)
+    {
+      std::cout << "manual_unit_command_append.buffer_begin="
+                << hexAddress(append.candidate.bufferBegin) << '\n';
+      std::cout << "manual_unit_command_append.tail_address="
+                << hexAddress(append.tailAddress) << '\n';
+      std::cout << "manual_unit_command_append.appended_bytes="
+                << append.appendedBytes << '\n';
+      if (stateCounterAddress != 0)
+      {
+        std::uint32_t progressStart = 0;
+        std::uint32_t progressEnd = 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        const bool sampled = sampleProgressingFrameCounter(
+          environment.processId,
+          stateCounterAddress,
+          stateSampleDelayMs,
+          6,
+          2,
+          progressStart,
+          progressEnd);
+        const std::uint32_t progressDelta = counterDelta(progressStart, progressEnd);
+        std::cout << "manual_unit_command_append.frame_counter_address="
+                  << hexAddress(stateCounterAddress) << '\n';
+        std::cout << "manual_unit_command_append.frame_counter_sampled="
+                  << (sampled ? "true" : "false") << '\n';
+        std::cout << "manual_unit_command_append.frame_counter_delta="
+                  << progressDelta << '\n';
+        if (!sampled || progressDelta < 2)
+        {
+          const bool restored =
+            restoreCommandQueueAppendsIfStillPresent(environment.processId, &append);
+          std::cout << "manual_unit_command_append.restored_after_no_progress="
+                    << (restored ? "true" : "false") << '\n';
+          return 12;
+        }
+      }
+      return 0;
+    }
+    std::cout << "manual_unit_command_append.reason=" << append.reason << '\n';
+    return 12;
+  }
+
   LiveCounterProof readGameStateProof;
   LiveUnitsProof readUnitsProof;
   LiveUnitNodeProof activeUnitNodeProof;
@@ -14240,8 +16498,23 @@ int main(int argc, char** argv)
   SelfUnitFixture unitFixture;
   SelfUnitNodeFixture unitNodeFixture;
   SelfCompactUnitNodeFixture compactUnitNodeFixture;
+  SelfDynamicUnitProjectionFixture dynamicUnitProjectionFixture {};
   SelfBulletFixture bulletFixture;
   SelfCommandQueueFixture commandQueueFixture;
+  std::atomic_bool dynamicUnitProjectionStop { false };
+  std::thread dynamicUnitProjectionThread;
+  struct ScopedThreadStop
+  {
+    std::atomic_bool& stop;
+    std::thread& thread;
+
+    ~ScopedThreadStop()
+    {
+      stop.store(true);
+      if (thread.joinable())
+        thread.join();
+    }
+  } dynamicUnitProjectionThreadGuard { dynamicUnitProjectionStop, dynamicUnitProjectionThread };
   int proofFailureCode = 0;
   bool readGameStateUsedExplicitAddress = false;
   bool readGameStateUsedFallbackScan = false;
@@ -14266,9 +16539,27 @@ int main(int argc, char** argv)
   }
   if (self && selfCompactUnitNodeFixture)
   {
-    initializeSelfCompactUnitNodeFixture(compactUnitNodeFixture);
+    initializeSelfCompactUnitNodeFixture(
+      compactUnitNodeFixture,
+      selfCompactSharedSecondaryFixture,
+      selfCompactSharedSecondarySpriteFixture);
     unitNodeCandidateAddresses.push_back(
       reinterpret_cast<std::uintptr_t>(compactUnitNodeFixture.nodes.front().data()));
+  }
+  if (self && selfDynamicUnitProjectionFixture)
+  {
+    initializeSelfDynamicUnitProjectionFixture(
+      dynamicUnitProjectionFixture,
+      selfDynamicUnitProjectionNegativeFixture);
+    dynamicUnitProjectionSeedAddresses.push_back(
+      reinterpret_cast<std::uintptr_t>(dynamicUnitProjectionFixture.records.front().data()));
+    if (!selfDynamicUnitProjectionStaticFixture)
+    {
+      dynamicUnitProjectionThread = std::thread(
+        mutateSelfDynamicUnitProjectionFixture,
+        std::ref(dynamicUnitProjectionFixture),
+        std::cref(dynamicUnitProjectionStop));
+    }
   }
   if (self && selfBulletFixture)
   {
@@ -14529,9 +16820,42 @@ int main(int argc, char** argv)
           readUnitsProof = std::move(sgUnitsMemProof);
         }
       }
+      if (proveReadUnits
+          && !readUnitsProof.passed
+          && (!self || selfDynamicUnitProjectionFixture)
+          && environment.product == Product::StarCraftRemastered)
+      {
+        const std::string previousReadUnitsReason = readUnitsProof.reason;
+        LiveUnitsProof dynamicProjectionProof = proveDynamicUnitFieldProjection(
+          environment.processId,
+          environment.executablePath,
+          unitMaxScanBytes,
+          unitScanTimeoutMs,
+          unitScanIncludeImageRegionsFlag,
+          dynamicUnitProjectionSeedAddresses,
+          !self || selfDynamicUnitProjectionStaticFixture,
+          self && selfDynamicUnitProjectionStaticFixture,
+          &activeUnitNodeProof,
+          unitScanDiagnosticsFlag ? &unitScanDiagnostics : nullptr);
+        if (dynamicProjectionProof.passed)
+        {
+          readUnitsProof = std::move(dynamicProjectionProof);
+        }
+        else
+        {
+          if (!previousReadUnitsReason.empty())
+            dynamicProjectionProof.reason =
+              previousReadUnitsReason + "; dynamic_projection_reason=" + dynamicProjectionProof.reason;
+          readUnitsProof = std::move(dynamicProjectionProof);
+        }
+      }
       const bool allowBroadClassicUnitFallback =
         environment.product != Product::StarCraftRemastered
-        || self
+        || (self
+            && selfUnitFixture
+            && !selfUnitNodeFixture
+            && !selfCompactUnitNodeFixture
+            && !selfDynamicUnitProjectionFixture)
         || unitScanClassicFallbackFlag;
       if (proveReadUnits && !readUnitsProof.passed && allowBroadClassicUnitFallback)
       {
@@ -14588,6 +16912,53 @@ int main(int argc, char** argv)
       if (!unitNodeCandidateAddresses.empty())
         std::cout << "read_units.unit_node_candidate_address.count="
                   << unitNodeCandidateAddresses.size() << '\n';
+      if (unitScanDiagnosticsFlag && !unitScanDiagnostics.explicitUnitNodeCandidates.empty())
+      {
+        std::cout << "read_units.unit_node_candidate_diagnostic.count="
+                  << unitScanDiagnostics.explicitUnitNodeCandidates.size() << '\n';
+        for (std::size_t index = 0;
+             index < unitScanDiagnostics.explicitUnitNodeCandidates.size();
+             ++index)
+        {
+          const ExplicitUnitNodeCandidateDiagnostic& candidate =
+            unitScanDiagnostics.explicitUnitNodeCandidates[index];
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index << ".address=0x"
+                    << std::hex << candidate.address << std::dec << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".compact_region_found="
+                    << (candidate.compactRegionFound ? "true" : "false") << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".compact_fields_plausible="
+                    << (candidate.compactFieldsPlausible ? "true" : "false") << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".compact_record_readable="
+                    << (candidate.compactRecordReadable ? "true" : "false") << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".compact_array_active_records="
+                    << candidate.compactArrayActiveRecords << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".compact_graph_active_records="
+                    << candidate.compactGraphActiveRecords << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".wide_region_found="
+                    << (candidate.wideRegionFound ? "true" : "false") << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".wide_fields_plausible="
+                    << (candidate.wideFieldsPlausible ? "true" : "false") << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".wide_record_readable="
+                    << (candidate.wideRecordReadable ? "true" : "false") << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".wide_graph_active_records="
+                    << candidate.wideGraphActiveRecords << '\n';
+          std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                    << ".wide_array_active_records="
+                    << candidate.wideArrayActiveRecords << '\n';
+          if (!candidate.finalReason.empty())
+            std::cout << "read_units.unit_node_candidate_diagnostic." << index
+                      << ".final_reason=" << candidate.finalReason << '\n';
+        }
+      }
       std::cout << "read_units.unit_array=" << (readUnitsProof.passed ? "true" : "false") << '\n';
       if (readUnitsProof.passed)
       {
@@ -14671,6 +17042,21 @@ int main(int argc, char** argv)
           std::cout << "read_units.sg_units_mem.prefix_hex="
                     << sgUnitsMem.prefixHex << '\n';
       }
+      if (unitScanDiagnosticsFlag && unitScanDiagnostics.dynamicProjectionAttempted)
+      {
+        std::cout << "read_units.dynamic_projection.attempted=true\n";
+        std::cout << "read_units.dynamic_projection.passed="
+                  << (unitScanDiagnostics.dynamicProjectionPassed ? "true" : "false") << '\n';
+        std::cout << "read_units.dynamic_projection.address=0x"
+                  << std::hex << unitScanDiagnostics.dynamicProjectionAddress << std::dec << '\n';
+        std::cout << "read_units.dynamic_projection.record_size="
+                  << unitScanDiagnostics.dynamicProjectionRecordSize << '\n';
+        std::cout << "read_units.dynamic_projection.active_records="
+                  << unitScanDiagnostics.dynamicProjectionActiveRecords << '\n';
+        if (!unitScanDiagnostics.dynamicProjectionReason.empty())
+          std::cout << "read_units.dynamic_projection.reason="
+                    << unitScanDiagnostics.dynamicProjectionReason << '\n';
+      }
     }
 
     if (proveActiveMatchState)
@@ -14688,9 +17074,7 @@ int main(int argc, char** argv)
         && frameGatePassed
         && liveUnitProofAvailable;
       const char* activeMatchEvidence =
-        readUnitsProof.passed
-          ? (readUnitsProof.derivedSnapshot ? "active-unit-node-snapshot" : "active-unit-records")
-          : "none";
+        readUnitsActiveMatchEvidenceName(readUnitsProof);
       std::cout << "active_match_state.in_game=" << (activeMatchProven ? "true" : "false") << '\n';
       std::cout << "active_match_state.evidence=" << activeMatchEvidence << '\n';
       if (replayMetadataAvailable)
@@ -14922,6 +17306,50 @@ int main(int argc, char** argv)
                   << candidate.activeRecords << '\n';
         std::cout << "read_units.scan.top_candidate." << index << ".pointer_array="
                   << (candidate.pointerArray ? "true" : "false") << '\n';
+        std::cout << "read_units.scan.top_candidate." << index << ".record_sample_count="
+                  << candidate.recordSamples.size() << '\n';
+        for (std::size_t sampleIndex = 0;
+             sampleIndex < candidate.recordSamples.size();
+             ++sampleIndex)
+        {
+          const UnitCandidateRecordSample& sample = candidate.recordSamples[sampleIndex];
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".address=0x"
+                    << std::hex << sample.address << std::dec << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".index="
+                    << sample.index << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".id="
+                    << sample.id << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".type_hint="
+                    << sample.typeHint << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".player="
+                    << sample.player << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".order="
+                    << sample.order << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".hit_points="
+                    << sample.hitPoints << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".x="
+                    << sample.x << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".y="
+                    << sample.y << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".sprite=0x"
+                    << std::hex << sample.sprite << std::dec << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".sprite_readable="
+                    << (sample.spriteReadable ? "true" : "false") << '\n';
+          std::cout << "read_units.scan.top_candidate." << index
+                    << ".record_sample." << sampleIndex << ".prefix_hex="
+                    << sample.prefixHex << '\n';
+        }
       }
       std::cout << "read_units.scan.pointer_array_sample_count="
                 << unitScanDiagnostics.pointerArraySamples.size() << '\n';
@@ -16218,19 +18646,19 @@ int main(int argc, char** argv)
   };
   invalidateProofToken(proveReadGameState, "proof.read_game_state");
   invalidateProofToken(proveActiveMatchState, "proof.active_match_state");
-  invalidateProofToken(willWriteReadUnitsProof, "proof.read_units");
-  invalidateProofToken(willWriteIssueCommandsProof, "proof.issue_commands");
-  invalidateProofToken(willWriteDrawOverlaysProof, "proof.draw_overlays");
-  invalidateProofToken(willWriteDispatchEventsProof, "proof.dispatch_events");
-  invalidateProofToken(willWriteReplayAnalysisProof, "proof.replay_analysis");
-  invalidateProofToken(willWriteMultiplayerSyncProof, "proof.multiplayer_sync");
-  invalidateProofToken(willWriteBattleNetPolicyProof, "proof.battle_net_policy");
-  invalidateProofToken(willWriteLoadAIModulesProof, "proof.load_ai_modules");
-  invalidateProofToken(willWriteReadMapDataProof, "proof.read_map_data");
-  invalidateProofToken(willWriteReadPlayerDataProof, "proof.read_player_data");
-  invalidateProofToken(willWriteReadBulletDataProof, "proof.read_bullet_data");
-  invalidateProofToken(willWriteReadRegionDataProof, "proof.read_region_data");
-  invalidateProofToken(commandQueueDiscoveryProof.ready, "proof.command_queue_discovery");
+  invalidateProofToken(proveReadUnits, "proof.read_units");
+  invalidateProofToken(proveIssueCommands, "proof.issue_commands");
+  invalidateProofToken(proveDrawOverlays, "proof.draw_overlays");
+  invalidateProofToken(proveDispatchEvents, "proof.dispatch_events");
+  invalidateProofToken(proveReplayAnalysis, "proof.replay_analysis");
+  invalidateProofToken(proveMultiplayerSync, "proof.multiplayer_sync");
+  invalidateProofToken(proveBattleNetPolicyFlag, "proof.battle_net_policy");
+  invalidateProofToken(proveLoadAIModules, "proof.load_ai_modules");
+  invalidateProofToken(proveReadMapData, "proof.read_map_data");
+  invalidateProofToken(proveReadPlayerData, "proof.read_player_data");
+  invalidateProofToken(proveReadBulletData, "proof.read_bullet_data");
+  invalidateProofToken(proveReadRegionData, "proof.read_region_data");
+  invalidateProofToken(discoverCommandQueue, "proof.command_queue_discovery");
 
   std::vector<std::string> existingReadyLines;
   std::vector<std::string> preservedReadyEvidenceLines;
@@ -16361,9 +18789,7 @@ int main(int argc, char** argv)
       ready << "diagnostic.active_match_state.active_records="
             << readUnitsProof.activeRecords << '\n';
       ready << "diagnostic.active_match_state.evidence="
-            << (readUnitsProof.derivedSnapshot
-              ? "active-unit-node-snapshot"
-              : "active-unit-records")
+            << readUnitsActiveMatchEvidenceName(readUnitsProof)
             << '\n';
     }
     if (!readUnitsProof.reason.empty())

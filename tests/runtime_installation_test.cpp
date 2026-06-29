@@ -4,11 +4,13 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #if defined(_WIN32)
 #include <stdlib.h>
@@ -58,6 +60,28 @@ namespace
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path);
     output << content;
+  }
+
+  void writePe32I386Executable(const std::filesystem::path& path)
+  {
+    std::filesystem::create_directories(path.parent_path());
+    std::vector<unsigned char> bytes(512, 0);
+    bytes[0] = 'M';
+    bytes[1] = 'Z';
+    const std::uint32_t peOffset = 0x80;
+    bytes[0x3c] = static_cast<unsigned char>(peOffset & 0xff);
+    bytes[0x3d] = static_cast<unsigned char>((peOffset >> 8) & 0xff);
+    bytes[0x3e] = static_cast<unsigned char>((peOffset >> 16) & 0xff);
+    bytes[0x3f] = static_cast<unsigned char>((peOffset >> 24) & 0xff);
+    bytes[peOffset] = 'P';
+    bytes[peOffset + 1] = 'E';
+    bytes[peOffset + 4] = 0x4c;
+    bytes[peOffset + 5] = 0x01;
+    bytes[peOffset + 24] = 0x0b;
+    bytes[peOffset + 25] = 0x01;
+
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
   }
 
 #if !defined(_WIN32)
@@ -758,6 +782,82 @@ int main()
   assert(duplicateMainEvidence.diagnosis.multipleBattleNetMainVisible);
   assert(duplicateMainEvidence.diagnosis.status == "blocked-multiple-battlenet-main-processes-support-error-no-game");
 #endif
+
+  unsetEnvValue("STARCRAFT_API_INSTALL_DIR");
+  unsetEnvValue("STARCRAFT_API_STARCRAFT_DIR");
+  unsetEnvValue("STARCRAFT_API_BW1161_EXE");
+  unsetEnvValue("STARCRAFT_API_LEGACY1161_EXE");
+  unsetEnvValue("STARCRAFT_API_BW1161_DIR");
+  unsetEnvValue("STARCRAFT_API_LEGACY1161_DIR");
+  unsetEnvValue("STARCRAFT_API_WINE");
+  unsetEnvValue("STARCRAFT_API_WINEPREFIX");
+
+  const std::filesystem::path legacyRoot = tempRoot / "legacy-1161";
+  const std::filesystem::path legacyExecutable = legacyRoot / "StarCraft.exe";
+  writePe32I386Executable(legacyExecutable);
+
+#if !defined(_WIN32)
+  const std::filesystem::path legacyWine = tempRoot / "wine";
+  writeFile(
+    legacyWine,
+    "#!/bin/sh\n"
+    "sleep 2\n");
+  makeExecutable(legacyWine);
+  setEnvValue("STARCRAFT_API_WINE", legacyWine.string());
+#endif
+
+  setEnvValue("STARCRAFT_API_BW1161_DIR", legacyRoot.string());
+
+  RuntimeEnvironment legacyEnvironment = RuntimeEnvironment::detectHost();
+  legacyEnvironment.product = Product::StarCraftBroodWar1161;
+  RuntimeInstallation legacyInstallation = detectStarCraftInstallation(legacyEnvironment);
+  assert(legacyInstallation.found);
+  assert(legacyInstallation.product == Product::StarCraftBroodWar1161);
+  assert(legacyInstallation.version == "1.16.1");
+  assert(legacyInstallation.executablePath == normalizedPathString(legacyExecutable));
+#if !defined(_WIN32)
+  assert(legacyInstallation.compatibilityRuntime == "wine");
+  assert(legacyInstallation.compatibilityRuntimePath == normalizedPathString(legacyWine));
+#endif
+
+  const std::string legacyManifest = makeRuntimeBootstrapManifest(legacyInstallation);
+  assert(legacyManifest.find("product starcraft-brood-war-1.16.1") != std::string::npos);
+  assert(legacyManifest.find("version 1.16.1") != std::string::npos);
+#if !defined(_WIN32)
+  assert(legacyManifest.find("compatibility-runtime wine") != std::string::npos);
+#endif
+
+#if !defined(_WIN32)
+  const std::filesystem::path legacySnapshot = tempRoot / "legacy-processes.snapshot";
+  writeFile(
+    legacySnapshot,
+    "5100 1 " + legacyWine.string() + " " + legacyExecutable.string() + "\n");
+  setEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT", legacySnapshot.string());
+  const std::vector<int> legacyProcessIds = findRuntimeProcessIds(legacyInstallation);
+  assert(legacyProcessIds.size() == 1);
+  assert(legacyProcessIds.front() == 5100);
+
+  const RuntimeLaunchResult legacyAttach = launchOrAttachRuntime(legacyInstallation, false, 0, 0);
+  assert(legacyAttach.running);
+  assert(legacyAttach.processId == 5100);
+  unsetEnvValue("STARCRAFT_API_PROCESS_SNAPSHOT");
+#endif
+
+  unsetEnvValue("STARCRAFT_API_BW1161_DIR");
+  unsetEnvValue("STARCRAFT_API_BW1161_EXE");
+  const std::filesystem::path patchOnlyRoot = tempRoot / "legacy-1161-patch-only";
+  const std::filesystem::path broodWarPatch = patchOnlyRoot / "BW-1161.exe";
+  writePe32I386Executable(broodWarPatch);
+  setEnvValue("STARCRAFT_API_BW1161_DIR", patchOnlyRoot.string());
+
+  RuntimeEnvironment patchOnlyEnvironment = RuntimeEnvironment::detectHost();
+  patchOnlyEnvironment.product = Product::StarCraftBroodWar1161;
+  RuntimeInstallation patchOnlyInstallation = detectStarCraftInstallation(patchOnlyEnvironment);
+  assert(!patchOnlyInstallation.found);
+
+  patchOnlyEnvironment.executablePath = broodWarPatch.string();
+  RuntimeInstallation explicitPatchOnlyInstallation = detectStarCraftInstallation(patchOnlyEnvironment);
+  assert(!explicitPatchOnlyInstallation.found);
 
   std::filesystem::remove_all(tempRoot);
   return 0;

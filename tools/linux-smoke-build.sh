@@ -115,6 +115,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeResidentLoader.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
@@ -141,6 +142,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeResidentLoader.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \
@@ -167,6 +169,7 @@ cxxflags=${CXXFLAGS:-}
   "$repo_root/bwapi/Runtime/RuntimeResidentLoader.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeCommandEncoder.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeImplementationGap.cpp" \
+  "$repo_root/bwapi/Runtime/RuntimeInstallation.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeManifest.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcess.cpp" \
   "$repo_root/bwapi/Runtime/RuntimeProcessMemory.cpp" \

@@ -124,6 +124,16 @@ if(APPLE)
     SUFFIX ".dylib"
     OSX_ARCHITECTURES "${STARCRAFT_API_MACOS_RESIDENT_ARCHITECTURES}"
   )
+
+  add_library(starcraft-api-resident-stopper SHARED
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_resident_stopper.cpp"
+  )
+  set_target_properties(starcraft-api-resident-stopper PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "starcraft-api-resident-stopper"
+    SUFFIX ".dylib"
+    OSX_ARCHITECTURES "${STARCRAFT_API_MACOS_RESIDENT_ARCHITECTURES}"
+  )
 endif()
 
 if(STARCRAFT_API_BUILD_TOOLS)
@@ -155,6 +165,14 @@ if(STARCRAFT_API_BUILD_TOOLS)
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_launch.cpp"
   )
   target_link_libraries(starcraft-runtime-launch
+    PRIVATE
+      StarCraftAPI::runtime
+  )
+
+  add_executable(starcraft-runtime-legacy1161-setup
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/runtime_legacy1161_setup.cpp"
+  )
+  target_link_libraries(starcraft-runtime-legacy1161-setup
     PRIVATE
       StarCraftAPI::runtime
   )
@@ -250,6 +268,10 @@ if(STARCRAFT_API_BUILD_TOOLS)
         /usr/bin/codesign --force --sign - --entitlements
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
         $<TARGET_FILE:starcraft-api-resident>
+      COMMAND
+        /usr/bin/codesign --force --sign - --entitlements
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/macos-debugger.entitlements"
+        $<TARGET_FILE:starcraft-api-resident-stopper>
       DEPENDS
         starcraft-runtime-memory-probe
         starcraft-runtime-adapter-proof
@@ -261,6 +283,7 @@ if(STARCRAFT_API_BUILD_TOOLS)
         starcraft-runtime-input
         starcraft-runtime-inject-resident
         starcraft-api-resident
+        starcraft-api-resident-stopper
       COMMENT "Ad-hoc signing runtime debug tools with macOS debugger entitlements"
       VERBATIM
     )

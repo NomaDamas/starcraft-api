@@ -26,6 +26,9 @@ namespace
   {
     std::cout
       << "usage: starcraft-runtime-launch [options]\n"
+      << "  --product <name>         runtime product, e.g. starcraft-remastered or 1161\n"
+      << "  --version <version>      runtime version override\n"
+      << "  --executable <path>      explicit runtime executable path\n"
       << "  --launch                 launch StarCraft if no matching process is running\n"
       << "  --replace-running        terminate visible StarCraft game process(es) before --launch\n"
       << "  --replace-stale-handoff  terminate existing Battle.net s1 handoff before one launch retry\n"
@@ -75,11 +78,44 @@ int main(int argc, char** argv)
   std::string bridgePath;
   std::string replayPath;
   std::string residentAdapterPath;
+  RuntimeEnvironment host = RuntimeEnvironment::detectHost();
 
   for (int i = 1; i < argc; ++i)
   {
     const std::string arg = argv[i];
-    if (arg == "--launch")
+    if (arg == "--product")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--product requires a value\n";
+        return 64;
+      }
+      host.product = parseProduct(argv[++i]);
+      if (host.product == Product::Unknown)
+      {
+        std::cerr << "--product requires a known runtime product\n";
+        return 64;
+      }
+    }
+    else if (arg == "--version")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--version requires a value\n";
+        return 64;
+      }
+      host.version = argv[++i];
+    }
+    else if (arg == "--executable")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--executable requires a path\n";
+        return 64;
+      }
+      host.executablePath = argv[++i];
+    }
+    else if (arg == "--launch")
       launch = true;
     else if (arg == "--replace-running")
       replaceRunning = true;
@@ -178,7 +214,6 @@ int main(int argc, char** argv)
     }
   }
 
-  RuntimeEnvironment host = RuntimeEnvironment::detectHost();
   RuntimeInstallation installation = detectStarCraftInstallation(host);
 
   std::cout << "install.found=" << (installation.found ? "true" : "false") << '\n';
@@ -194,6 +229,12 @@ int main(int argc, char** argv)
     std::cout << "install.executable=" << installation.executablePath << '\n';
   if (!installation.launcherPath.empty())
     std::cout << "install.launcher=" << installation.launcherPath << '\n';
+  if (!installation.compatibilityRuntime.empty())
+    std::cout << "install.compatibility_runtime=" << installation.compatibilityRuntime << '\n';
+  if (!installation.compatibilityRuntimePath.empty())
+    std::cout << "install.compatibility_runtime_path=" << installation.compatibilityRuntimePath << '\n';
+  if (!installation.compatibilityPrefix.empty())
+    std::cout << "install.compatibility_prefix=" << installation.compatibilityPrefix << '\n';
   if (!installation.reason.empty())
     std::cout << "install.reason=" << installation.reason << '\n';
   for (const std::string& searchedPath : installation.searchedPaths)

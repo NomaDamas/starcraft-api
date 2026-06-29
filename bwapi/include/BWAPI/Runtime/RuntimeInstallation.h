@@ -17,6 +17,9 @@ namespace BWAPI::Runtime
     std::string appBundlePath;
     std::string executablePath;
     std::string launcherPath;
+    std::string compatibilityRuntime;
+    std::string compatibilityRuntimePath;
+    std::string compatibilityPrefix;
     std::string version;
     std::string reason;
     std::vector<std::string> searchedPaths;

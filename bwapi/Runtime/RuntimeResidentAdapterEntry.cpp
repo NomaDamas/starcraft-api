@@ -3,6 +3,7 @@
 #include <BWAPI/Runtime/RuntimeCommandSurface.h>
 #include <BWAPI/Runtime/RuntimeExecutor.h>
 #include <BWAPI/Runtime/RuntimeInstallation.h>
+#include <BWAPI/UnitType.h>
 
 #include <algorithm>
 #include <array>
@@ -381,30 +382,11 @@ namespace
     if (startsWith(line, "diagnostic."))
       return true;
 
-    // Only preserve proofs whose freshness is revalidated against resident
-    // state. Preserving projection or externally appended proof tokens here can
-    // promote stale/weak evidence into the production contract.
-    static constexpr const char* preservableProofPrefixes[] = {
-      "proof.active_match_state",
-      "proof.read_units"
-    };
-    for (const char* prefix : preservableProofPrefixes)
-    {
-      if (startsWith(line, prefix))
-        return true;
-    }
-    if (startsWith(line, "resident.proof.active_match"))
-      return true;
-
-    if (!(startsWith(line, "contract.binding.")
-          || startsWith(line, "contract.structure.")
-          || startsWith(line, "contract.field.")))
-    {
-      return false;
-    }
-
-    return line.find("|proof.active_match_state=passed") != std::string::npos
-      || line.find("|proof.read_units=passed") != std::string::npos;
+    // Live read-units/active-match evidence must be rewritten from the current
+    // resident scan on every ready refresh. Preserving these lines can keep
+    // stale or weak unit snapshots alive after the scanner starts rejecting
+    // them.
+    return false;
   }
 
   std::vector<std::string> preservedReadyEvidenceLines(
@@ -656,6 +638,12 @@ namespace
   bool plausibleRemasteredUnitTypeHint(std::uint16_t typeHint)
   {
     return typeHint != 0 && typeHint < 1024;
+  }
+
+  bool remasteredTypeHintCanProveActiveResidentUnit(std::uint16_t typeHint)
+  {
+    return plausibleRemasteredUnitTypeHint(typeHint)
+      && typeHint < static_cast<std::uint16_t>(BWAPI::UnitTypes::Enum::Special_Start_Location);
   }
 
   struct ResidentBulletRecordLayout
@@ -3003,9 +2991,9 @@ namespace
     record.targetY = record.y;
     record.order = 0;
     record.state = 0;
-    record.player = 0;
-    record.typeHint = 1;
-    record.metadataDerived = true;
+    record.player = -1;
+    record.typeHint = 0;
+    record.metadataDerived = false;
     record.taggedHandleDerived = taggedSprite || taggedSecondary;
 
     constexpr std::size_t spriteSnapshotBytes = 0xd0;
@@ -3018,14 +3006,23 @@ namespace
         const std::uint32_t primaryPlayer = readU32LE(spriteBytes, 0x6c);
         const unsigned char secondaryPlayer = spriteBytes[0xc0];
         if (primaryPlayer < 12)
+        {
           record.player = static_cast<int>(primaryPlayer);
+          record.metadataDerived = true;
+        }
         else if (secondaryPlayer < 12)
+        {
           record.player = static_cast<int>(secondaryPlayer);
+          record.metadataDerived = true;
+        }
 
         const std::uint16_t typeHint =
           static_cast<std::uint16_t>(readU32LE(spriteBytes, 0x68) & 0xffffu);
         if (plausibleRemasteredUnitTypeHint(typeHint))
+        {
           record.typeHint = typeHint;
+          record.metadataDerived = true;
+        }
 
         const std::uint32_t hitPoints = readU32LE(spriteBytes, 0x80);
         if (hitPoints > 0 && hitPoints <= 1000000)
@@ -3051,6 +3048,7 @@ namespace
         {
           record.player = rawPlayer == 255 ? 11 : static_cast<int>(rawPlayer);
           record.typeHint = typeHint;
+          record.metadataDerived = true;
           const unsigned char currentHitPoints = secondaryBytes[0x1a];
           const unsigned char maxHitPoints = secondaryBytes[0x1b];
           if (currentHitPoints != 0 && maxHitPoints != 0 && currentHitPoints <= maxHitPoints)
@@ -3066,6 +3064,7 @@ namespace
         {
           record.player = static_cast<int>(metadataPlayer);
           record.typeHint = metadataType;
+          record.metadataDerived = true;
           if (!record.hitPointsResolved)
           {
             const unsigned char currentHitPoints = secondaryBytes[0x1a];
@@ -3080,18 +3079,28 @@ namespace
       }
     }
 
-    return record.id != 0 && record.player >= 0 && record.player < 12;
+    return record.id != 0
+      && record.player >= 0
+      && record.player < 12
+      && record.metadataDerived
+      && remasteredTypeHintCanProveActiveResidentUnit(record.typeHint)
+      && record.hitPointsResolved
+      && record.hitPoints > 0;
   }
 
   bool residentCompactRecordsHaveBwapiMetadata(
     const std::vector<ResidentUnitSnapshotRecord>& records)
   {
-    return std::any_of(
+    return records.size() >= 3
+      && std::all_of(
       records.begin(),
       records.end(),
       [](const ResidentUnitSnapshotRecord& record)
       {
-        return !record.taggedHandleDerived || record.hitPointsResolved;
+        return record.metadataDerived
+          && remasteredTypeHintCanProveActiveResidentUnit(record.typeHint)
+          && record.hitPointsResolved
+          && record.hitPoints > 0;
       });
   }
 

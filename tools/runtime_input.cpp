@@ -1,5 +1,6 @@
 #include <BWAPI/Runtime/RuntimeProcess.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -28,7 +29,10 @@ namespace
       << "  --keys <sequence>       comma/space separated key tokens, e.g. \"s enter c\"\n"
       << "  --clicks <sequence>     macOS mouse clicks as button:x:y tokens; x/y are 0..1 window-relative\n"
       << "                           e.g. \"left:0.35:0.45 right:0.70:0.55\"\n"
+      << "  --drags <sequence>      macOS drags as button:x1:y1:x2:y2 tokens\n"
+      << "                           e.g. \"left:0.35:0.35:0.55:0.55\"\n"
       << "  --hid-events            also post events through the foreground HID event tap\n"
+      << "  --drag-steps <count>    mouse-drag interpolation steps (default: 8)\n"
       << "  --delay-ms <ms>         delay between keys (default: 150)\n"
       << "  --post-timeout-ms <ms>  maximum time to wait for each key post (default: 3000)\n"
       << "  --allow-untrusted       send even when macOS Accessibility trust is unavailable\n"
@@ -82,6 +86,15 @@ namespace
     double y = 0.0;
   };
 
+  struct DragToken
+  {
+    std::string button;
+    double fromX = 0.0;
+    double fromY = 0.0;
+    double toX = 0.0;
+    double toY = 0.0;
+  };
+
   bool parseNormalizedDouble(const std::string& value, double& output)
   {
     char* end = nullptr;
@@ -108,6 +121,33 @@ namespace
       && parseNormalizedDouble(token.substr(secondColon + 1), output.y);
   }
 
+  bool parseDragToken(const std::string& token, DragToken& output)
+  {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char ch : token)
+    {
+      if (ch == ':')
+      {
+        parts.push_back(current);
+        current.clear();
+        continue;
+      }
+      current.push_back(ch);
+    }
+    parts.push_back(current);
+
+    if (parts.size() != 5)
+      return false;
+    output.button = lower(parts[0]);
+    if (output.button != "left" && output.button != "right")
+      return false;
+    return parseNormalizedDouble(parts[1], output.fromX)
+      && parseNormalizedDouble(parts[2], output.fromY)
+      && parseNormalizedDouble(parts[3], output.toX)
+      && parseNormalizedDouble(parts[4], output.toY);
+  }
+
   std::vector<ClickToken> splitClickSequence(const std::string& sequence, std::string& reason)
   {
     std::vector<ClickToken> clicks;
@@ -124,11 +164,38 @@ namespace
     return clicks;
   }
 
+  std::vector<DragToken> splitDragSequence(const std::string& sequence, std::string& reason)
+  {
+    std::vector<DragToken> drags;
+    for (const std::string& token : splitKeySequence(sequence))
+    {
+      DragToken drag;
+      if (!parseDragToken(token, drag))
+      {
+        reason = "unsupported drag token: " + token;
+        return {};
+      }
+      drags.push_back(drag);
+    }
+    return drags;
+  }
+
 #if defined(__APPLE__)
   struct TargetWindow
   {
     CGRect bounds = CGRectZero;
   };
+
+  double intersectionArea(CGRect lhs, CGRect rhs)
+  {
+    const double left = std::max(CGRectGetMinX(lhs), CGRectGetMinX(rhs));
+    const double top = std::max(CGRectGetMinY(lhs), CGRectGetMinY(rhs));
+    const double right = std::min(CGRectGetMaxX(lhs), CGRectGetMaxX(rhs));
+    const double bottom = std::min(CGRectGetMaxY(lhs), CGRectGetMaxY(rhs));
+    if (right <= left || bottom <= top)
+      return 0.0;
+    return (right - left) * (bottom - top);
+  }
 
   std::optional<TargetWindow> findTargetWindowWithOptions(
     int processId,
@@ -140,7 +207,9 @@ namespace
 
     std::optional<TargetWindow> result;
     double bestArea = 0.0;
+    double bestMainDisplayArea = 0.0;
     double bestLayerPenalty = std::numeric_limits<double>::max();
+    const CGRect mainDisplayBounds = CGDisplayBounds(CGMainDisplayID());
     const CFIndex count = CFArrayGetCount(windows);
     for (CFIndex i = 0; i < count; ++i)
     {
@@ -172,13 +241,18 @@ namespace
         continue;
 
       const double area = bounds.size.width * bounds.size.height;
+      const double mainDisplayArea = intersectionArea(bounds, mainDisplayBounds);
       const double layerPenalty = layer == 0 ? 0.0 : 1.0;
       if (!result.has_value()
           || layerPenalty < bestLayerPenalty
-          || (layerPenalty == bestLayerPenalty && area > bestArea))
+          || (layerPenalty == bestLayerPenalty && mainDisplayArea > bestMainDisplayArea)
+          || (layerPenalty == bestLayerPenalty
+              && mainDisplayArea == bestMainDisplayArea
+              && area > bestArea))
       {
         result = TargetWindow { bounds };
         bestArea = area;
+        bestMainDisplayArea = mainDisplayArea;
         bestLayerPenalty = layerPenalty;
       }
     }
@@ -485,6 +559,136 @@ namespace
     reason = result.second;
     return result.first;
   }
+
+  bool postDragToPid(
+    int processId,
+    const TargetWindow& window,
+    const DragToken& drag,
+    bool hidEvents,
+    int dragSteps,
+    std::string& reason)
+  {
+    CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    if (source == nullptr)
+    {
+      reason = "CGEventSourceCreate failed";
+      return false;
+    }
+
+    const CGPoint from = CGPointMake(
+      window.bounds.origin.x + window.bounds.size.width * drag.fromX,
+      window.bounds.origin.y + window.bounds.size.height * drag.fromY);
+    const CGPoint to = CGPointMake(
+      window.bounds.origin.x + window.bounds.size.width * drag.toX,
+      window.bounds.origin.y + window.bounds.size.height * drag.toY);
+    const bool right = drag.button == "right";
+    const CGMouseButton button = right ? kCGMouseButtonRight : kCGMouseButtonLeft;
+    const CGEventType downType = right ? kCGEventRightMouseDown : kCGEventLeftMouseDown;
+    const CGEventType dragType = right ? kCGEventRightMouseDragged : kCGEventLeftMouseDragged;
+    const CGEventType upType = right ? kCGEventRightMouseUp : kCGEventLeftMouseUp;
+
+    CGEventRef mouseDown = CGEventCreateMouseEvent(source, downType, from, button);
+    if (mouseDown == nullptr)
+    {
+      if (mouseDown != nullptr)
+        CFRelease(mouseDown);
+      CFRelease(source);
+      reason = "CGEventCreateMouseEvent failed";
+      return false;
+    }
+
+    CGEventSetIntegerValueField(mouseDown, kCGMouseEventClickState, 1);
+    if (hidEvents)
+    {
+      CGWarpMouseCursorPosition(from);
+      CGEventPost(kCGHIDEventTap, mouseDown);
+    }
+    else
+    {
+      CGEventPostToPid(static_cast<pid_t>(processId), mouseDown);
+    }
+    CFRelease(mouseDown);
+
+    const int steps = std::max(1, dragSteps);
+    for (int step = 1; step <= steps; ++step)
+    {
+      const double fraction = static_cast<double>(step) / static_cast<double>(steps);
+      const CGPoint point = CGPointMake(
+        from.x + (to.x - from.x) * fraction,
+        from.y + (to.y - from.y) * fraction);
+      CGEventRef mouseDragged = CGEventCreateMouseEvent(source, dragType, point, button);
+      if (mouseDragged == nullptr)
+      {
+        CFRelease(source);
+        reason = "CGEventCreateMouseEvent failed";
+        return false;
+      }
+      CGEventSetIntegerValueField(mouseDragged, kCGMouseEventClickState, 1);
+      if (hidEvents)
+      {
+        CGWarpMouseCursorPosition(point);
+        CGEventPost(kCGHIDEventTap, mouseDragged);
+      }
+      else
+      {
+        CGEventPostToPid(static_cast<pid_t>(processId), mouseDragged);
+      }
+      CFRelease(mouseDragged);
+      std::this_thread::sleep_for(std::chrono::milliseconds(8));
+    }
+
+    CGEventRef mouseUp = CGEventCreateMouseEvent(source, upType, to, button);
+    if (mouseUp == nullptr)
+    {
+      CFRelease(source);
+      reason = "CGEventCreateMouseEvent failed";
+      return false;
+    }
+    CGEventSetIntegerValueField(mouseUp, kCGMouseEventClickState, 1);
+    if (hidEvents)
+      CGEventPost(kCGHIDEventTap, mouseUp);
+    else
+      CGEventPostToPid(static_cast<pid_t>(processId), mouseUp);
+    CFRelease(mouseUp);
+    CFRelease(source);
+    return true;
+  }
+
+  bool postDragToPidWithTimeout(
+    int processId,
+    const TargetWindow& window,
+    const DragToken& drag,
+    bool hidEvents,
+    int dragSteps,
+    int timeoutMs,
+    std::string& reason)
+  {
+    auto completion = std::make_shared<std::promise<std::pair<bool, std::string>>>();
+    std::future<std::pair<bool, std::string>> future = completion->get_future();
+    std::thread(
+      [completion, processId, window, drag, hidEvents, dragSteps]()
+      {
+        std::string postReason;
+        const bool posted = postDragToPid(processId, window, drag, hidEvents, dragSteps, postReason);
+        try
+        {
+          completion->set_value({ posted, postReason });
+        }
+        catch (const std::future_error&)
+        {
+        }
+      }).detach();
+
+    if (future.wait_for(std::chrono::milliseconds(timeoutMs)) != std::future_status::ready)
+    {
+      reason = "timed out while posting mouse drag to target process";
+      return false;
+    }
+
+    const std::pair<bool, std::string> result = future.get();
+    reason = result.second;
+    return result.first;
+  }
 #endif
 }
 
@@ -492,12 +696,14 @@ int main(int argc, char** argv)
 {
   int processId = 0;
   int delayMs = 150;
+  int dragSteps = 8;
   int postTimeoutMs = 3000;
   bool dryRun = false;
   bool allowUntrusted = false;
   bool hidEvents = false;
   std::string sequence;
   std::string clickSequence;
+  std::string dragSequence;
 
   for (int i = 1; i < argc; ++i)
   {
@@ -551,11 +757,30 @@ int main(int argc, char** argv)
       clickSequence = argv[++i];
       continue;
     }
+    if (arg == "--drags")
+    {
+      if (i + 1 >= argc)
+      {
+        std::cerr << "--drags requires a sequence\n";
+        return 64;
+      }
+      dragSequence = argv[++i];
+      continue;
+    }
     if (arg == "--delay-ms")
     {
       if (i + 1 >= argc || !parsePositiveInt(argv[++i], delayMs))
       {
         std::cerr << "--delay-ms requires a positive integer\n";
+        return 64;
+      }
+      continue;
+    }
+    if (arg == "--drag-steps")
+    {
+      if (i + 1 >= argc || !parsePositiveInt(argv[++i], dragSteps))
+      {
+        std::cerr << "--drag-steps requires a positive integer\n";
         return 64;
       }
       continue;
@@ -579,9 +804,9 @@ int main(int argc, char** argv)
     std::cerr << "process id is required\n";
     return 64;
   }
-  if (sequence.empty() && clickSequence.empty())
+  if (sequence.empty() && clickSequence.empty() && dragSequence.empty())
   {
-    std::cerr << "key or click sequence is required\n";
+    std::cerr << "key, click, or drag sequence is required\n";
     return 64;
   }
 
@@ -598,16 +823,28 @@ int main(int argc, char** argv)
     std::cerr << clickParseReason << '\n';
     return 65;
   }
+  std::string dragParseReason;
+  const std::vector<DragToken> drags = splitDragSequence(dragSequence, dragParseReason);
+  if (!dragSequence.empty() && drags.empty())
+  {
+    std::cerr << dragParseReason << '\n';
+    return 65;
+  }
 
   std::cout << "input.process_id=" << processId << '\n';
-  std::cout << "input.token_count=" << (tokens.size() + clicks.size()) << '\n';
+  std::cout << "input.token_count=" << (tokens.size() + clicks.size() + drags.size()) << '\n';
   std::cout << "input.post_timeout_ms=" << postTimeoutMs << '\n';
   std::cout << "input.hid_events=" << (hidEvents ? "true" : "false") << '\n';
+  std::cout << "input.drag_steps=" << dragSteps << '\n';
   for (std::size_t i = 0; i < tokens.size(); ++i)
     std::cout << "input.token." << i << '=' << tokens[i] << '\n';
   for (std::size_t i = 0; i < clicks.size(); ++i)
     std::cout << "input.click." << i << '='
               << clicks[i].button << ':' << clicks[i].x << ':' << clicks[i].y << '\n';
+  for (std::size_t i = 0; i < drags.size(); ++i)
+    std::cout << "input.drag." << i << '='
+              << drags[i].button << ':' << drags[i].fromX << ':' << drags[i].fromY
+              << ':' << drags[i].toX << ':' << drags[i].toY << '\n';
   if (dryRun)
   {
     std::cout << "input.dry_run=true\n";
@@ -639,7 +876,7 @@ int main(int argc, char** argv)
     keyCodes.push_back(code);
   }
   std::optional<TargetWindow> targetWindow;
-  if (!clicks.empty())
+  if (!clicks.empty() || !drags.empty())
   {
     targetWindow = findTargetWindow(processId);
     std::cout << "input.window_found=" << (targetWindow.has_value() ? "true" : "false") << '\n';
@@ -689,6 +926,26 @@ int main(int argc, char** argv)
     std::cout << "input.success=false\n";
     std::cout << "input.reason=target process window was not found\n";
     return 2;
+  }
+  if (!drags.empty() && !targetWindow.has_value())
+  {
+    std::cout << "input.sent=" << sent << '\n';
+    std::cout << "input.success=false\n";
+    std::cout << "input.reason=target process window was not found\n";
+    return 2;
+  }
+  for (const DragToken& drag : drags)
+  {
+    std::string reason;
+    if (!postDragToPidWithTimeout(processId, *targetWindow, drag, hidEvents, dragSteps, postTimeoutMs, reason))
+    {
+      std::cout << "input.sent=" << sent << '\n';
+      std::cout << "input.success=false\n";
+      std::cout << "input.reason=" << reason << '\n';
+      return 2;
+    }
+    ++sent;
+    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
   }
   for (const ClickToken& click : clicks)
   {

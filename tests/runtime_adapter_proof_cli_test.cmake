@@ -656,6 +656,8 @@ if(NOT unit_node_result EQUAL 0)
 endif()
 foreach(needle
     "read_units.unit_node_candidate_address.count=1"
+    "read_units.unit_node_candidate_diagnostic.count=1"
+    "read_units.unit_node_candidate_diagnostic.0.address=0x"
     "read_units.unit_array=true"
     "read_units.layout=scr-unit-node-object-graph"
     "read_units.derived_snapshot=true"
@@ -750,6 +752,8 @@ file(READ "${unit_node_bridge_dir}/unit_diagnostics.snapshot.tsv" unit_node_diag
 foreach(needle
     "read_units_passed\ttrue"
     "unit_node_passed\ttrue"
+    "explicit_unit_node_candidate_count\t1"
+    "explicit_unit_node_candidate_0_address\t0x"
     "scan_pointer_dense_rejected_records\t"
     "scan_top_candidate_count\t"
     "unit_node_scan_regions\t"
@@ -785,6 +789,8 @@ if(NOT compact_unit_node_result EQUAL 0)
 endif()
 foreach(needle
     "read_units.unit_node_candidate_address.count=1"
+    "read_units.unit_node_candidate_diagnostic.count=1"
+    "read_units.unit_node_candidate_diagnostic.0.address=0x"
     "read_units.unit_array=true"
     "read_units.record_size=40"
     "read_units.layout=scr-compact-unit-node-object-graph"
@@ -823,6 +829,8 @@ file(READ "${compact_unit_node_bridge_dir}/unit_diagnostics.snapshot.tsv" compac
 foreach(needle
     "read_units_passed\ttrue"
     "unit_node_passed\ttrue"
+    "explicit_unit_node_candidate_count\t1"
+    "explicit_unit_node_candidate_0_address\t0x"
     "unit_node_record_size\t40"
     "unit_node_active_records\t")
   string(FIND "${compact_unit_node_diagnostics_snapshot}" "${needle}" needle_index)
@@ -831,7 +839,321 @@ foreach(needle
   endif()
 endforeach()
 
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${compact_unit_node_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --self-compact-shared-secondary-fixture
+  RESULT_VARIABLE compact_stale_invalidation_result
+  OUTPUT_VARIABLE compact_stale_invalidation_output
+  ERROR_VARIABLE compact_stale_invalidation_error
+)
+if(compact_stale_invalidation_result EQUAL 0)
+  message(FATAL_ERROR "expected compact stale-proof invalidation run to fail with shared secondary metadata\nstdout:\n${compact_stale_invalidation_output}\nstderr:\n${compact_stale_invalidation_error}")
+endif()
+
+file(READ "${compact_unit_node_ready_file}" compact_stale_invalidation_ready)
+foreach(forbidden
+    "proof.read_units=passed"
+    "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.read_units=passed"
+    "contract.structure.BW::CUnit=512|proof.read_units=passed")
+  string(FIND "${compact_stale_invalidation_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "failed compact proof must invalidate stale ready evidence '${forbidden}'\n${compact_stale_invalidation_ready}")
+  endif()
+endforeach()
+
 file(REMOVE_RECURSE "${compact_unit_node_bridge_dir}")
+
+set(compact_sprite_shared_secondary_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-compact-sprite-shared-secondary-bridge")
+file(REMOVE_RECURSE "${compact_sprite_shared_secondary_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${compact_sprite_shared_secondary_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --self-compact-shared-secondary-sprite-fixture
+  RESULT_VARIABLE compact_sprite_shared_secondary_result
+  OUTPUT_VARIABLE compact_sprite_shared_secondary_output
+  ERROR_VARIABLE compact_sprite_shared_secondary_error
+)
+if(NOT compact_sprite_shared_secondary_result EQUAL 0)
+  message(FATAL_ERROR "expected compact SC:R unit-node proof to pass when shared secondary handles are backed by unique sprite metadata\nstdout:\n${compact_sprite_shared_secondary_output}\nstderr:\n${compact_sprite_shared_secondary_error}")
+endif()
+foreach(needle
+    "read_units.unit_array=true"
+    "read_units.record_size=40"
+    "read_units.layout=scr-compact-unit-node-object-graph"
+    "read_units.derived_snapshot=true"
+    "read_units.hit_points_resolved=true"
+    "proof.read_units=passed")
+  string(FIND "${compact_sprite_shared_secondary_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "compact sprite-backed shared-secondary proof output missing '${needle}'\n${compact_sprite_shared_secondary_output}")
+  endif()
+endforeach()
+
+set(compact_sprite_shared_secondary_ready_file "${compact_sprite_shared_secondary_bridge_dir}/ready")
+if(NOT EXISTS "${compact_sprite_shared_secondary_ready_file}")
+  message(FATAL_ERROR "compact sprite-backed shared-secondary proof did not write ready file")
+endif()
+file(READ "${compact_sprite_shared_secondary_ready_file}" compact_sprite_shared_secondary_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_units.layout=scr-compact-unit-node-object-graph"
+    "proof.read_units.hit_points_source=sprite+0x80 hp-raw"
+    "proof.read_units=passed")
+  string(FIND "${compact_sprite_shared_secondary_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "compact sprite-backed shared-secondary ready file missing '${needle}'\n${compact_sprite_shared_secondary_ready}")
+  endif()
+endforeach()
+
+file(READ "${compact_sprite_shared_secondary_bridge_dir}/units.snapshot.tsv" compact_sprite_shared_secondary_snapshot)
+foreach(needle
+    "metadata_source"
+    "hit_points_source"
+    "sprite+0x68|0x6c-or-0xc0"
+    "sprite+0x80 hp-raw")
+  string(FIND "${compact_sprite_shared_secondary_snapshot}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "compact sprite-backed shared-secondary snapshot missing '${needle}'\n${compact_sprite_shared_secondary_snapshot}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${compact_sprite_shared_secondary_bridge_dir}")
+
+set(dynamic_projection_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-dynamic-projection-bridge")
+file(REMOVE_RECURSE "${dynamic_projection_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${dynamic_projection_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --unit-max-scan-mb 96
+    --self-dynamic-unit-projection-fixture
+  RESULT_VARIABLE dynamic_projection_result
+  OUTPUT_VARIABLE dynamic_projection_output
+  ERROR_VARIABLE dynamic_projection_error
+)
+if(NOT dynamic_projection_result EQUAL 0)
+  message(FATAL_ERROR "expected dynamic SC:R field projection proof to pass with self fixture\nstdout:\n${dynamic_projection_output}\nstderr:\n${dynamic_projection_error}")
+endif()
+foreach(needle
+    "read_units.unit_array=true"
+    "read_units.layout=scr-dynamic-field-projection-v1"
+    "read_units.record_size=336"
+    "read_units.derived_snapshot=true"
+    "read_units.dynamic_projection.attempted=true"
+    "read_units.dynamic_projection.passed=true"
+    "read_units.snapshot.success=true"
+    "read_units.scan.snapshot.success=true"
+    "proof.read_units=passed")
+  string(FIND "${dynamic_projection_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "dynamic SC:R projection proof output missing '${needle}'\n${dynamic_projection_output}")
+  endif()
+endforeach()
+
+set(dynamic_projection_ready_file "${dynamic_projection_bridge_dir}/ready")
+if(NOT EXISTS "${dynamic_projection_ready_file}")
+  message(FATAL_ERROR "dynamic SC:R projection proof did not write ready file")
+endif()
+file(READ "${dynamic_projection_ready_file}" dynamic_projection_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_units.layout=scr-dynamic-field-projection-v1"
+    "proof.read_units.record_size=336"
+    "proof.read_units.derived_snapshot=true"
+    "proof.read_units.snapshot=units.snapshot.tsv"
+    "proof.read_units.id_source=stable-record-address"
+    "proof.read_units.position_source=dynamic-record coordinate fields"
+    "proof.read_units.player_source=dynamic-record player/type fields"
+    "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv"
+    "proof.read_units=passed")
+  string(FIND "${dynamic_projection_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "dynamic SC:R projection ready file missing '${needle}'\n${dynamic_projection_ready}")
+  endif()
+endforeach()
+
+file(READ "${dynamic_projection_bridge_dir}/unit_diagnostics.snapshot.tsv" dynamic_projection_diagnostics)
+foreach(needle
+    "read_units_passed\ttrue"
+    "dynamic_projection_attempted\ttrue"
+    "dynamic_projection_passed\ttrue"
+    "dynamic_projection_record_size\t"
+    "dynamic_projection_active_records\t")
+  string(FIND "${dynamic_projection_diagnostics}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "dynamic SC:R projection diagnostics missing '${needle}'\n${dynamic_projection_diagnostics}")
+  endif()
+endforeach()
+
+set(dynamic_projection_static_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-dynamic-projection-static-bridge")
+file(REMOVE_RECURSE "${dynamic_projection_static_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${dynamic_projection_static_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --unit-max-scan-mb 96
+    --self-dynamic-unit-projection-static-fixture
+  RESULT_VARIABLE dynamic_projection_static_result
+  OUTPUT_VARIABLE dynamic_projection_static_output
+  ERROR_VARIABLE dynamic_projection_static_error
+)
+if(NOT dynamic_projection_static_result EQUAL 0)
+  message(FATAL_ERROR "expected static SC:R field projection proof to pass with idle self fixture\nstdout:\n${dynamic_projection_static_output}\nstderr:\n${dynamic_projection_static_error}")
+endif()
+foreach(needle
+    "read_units.unit_array=true"
+    "read_units.derived_snapshot=true"
+    "read_units.dynamic_projection.attempted=true"
+    "read_units.dynamic_projection.passed=true"
+    "read_units.dynamic_projection.reason=static"
+    "read_units.snapshot.success=true"
+    "read_units.scan.snapshot.success=true"
+    "proof.read_units=passed")
+  string(FIND "${dynamic_projection_static_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "static SC:R projection proof output missing '${needle}'\n${dynamic_projection_static_output}")
+  endif()
+endforeach()
+
+set(dynamic_projection_static_ready_file "${dynamic_projection_static_bridge_dir}/ready")
+if(NOT EXISTS "${dynamic_projection_static_ready_file}")
+  message(FATAL_ERROR "static SC:R projection proof did not write ready file")
+endif()
+file(READ "${dynamic_projection_static_ready_file}" dynamic_projection_static_ready)
+foreach(needle
+    "proof.attach=passed"
+    "proof.read_units.layout=scr-dynamic-field-projection-v1"
+    "proof.read_units.derived_snapshot=true"
+    "proof.read_units.snapshot=units.snapshot.tsv"
+    "proof.read_units.id_source=stable-record-address"
+    "proof.read_units.player_source=dynamic-record player/type fields"
+    "diagnostic.read_units.scan_snapshot=unit_diagnostics.snapshot.tsv"
+    "proof.read_units=passed")
+  string(FIND "${dynamic_projection_static_ready}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "static SC:R projection ready file missing '${needle}'\n${dynamic_projection_static_ready}")
+  endif()
+endforeach()
+
+file(READ "${dynamic_projection_static_bridge_dir}/unit_diagnostics.snapshot.tsv" dynamic_projection_static_diagnostics)
+foreach(needle
+    "read_units_passed\ttrue"
+    "dynamic_projection_attempted\ttrue"
+    "dynamic_projection_passed\ttrue"
+    "dynamic_projection_reason\tstatic"
+    "dynamic_projection_record_size\t"
+    "dynamic_projection_active_records\t")
+  string(FIND "${dynamic_projection_static_diagnostics}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "static SC:R projection diagnostics missing '${needle}'\n${dynamic_projection_static_diagnostics}")
+  endif()
+endforeach()
+
+set(dynamic_projection_negative_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-dynamic-projection-negative-bridge")
+file(REMOVE_RECURSE "${dynamic_projection_negative_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${dynamic_projection_negative_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --unit-max-scan-mb 96
+    --self-dynamic-unit-projection-negative-fixture
+  RESULT_VARIABLE dynamic_projection_negative_result
+  OUTPUT_VARIABLE dynamic_projection_negative_output
+  ERROR_VARIABLE dynamic_projection_negative_error
+)
+if(dynamic_projection_negative_result EQUAL 0)
+  message(FATAL_ERROR "expected dynamic SC:R projection negative fixture to fail\nstdout:\n${dynamic_projection_negative_output}\nstderr:\n${dynamic_projection_negative_error}")
+endif()
+foreach(needle
+    "read_units.unit_array=false"
+    "read_units.dynamic_projection.attempted=true"
+    "read_units.dynamic_projection.passed=false")
+  string(FIND "${dynamic_projection_negative_output}" "${needle}" needle_index)
+  if(needle_index EQUAL -1)
+    message(FATAL_ERROR "dynamic SC:R projection negative output missing '${needle}'\n${dynamic_projection_negative_output}")
+  endif()
+endforeach()
+set(dynamic_projection_negative_ready_file "${dynamic_projection_negative_bridge_dir}/ready")
+if(NOT EXISTS "${dynamic_projection_negative_ready_file}")
+  message(FATAL_ERROR "failed dynamic SC:R projection proof must still write partial ready file")
+endif()
+file(READ "${dynamic_projection_negative_ready_file}" dynamic_projection_negative_ready)
+foreach(forbidden
+    "proof.read_units=passed"
+    "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.read_units=passed")
+  string(FIND "${dynamic_projection_negative_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "failed dynamic projection proof must not claim '${forbidden}'\n${dynamic_projection_negative_ready}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${dynamic_projection_bridge_dir}")
+file(REMOVE_RECURSE "${dynamic_projection_static_bridge_dir}")
+file(REMOVE_RECURSE "${dynamic_projection_negative_bridge_dir}")
+
+set(compact_shared_secondary_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-compact-shared-secondary-bridge")
+file(REMOVE_RECURSE "${compact_shared_secondary_bridge_dir}")
+
+execute_process(
+  COMMAND "${STARCRAFT_RUNTIME_ADAPTER_PROOF}"
+    --self
+    --product starcraft-remastered
+    --version test-build
+    --bridge "${compact_shared_secondary_bridge_dir}"
+    --prove-read-units
+    --unit-scan-diagnostics
+    --self-compact-shared-secondary-fixture
+  RESULT_VARIABLE compact_shared_secondary_result
+  OUTPUT_VARIABLE compact_shared_secondary_output
+  ERROR_VARIABLE compact_shared_secondary_error
+)
+if(compact_shared_secondary_result EQUAL 0)
+  message(FATAL_ERROR "expected compact SC:R unit-node proof to fail when records share one secondary metadata object\nstdout:\n${compact_shared_secondary_output}\nstderr:\n${compact_shared_secondary_error}")
+endif()
+
+set(compact_shared_secondary_ready_file "${compact_shared_secondary_bridge_dir}/ready")
+if(NOT EXISTS "${compact_shared_secondary_ready_file}")
+  message(FATAL_ERROR "failed compact shared-secondary proof must still write partial ready file")
+endif()
+file(READ "${compact_shared_secondary_ready_file}" compact_shared_secondary_ready)
+foreach(forbidden
+    "proof.read_units=passed"
+    "contract.binding.BW::BWDATA::UnitNodeTable=data-address|proof.read_units=passed"
+    "contract.structure.BW::CUnit=512|proof.read_units=passed")
+  string(FIND "${compact_shared_secondary_ready}" "${forbidden}" forbidden_index)
+  if(NOT forbidden_index EQUAL -1)
+    message(FATAL_ERROR "shared-secondary compact proof must not claim '${forbidden}'\n${compact_shared_secondary_ready}")
+  endif()
+endforeach()
+
+file(REMOVE_RECURSE "${compact_shared_secondary_bridge_dir}")
 
 set(player_projection_bridge_dir "${STARCRAFT_API_CLI_TEST_DIR}/runtime-adapter-proof-player-projection-bridge")
 file(REMOVE_RECURSE "${player_projection_bridge_dir}")

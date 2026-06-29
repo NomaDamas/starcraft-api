@@ -1,16 +1,55 @@
 # StarCraft API
 
-StarCraft API is a production-oriented C++ runtime adaptation project for StarCraft: Remastered and Battle.net installations.
+StarCraft API is a production-oriented C++ runtime adaptation project for BWAPI-compatible StarCraft runtimes, including legacy StarCraft: Brood War 1.16.1 and StarCraft: Remastered/Battle.net installations.
 
-The goal is to preserve the BWAPI programming surface while moving the runtime integration away from the original Windows-only StarCraft: Brood War 1.16.1 memory-offset model. The current codebase provides a portable runtime contract, manifest validation, process/memory primitives, command queue plumbing, launch/attach bootstrapping, and cross-platform build/test gates.
+The goal is to preserve the BWAPI programming surface while making the runtime integration explicit and versioned. For legacy Brood War 1.16.1, the project keeps the original Win32 target model and hosts it on Windows or Wine. For StarCraft: Remastered, the project uses a separate runtime contract because SC:R is not memory-layout compatible with BWAPI 1.16.1. The current codebase provides a portable runtime contract, manifest validation, process/memory primitives, command queue plumbing, launch/attach bootstrapping, and cross-platform build/test gates.
 
 ## Current Status
 
 - macOS, Linux, and Windows CMake targets are supported.
 - The public BWAPI-compatible API surface is audited at 385 abstract methods.
 - The command surface is audited at 44 unit commands and 28 game actions, with a machine-readable evidence status for every entry.
+- Legacy Brood War 1.16.1 mode detects a user-provided Win32 PE32 `StarCraft.exe`/`Brood War.exe`, records Wine/CrossOver compatibility metadata on macOS/Linux, and exposes the full BWAPI command/API surface as the required parity contract. It still fails closed for production until a validated in-game BWAPI bridge proves read, command, event, overlay, replay, multiplayer, AI-module, and shared-memory behavior.
 - StarCraft: Remastered runtime contracts fail closed until version-specific game-state bindings, command execution, events, overlays, replay behavior, and multiplayer synchronization are validated. The command/action names are known to the portable queue and encoder, while live command parity remains separately gated by per-entry `live-proven` evidence plus command receiver and `proof.issue_commands=passed` evidence. Overlay rendering remains a separate production proof.
 - macOS Battle.net installations can be discovered and launch/attach bootstrap files can be generated with `starcraft-runtime-launch`.
+
+## Legacy Brood War 1.16.1 Mode
+
+BWAPI's original runtime assumptions match Windows 32-bit StarCraft: Brood War 1.16.1, not StarCraft: Remastered. On macOS/Linux, this project treats 1.16.1 as a Win32 runtime hosted by Wine or CrossOver. Put the 1.16.1 install directory under a local path such as `runtime/bw1161`, or point the tools at it explicitly:
+
+```sh
+cmake --build build --config Release --parallel
+
+build/starcraft-runtime-legacy1161-setup \
+  --dir "$PWD/runtime/bw1161" \
+  --wine /opt/homebrew/bin/wine \
+  --write-env /tmp/starcraft-api-bw1161.env \
+  --write-manifest /tmp/starcraft-api-bw1161-bootstrap.manifest \
+  --require-launchable
+```
+
+Equivalent environment variables:
+
+```sh
+export STARCRAFT_API_BW1161_DIR="$PWD/runtime/bw1161"
+export STARCRAFT_API_BW1161_EXE="$PWD/runtime/bw1161/StarCraft.exe"
+export STARCRAFT_API_WINE=/opt/homebrew/bin/wine
+export STARCRAFT_API_WINEPREFIX="$HOME/.wine-starcraft1161"
+```
+
+Then launch or attach through the normal runtime launcher:
+
+```sh
+build/starcraft-runtime-launch \
+  --product 1161 \
+  --launch \
+  --require-running \
+  --manifest-out /tmp/starcraft-api-bw1161-bootstrap.manifest \
+  --evidence-out /tmp/starcraft-api-bw1161-runtime.evidence \
+  --bridge /tmp/starcraft-api-bw1161-bridge
+```
+
+The legacy setup tool validates the selected executable as PE32/i386 before accepting it. The shell setup path also verifies the Blizzard-hosted `SC-1161.exe` and `BW-1161.exe` patchers by fixed SHA256, exact byte size, and PE32/i386 type; rejects patchers or `Battle.net-Setup.exe` when they are passed as a base installer; and requires a Brood War base install containing `StarCraft.exe` or `Brood War.exe`, `StarDat.mpq`, and `BrooDat.mpq`. It does not claim BWAPI parity by itself; it only proves that the correct legacy runtime target is selected and launchable. Production readiness still requires the in-game bridge proof lines checked by `starcraft-runtime-gap-report --require-production`.
 
 ## macOS Battle.net Bootstrap
 

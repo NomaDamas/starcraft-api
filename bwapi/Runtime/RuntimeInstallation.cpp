@@ -289,6 +289,12 @@ namespace BWAPI::Runtime
       return std::filesystem::is_regular_file(path, error) && !error;
     }
 
+    bool directoryExists(const std::filesystem::path& path)
+    {
+      std::error_code error;
+      return std::filesystem::is_directory(path, error) && !error;
+    }
+
     std::string lowerCase(std::string value)
     {
       std::transform(
@@ -300,6 +306,131 @@ namespace BWAPI::Runtime
           return static_cast<char>(std::tolower(ch));
         });
       return value;
+    }
+
+    std::uint16_t readLittleEndian16(const std::vector<unsigned char>& bytes, std::size_t offset)
+    {
+      if (offset + 1 >= bytes.size())
+        return 0;
+      return static_cast<std::uint16_t>(bytes[offset])
+        | static_cast<std::uint16_t>(bytes[offset + 1] << 8);
+    }
+
+    std::uint32_t readLittleEndian32(const std::vector<unsigned char>& bytes, std::size_t offset)
+    {
+      if (offset + 3 >= bytes.size())
+        return 0;
+      return static_cast<std::uint32_t>(bytes[offset])
+        | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8)
+        | (static_cast<std::uint32_t>(bytes[offset + 2]) << 16)
+        | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
+    }
+
+    bool isPe32I386Executable(const std::filesystem::path& path)
+    {
+      std::ifstream input(path, std::ios::binary);
+      if (!input)
+        return false;
+
+      std::vector<unsigned char> bytes(4096);
+      input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+      bytes.resize(static_cast<std::size_t>(input.gcount()));
+      if (bytes.size() < 0x40)
+        return false;
+      if (bytes[0] != 'M' || bytes[1] != 'Z')
+        return false;
+
+      const std::uint32_t peOffset = readLittleEndian32(bytes, 0x3c);
+      if (peOffset + 0x18 >= bytes.size())
+        return false;
+      if (bytes[peOffset] != 'P'
+          || bytes[peOffset + 1] != 'E'
+          || bytes[peOffset + 2] != 0
+          || bytes[peOffset + 3] != 0)
+        return false;
+
+      constexpr std::uint16_t imageFileMachineI386 = 0x014c;
+      constexpr std::uint16_t pe32OptionalHeaderMagic = 0x010b;
+      return readLittleEndian16(bytes, peOffset + 4) == imageFileMachineI386
+        && readLittleEndian16(bytes, peOffset + 24) == pe32OptionalHeaderMagic;
+    }
+
+    bool isLegacy1161PatchExecutableName(const std::filesystem::path& path)
+    {
+      const std::string filename = lowerCase(path.filename().string());
+      return filename == "sc-1161.exe" || filename == "bw-1161.exe";
+    }
+
+    std::vector<std::filesystem::path> splitPathList(const std::string& value)
+    {
+      std::vector<std::filesystem::path> paths;
+      std::string current;
+      for (char ch : value)
+      {
+#if defined(_WIN32)
+        const bool separator = ch == ';';
+#else
+        const bool separator = ch == ':';
+#endif
+        if (separator)
+        {
+          if (!current.empty())
+            paths.emplace_back(current);
+          current.clear();
+          continue;
+        }
+        current.push_back(ch);
+      }
+      if (!current.empty())
+        paths.emplace_back(current);
+      return paths;
+    }
+
+    std::string findExecutableOnPath(const std::string& name)
+    {
+      const std::string pathValue = getenvString("PATH");
+      if (pathValue.empty())
+        return {};
+
+      for (const std::filesystem::path& directory : splitPathList(pathValue))
+      {
+        const std::filesystem::path candidate = directory / name;
+        if (fileExists(candidate))
+          return pathString(candidate);
+      }
+      return {};
+    }
+
+    std::string findWineExecutablePath()
+    {
+      const std::string explicitWine = getenvString("STARCRAFT_API_WINE");
+      if (!explicitWine.empty())
+      {
+        if (fileExists(explicitWine))
+          return pathString(explicitWine);
+        if (explicitWine.find('/') == std::string::npos && explicitWine.find('\\') == std::string::npos)
+          return explicitWine;
+        return {};
+      }
+
+      for (const std::filesystem::path& candidate : {
+             std::filesystem::path("/opt/homebrew/bin/wine"),
+             std::filesystem::path("/usr/local/bin/wine"),
+             std::filesystem::path("/usr/bin/wine"),
+             std::filesystem::path("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin/wine")
+           })
+      {
+        if (fileExists(candidate))
+          return pathString(candidate);
+      }
+
+      for (const std::string& name : { "wine", "wine32", "wine64" })
+      {
+        const std::string resolved = findExecutableOnPath(name);
+        if (!resolved.empty())
+          return resolved;
+      }
+      return {};
     }
 
     bool hasBroodWarReplayExtension(const std::filesystem::path& path)
@@ -469,6 +600,57 @@ namespace BWAPI::Runtime
       return true;
     }
 
+    bool legacy1161HostNeedsCompatibilityRuntime(Platform platform)
+    {
+      return platform == Platform::MacOS || platform == Platform::Linux;
+    }
+
+    void configureLegacy1161Compatibility(RuntimeInstallation& installation)
+    {
+      if (installation.product != Product::StarCraftBroodWar1161)
+        return;
+      installation.version = "1.16.1";
+      installation.compatibilityPrefix = getenvString("STARCRAFT_API_WINEPREFIX");
+      if (!legacy1161HostNeedsCompatibilityRuntime(installation.platform))
+        return;
+
+      installation.compatibilityRuntime = "wine";
+      installation.compatibilityRuntimePath = findWineExecutablePath();
+    }
+
+    bool tryLegacy1161Root(
+      const std::filesystem::path& root,
+      Platform platform,
+      RuntimeInstallation& installation)
+    {
+      if (!directoryExists(root))
+        return false;
+
+      const std::vector<std::filesystem::path> executableNames = {
+        "StarCraft.exe",
+        "starcraft.exe",
+        "Brood War.exe",
+        "BroodWar.exe"
+      };
+      for (const std::filesystem::path& executableName : executableNames)
+      {
+        const std::filesystem::path executable = root / executableName;
+        if (!fileExists(executable) || !isPe32I386Executable(executable))
+          continue;
+
+        installation = makeFoundInstallation(
+          platform,
+          Product::StarCraftBroodWar1161,
+          root,
+          executable,
+          {},
+          {});
+        configureLegacy1161Compatibility(installation);
+        return true;
+      }
+      return false;
+    }
+
     bool tryExecutableOverride(const RuntimeEnvironment& environment, RuntimeInstallation& installation)
     {
       if (environment.executablePath.empty())
@@ -482,6 +664,14 @@ namespace BWAPI::Runtime
         environment.product == Product::Unknown ? Product::StarCraftRemastered : environment.product;
       const Platform platform =
         environment.platform == Platform::Unknown ? RuntimeEnvironment::detectHost().platform : environment.platform;
+
+      if (product == Product::StarCraftBroodWar1161)
+      {
+        if (isLegacy1161PatchExecutableName(executable))
+          return false;
+        if (!isPe32I386Executable(executable))
+          return false;
+      }
 
       std::filesystem::path appBundle;
       std::filesystem::path cursor = executable.parent_path();
@@ -511,6 +701,9 @@ namespace BWAPI::Runtime
         {});
       if (!environment.version.empty())
         installation.version = environment.version;
+      else if (product == Product::StarCraftBroodWar1161)
+        installation.version = "1.16.1";
+      configureLegacy1161Compatibility(installation);
       return true;
     }
 
@@ -521,16 +714,28 @@ namespace BWAPI::Runtime
       candidates.push_back(path);
     }
 
-    std::vector<std::filesystem::path> installCandidates()
+    std::vector<std::filesystem::path> installCandidates(Product product)
     {
       std::vector<std::filesystem::path> candidates;
 
+      if (product == Product::StarCraftBroodWar1161)
+      {
+        addCandidate(candidates, getenvString("STARCRAFT_API_BW1161_DIR"));
+        addCandidate(candidates, getenvString("STARCRAFT_API_LEGACY1161_DIR"));
+      }
       addCandidate(candidates, getenvString("STARCRAFT_API_INSTALL_DIR"));
       addCandidate(candidates, getenvString("STARCRAFT_API_STARCRAFT_DIR"));
 
       const std::string home = getenvString("HOME");
       if (!home.empty())
       {
+        if (product == Product::StarCraftBroodWar1161)
+        {
+          addCandidate(candidates, std::filesystem::path(home) / "Desktop" / "mac-bwapi" / "runtime" / "bw1161");
+          addCandidate(candidates, std::filesystem::path(home) / "Desktop" / "mac-bwapi" / "StarCraft-1.16.1");
+          addCandidate(candidates, std::filesystem::path(home) / "Desktop" / "StarCraft-1.16.1");
+          addCandidate(candidates, std::filesystem::path(home) / "Desktop" / "BroodWar-1.16.1");
+        }
         addCandidate(candidates, std::filesystem::path(home) / "Desktop" / "Starcraft1" / "StarCraft");
         addCandidate(candidates, std::filesystem::path(home) / "Desktop" / "StarCraft1" / "StarCraft");
         addCandidate(candidates, std::filesystem::path(home) / "Desktop" / "StarCraft" / "StarCraft");
@@ -538,6 +743,11 @@ namespace BWAPI::Runtime
         addCandidate(candidates, std::filesystem::path(home) / "Applications" / "StarCraft");
       }
 
+      if (product == Product::StarCraftBroodWar1161)
+      {
+        addCandidate(candidates, "/Applications/StarCraft-1.16.1");
+        addCandidate(candidates, "/Applications/BroodWar-1.16.1");
+      }
       addCandidate(candidates, "/Applications/StarCraft");
       addCandidate(candidates, "/Applications/StarCraft Remastered");
       addCandidate(candidates, "/Applications/Starcraft1/StarCraft");
@@ -601,6 +811,22 @@ namespace BWAPI::Runtime
       if (normalizedTrimmed == trimmed && normalizedPath == path)
         return false;
       return trimmedCommandStartsWithPath(normalizedTrimmed, normalizedPath);
+    }
+
+    bool commandMentionsPath(const std::string& command, const std::string& path)
+    {
+      if (path.empty())
+        return false;
+
+      if (command.find(path) != std::string::npos)
+        return true;
+
+      const std::string normalizedCommand = normalizePathSeparators(command);
+      const std::string normalizedPath = normalizePathSeparators(path);
+      if (normalizedCommand.find(normalizedPath) != std::string::npos)
+        return true;
+
+      return lowerCase(normalizedCommand).find(lowerCase(normalizedPath)) != std::string::npos;
     }
 
     std::string trimLeft(std::string value)
@@ -899,6 +1125,19 @@ namespace BWAPI::Runtime
     {
       if (commandStartsWithPath(command, installation.executablePath)
           || commandStartsWithPath(command, "StarCraft.app/Contents/MacOS/StarCraft"))
+      {
+        return "starcraft-game";
+      }
+
+      if (installation.product == Product::StarCraftBroodWar1161
+          && commandMentionsPath(command, installation.executablePath))
+      {
+        return "starcraft-game";
+      }
+
+      if (installation.product == Product::StarCraftBroodWar1161
+          && lineContainsAny(lowerCase(command), { "starcraft.exe", "brood war.exe", "broodwar.exe" })
+          && commandMentionsPath(command, installation.installRoot))
       {
         return "starcraft-game";
       }
@@ -1982,6 +2221,32 @@ namespace BWAPI::Runtime
         return diagnosis;
       }
 
+      if (evidence.installation.product == Product::StarCraftBroodWar1161)
+      {
+        if (evidence.installation.compatibilityRuntime == "wine"
+            && evidence.installation.compatibilityRuntimePath.empty())
+        {
+          diagnosis.status = "blocked-legacy1161-wine-not-configured";
+          addDiagnosisBlocker(
+            diagnosis,
+            "Wine is required to launch the Win32 Brood War 1.16.1 runtime on this host; set STARCRAFT_API_WINE");
+          return diagnosis;
+        }
+
+        if (!diagnosis.gameProcessVisible)
+        {
+          diagnosis.status = "blocked-no-legacy1161-game-process";
+          addDiagnosisBlocker(diagnosis, "No stable StarCraft Brood War 1.16.1 game process is visible");
+          return diagnosis;
+        }
+
+        diagnosis.status = "blocked-legacy1161-game-process-not-selected";
+        addDiagnosisBlocker(
+          diagnosis,
+          "A StarCraft Brood War 1.16.1 process is visible, but launch/attach did not select a stable runtime process id");
+        return diagnosis;
+      }
+
       if (diagnosis.battleNetHandoffVisible && !diagnosis.gameProcessVisible)
       {
         const bool supportErrorObserved = !diagnosis.battleNetSupportCode.empty();
@@ -2128,7 +2393,7 @@ namespace BWAPI::Runtime
         for (const std::string& argument : arguments)
           argv.push_back(const_cast<char*>(argument.c_str()));
         argv.push_back(nullptr);
-        execv(executable.c_str(), argv.data());
+        execvp(executable.c_str(), argv.data());
         _exit(127);
       }
 
@@ -2217,10 +2482,44 @@ namespace BWAPI::Runtime
       return executableArguments;
     }
 
+    std::vector<std::string> makeLegacy1161LaunchArguments(const RuntimeInstallation& installation)
+    {
+      std::vector<std::string> arguments;
+      if (legacy1161HostNeedsCompatibilityRuntime(installation.platform))
+      {
+        arguments.push_back(installation.compatibilityRuntimePath);
+        arguments.push_back(installation.executablePath);
+      }
+      else
+      {
+        arguments.push_back(installation.executablePath);
+      }
+
+      const std::string legacyArgs = getenvString("STARCRAFT_API_BW1161_EXTRA_ARGS");
+      for (const std::string& argument : splitExtraLaunchArguments(
+             legacyArgs.empty() ? getenvString("STARCRAFT_API_EXTRA_ARGS") : legacyArgs))
+      {
+        arguments.push_back(argument);
+      }
+      return arguments;
+    }
+
     RuntimeLaunchTarget makeExecutableLaunchTarget(
       const RuntimeInstallation& installation,
       const std::string& replayPath)
     {
+      if (installation.product == Product::StarCraftBroodWar1161)
+      {
+        const bool needsCompatibilityRuntime =
+          legacy1161HostNeedsCompatibilityRuntime(installation.platform);
+        return {
+          needsCompatibilityRuntime ? "wine-executable" : "executable",
+          needsCompatibilityRuntime ? installation.compatibilityRuntimePath : installation.executablePath,
+          makeLegacy1161LaunchArguments(installation),
+          false
+        };
+      }
+
       return {
         "executable",
         installation.executablePath,
@@ -2541,6 +2840,8 @@ namespace BWAPI::Runtime
       }
     }
 
+    const char* runtimeDisplayName(Product product);
+
     RuntimeLaunchResult launchRuntimeProcessWithFallback(
       const RuntimeInstallation& installation,
       int waitMilliseconds,
@@ -2613,7 +2914,8 @@ namespace BWAPI::Runtime
       }
 
       result.reason = result.launched
-        ? "StarCraft Remastered launch targets were tried, but no matching game process became visible before the wait timeout"
+        ? std::string(runtimeDisplayName(installation.product))
+          + " launch targets were tried, but no matching game process became visible before the wait timeout"
         : (result.warnings.empty()
 #if defined(_WIN32)
           ? "CreateProcess failed for all launch targets"
@@ -2629,25 +2931,56 @@ namespace BWAPI::Runtime
       output << "# Command surface is intentionally not claimed in the bootstrap manifest.\n";
       output << "# Add validated unit-command and game-action directives only after the in-game adapter proves them.\n";
     }
+
+    const char* runtimeDisplayName(Product product)
+    {
+      if (product == Product::StarCraftBroodWar1161)
+        return "StarCraft Brood War 1.16.1";
+      if (product == Product::StarCraftRemastered)
+        return "StarCraft Remastered";
+      return "StarCraft";
+    }
   }
 
   RuntimeInstallation detectStarCraftInstallation(const RuntimeEnvironment& environment)
   {
-    RuntimeInstallation installation;
-    installation.platform = environment.platform == Platform::Unknown
-      ? RuntimeEnvironment::detectHost().platform
-      : environment.platform;
-    installation.product = Product::StarCraftRemastered;
+    RuntimeEnvironment selectedEnvironment = environment;
+    if (selectedEnvironment.product == Product::StarCraftBroodWar1161
+        && selectedEnvironment.executablePath.empty())
+    {
+      selectedEnvironment.executablePath = getenvString("STARCRAFT_API_BW1161_EXE");
+      if (selectedEnvironment.executablePath.empty())
+        selectedEnvironment.executablePath = getenvString("STARCRAFT_API_LEGACY1161_EXE");
+    }
 
-    if (tryExecutableOverride(environment, installation))
+    RuntimeInstallation installation;
+    installation.platform = selectedEnvironment.platform == Platform::Unknown
+      ? RuntimeEnvironment::detectHost().platform
+      : selectedEnvironment.platform;
+    installation.product = selectedEnvironment.product == Product::Unknown
+      ? Product::StarCraftRemastered
+      : selectedEnvironment.product;
+
+    if (tryExecutableOverride(selectedEnvironment, installation))
       return installation;
 
-    const std::vector<std::filesystem::path> candidates = installCandidates();
+    const std::vector<std::filesystem::path> candidates = installCandidates(installation.product);
     for (const std::filesystem::path& candidate : candidates)
     {
       installation.searchedPaths.push_back(pathString(candidate));
 
       RuntimeInstallation found;
+      if (installation.product == Product::StarCraftBroodWar1161)
+      {
+        if (tryLegacy1161Root(candidate, installation.platform, found))
+          return found;
+        if (tryLegacy1161Root(candidate / "StarCraft", installation.platform, found))
+          return found;
+        if (tryLegacy1161Root(candidate / "StarCraft-1.16.1", installation.platform, found))
+          return found;
+        continue;
+      }
+
       if (tryMacRoot(candidate, found))
         return found;
       if (tryMacRoot(candidate / "StarCraft", found))
@@ -2663,14 +2996,25 @@ namespace BWAPI::Runtime
     }
 
     installation.found = false;
-    installation.reason = "StarCraft Remastered installation was not found. Set STARCRAFT_API_INSTALL_DIR or STARCRAFT_API_EXECUTABLE.";
+    if (installation.product == Product::StarCraftBroodWar1161)
+    {
+      installation.reason =
+        "StarCraft Brood War 1.16.1 was not found. Set STARCRAFT_API_BW1161_DIR or STARCRAFT_API_BW1161_EXE to a PE32 Win32 StarCraft.exe.";
+    }
+    else
+    {
+      installation.reason =
+        "StarCraft Remastered installation was not found. Set STARCRAFT_API_INSTALL_DIR or STARCRAFT_API_EXECUTABLE.";
+    }
     return installation;
   }
 
   RuntimeEnvironment resolveRuntimeEnvironment(const RuntimeEnvironment& baseEnvironment)
   {
     RuntimeEnvironment environment = baseEnvironment;
-    if (environment.product != Product::Unknown && environment.product != Product::StarCraftRemastered)
+    if (environment.product != Product::Unknown
+        && environment.product != Product::StarCraftRemastered
+        && environment.product != Product::StarCraftBroodWar1161)
       return environment;
 
     const RuntimeInstallation installation = detectStarCraftInstallation(environment);
@@ -2793,7 +3137,9 @@ namespace BWAPI::Runtime
 
     if (!launchIfMissing)
     {
-      result.reason = "StarCraft Remastered is installed but no running process was found";
+      result.reason =
+        std::string(runtimeDisplayName(installation.product))
+        + " is installed but no running process was found";
       return result;
     }
 
@@ -2876,7 +3222,9 @@ namespace BWAPI::Runtime
       result.reason =
         "Battle.net StarCraft handoff is already running; not launching another Battle.net instance; no matching game process became visible before the wait timeout";
     else
-      result.reason = "StarCraft Remastered launch was requested, but no matching game process became visible before the wait timeout";
+      result.reason =
+        std::string(runtimeDisplayName(installation.product))
+        + " launch was requested, but no matching game process became visible before the wait timeout";
     return result;
   }
 
@@ -2912,6 +3260,9 @@ namespace BWAPI::Runtime
     writeEvidenceField(output, "install.app_bundle", evidence.installation.appBundlePath);
     writeEvidenceField(output, "install.executable", evidence.installation.executablePath);
     writeEvidenceField(output, "install.launcher", evidence.installation.launcherPath);
+    writeEvidenceField(output, "install.compatibility_runtime", evidence.installation.compatibilityRuntime);
+    writeEvidenceField(output, "install.compatibility_runtime_path", evidence.installation.compatibilityRuntimePath);
+    writeEvidenceField(output, "install.compatibility_prefix", evidence.installation.compatibilityPrefix);
     writeEvidenceField(output, "install.reason", evidence.installation.reason);
 
     writeEvidenceField(output, "executable.exists", evidence.executable.exists);
@@ -3111,6 +3462,12 @@ namespace BWAPI::Runtime
     output << "# It must not be treated as BWAPI parity evidence until validated in-game bindings are added.\n";
     output << "product " << toString(installation.product) << '\n';
     output << "version " << (installation.version.empty() ? "unknown" : installation.version) << '\n';
+    if (!installation.compatibilityRuntime.empty())
+      output << "compatibility-runtime " << installation.compatibilityRuntime << '\n';
+    if (!installation.compatibilityRuntimePath.empty())
+      output << "compatibility-runtime-path " << installation.compatibilityRuntimePath << '\n';
+    if (!installation.compatibilityPrefix.empty())
+      output << "compatibility-prefix " << installation.compatibilityPrefix << '\n';
     output << "api-surface-methods 0\n";
     output << "command-surface-entries 0\n";
     writeAllCommandSurface(output);

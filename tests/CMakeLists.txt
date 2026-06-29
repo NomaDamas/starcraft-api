@@ -347,6 +347,15 @@ if(TARGET starcraft-runtime-legacy1161-setup)
       -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_legacy1161_setup_script_test.cmake
   )
+  add_test(
+    NAME runtime_legacy1161_artifact_scan_test
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DSTARCRAFT_API_LEGACY1161_ARTIFACT_SCAN=${CMAKE_SOURCE_DIR}/scripts/scan_legacy1161_artifact.py
+      -DSTARCRAFT_API_CLI_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/runtime_legacy1161_artifact_scan_test.cmake
+  )
 endif()
 
 add_test(

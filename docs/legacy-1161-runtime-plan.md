@@ -26,6 +26,7 @@ Validation performed by `starcraft-runtime-legacy1161-setup`:
 - Confirms the base install includes Brood War data files (`StarDat.mpq` and `BrooDat.mpq`) before patching.
 - Verifies Blizzard-hosted `SC-1161.exe` and `BW-1161.exe` by fixed size, SHA256, and PE32/i386 type before running them.
 - Rejects patch executables and `Battle.net-Setup.exe` when they are accidentally supplied as a base game installer.
+- Provides `scripts/scan_legacy1161_artifact.py` for preflight artifact inspection, optional local ClamAV scans, and optional VirusTotal SHA256-only lookups.
 - Records version as `1.16.1` for the selected legacy product.
 - Records Wine/CrossOver compatibility runtime metadata on macOS/Linux.
 - Writes a bootstrap manifest that intentionally does not claim production BWAPI parity.
